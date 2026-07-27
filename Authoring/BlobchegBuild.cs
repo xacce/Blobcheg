@@ -106,14 +106,34 @@ namespace Blobcheg.Authoring
                     "Раскладка обязана быть детерминированной; ехать с такой базой нельзя");
         }
 
+        /// <summary>
+        /// Состав домена ищется по проекту, а не берётся из ручного списка: список — это ещё одно
+        /// место, где можно забыть.
+        ///
+        /// Обход идёт по самой базе ассетов, а НЕ через <c>AssetDatabase.FindAssets("t:...")</c>:
+        /// поисковый индекс отстаёт от импорта (в батче свежесозданная нода в нём не находится
+        /// вовсе), а пересборка, молча не нашедшая ноду, — это ровно тот случай, когда всё выглядит
+        /// рабочим и врёт.
+        /// </summary>
         public static List<BlobchegNodeSo> FindNodes()
         {
-            return AssetDatabase.FindAssets("t:" + nameof(BlobchegNodeSo))
-                .OrderBy(guid => guid, StringComparer.Ordinal)
-                .Select(AssetDatabase.GUIDToAssetPath)
-                .Select(AssetDatabase.LoadAssetAtPath<BlobchegNodeSo>)
-                .Where(node => node != null)
-                .ToList();
+            var nodes = new List<BlobchegNodeSo>();
+
+            foreach (var path in AssetDatabase.GetAllAssetPaths())
+            {
+                if (!path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var type = AssetDatabase.GetMainAssetTypeAtPath(path);
+                if (type == null || !typeof(BlobchegNodeSo).IsAssignableFrom(type))
+                    continue;
+
+                var node = AssetDatabase.LoadAssetAtPath<BlobchegNodeSo>(path);
+                if (node != null)
+                    nodes.Add(node);
+            }
+
+            return nodes.OrderBy(AssetDatabase.GetAssetPath, StringComparer.Ordinal).ToList();
         }
 
         static void SyncRefs(BlobchegCollector collector, List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
@@ -184,7 +204,8 @@ namespace Blobcheg.Authoring
             return new[] { dot < 0 ? recordType : recordType.Substring(dot + 1) };
         }
 
-        internal static IEnumerable<BlobchegRefSo> RefsOf(BlobchegNodeSo node)
+        /// <summary>Ref-ассеты ноды — по одному на домен, в который она пишет.</summary>
+        public static IEnumerable<BlobchegRefSo> RefsOf(BlobchegNodeSo node)
         {
             var path = AssetDatabase.GetAssetPath(node);
             if (string.IsNullOrEmpty(path))
