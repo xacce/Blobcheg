@@ -19,6 +19,7 @@ namespace Blobcheg.CodeGen
         const string RouterAttributeName = "Blobcheg.BlobchegRouterAttribute";
         const string EntitiesAssembly = "Blobcheg.Entities";
         const string ComponentData = "Unity.Entities.IComponentData";
+        const string DisableAutoCreation = "Unity.Entities.DisableAutoCreationAttribute";
 
         static readonly DiagnosticDescriptor NotPartial = new DiagnosticDescriptor(
             "BCHG001", "База обязана быть partial",
@@ -264,7 +265,7 @@ namespace Blobcheg.CodeGen
                 return;
             }
 
-            var boot = Boot(source, symbol, declaration, model);
+            var boot = Boot(source, symbol, declaration, model, out var autoCreate);
 
             var text = new StringBuilder();
             var domainFull = domain.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -301,7 +302,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    }");
 
             if (boot)
-                EmitBootSystem(text, symbol.Name, Access(symbol));
+                EmitBootSystem(text, symbol.Name, Access(symbol), autoCreate);
 
             Close(text, space);
 
@@ -359,7 +360,7 @@ namespace Blobcheg.CodeGen
 
             var maskWidth = MaskWidthFor(router.Dbs.Count);
             var layoutHash = LayoutHash(router.Dbs, maskWidth);
-            var boot = Boot(source, symbol, declaration, model);
+            var boot = Boot(source, symbol, declaration, model, out var autoCreate);
 
             var text = new StringBuilder();
             Open(text, symbol, out var space);
@@ -484,7 +485,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    }");
 
             if (boot)
-                EmitBootSystem(text, symbol.Name, access);
+                EmitBootSystem(text, symbol.Name, access, autoCreate);
 
             Close(text, space);
 
@@ -498,8 +499,12 @@ namespace Blobcheg.CodeGen
         /// опт-ин «хочу её синглтоном». Не объявлена — подъём пишется руками, как в v1.
         /// </summary>
         static bool Boot(SourceProductionContext source, INamedTypeSymbol symbol,
-            StructDeclarationSyntax declaration, Model model)
+            StructDeclarationSyntax declaration, Model model, out bool autoCreate)
         {
+            // [DisableAutoCreation] на базе едет на выпущенную систему: «система нужна, но кто её
+            // создаёт — решаю я». Без этого дефолтный мир поднимал бы базу, которой в нём не место.
+            autoCreate = !symbol.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == DisableAutoCreation);
+
             var component = symbol.AllInterfaces.Any(i => i.ToDisplayString() == ComponentData);
             if (!component)
                 return false;
@@ -515,11 +520,13 @@ namespace Blobcheg.CodeGen
         /// Только SystemState, EntityManager и EntityQuery: генераторы не видят выход друг друга,
         /// поэтому SystemAPI в выпущенной системе Unity'шный генератор уже не обработает.
         /// </summary>
-        static void EmitBootSystem(StringBuilder text, string typeName, string access)
+        static void EmitBootSystem(StringBuilder text, string typeName, string access, bool autoCreate)
         {
             text.AppendLine();
             text.Append("    /// <summary>Подъём '").Append(typeName).AppendLine("' в синглтон. Выпущен кодогеном.</summary>");
             text.AppendLine("    [global::Unity.Entities.UpdateInGroup(typeof(global::Blobcheg.BlobchegBootGroup))]");
+            if (!autoCreate)
+                text.AppendLine("    [global::Unity.Entities.DisableAutoCreation]");
             text.Append("    ").Append(access).Append(" partial struct ").Append(typeName)
                 .AppendLine("BootSystem : global::Unity.Entities.ISystem");
             text.AppendLine("    {");

@@ -17,8 +17,13 @@ namespace Blobcheg.Tests
     /// <summary>
     /// База, объявленная <c>IComponentData</c>: под неё генератор выпускает бут-систему
     /// <c>TestBootDbBootSystem</c>. Если он её не выпустил, этот файл не соберётся.
+    ///
+    /// <c>[DisableAutoCreation]</c> уезжает на выпущенную систему: тестовой базе нечего делать в
+    /// дефолтном мире потребителя, тем более что её файла на свежем чекауте ещё нет. Мир под неё
+    /// тест создаёт свой.
     /// </summary>
     [Blobcheg(typeof(ITestBootData))]
+    [DisableAutoCreation]
     public partial struct TestBootDb : IComponentData
     {
     }
@@ -61,6 +66,19 @@ namespace Blobcheg.Tests
                 // Мир диспозится — OnDestroy системы отдаёт буфер базы обратно.
                 world.Dispose();
             }
+        }
+
+        [Test]
+        public void Запрет_автосоздания_едет_с_базы_на_выпущенную_систему()
+        {
+            var system = typeof(TestBootDbBootSystem);
+
+            Assert.That(system.GetCustomAttributes(typeof(DisableAutoCreationAttribute), false), Is.Not.Empty,
+                "[DisableAutoCreation] на базе обязан оказаться на её бут-системе, иначе дефолтный мир " +
+                "потребителя поднимает чужую базу");
+
+            var inGroup = (UpdateInGroupAttribute)system.GetCustomAttributes(typeof(UpdateInGroupAttribute), false)[0];
+            Assert.That(inGroup.GroupType, Is.EqualTo(typeof(BlobchegBootGroup)));
         }
 
         [Test]
