@@ -191,6 +191,33 @@ namespace Blobcheg.Tests
         }
 
         [Test]
+        public void Пикер_показывает_только_записи_своего_типа()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var pistols = BlobchegRefCatalog.Candidates(typeof(TestPistol));
+            CollectionAssert.Contains(pistols, RefOf(_pistol));
+            CollectionAssert.DoesNotContain(pistols, RefOf(_armor));
+
+            var armors = BlobchegRefCatalog.Candidates(typeof(TestArmor));
+            CollectionAssert.Contains(armors, RefOf(_armor));
+            CollectionAssert.DoesNotContain(armors, RefOf(_pistol));
+
+            var raw = BlobchegRefCatalog.Candidates(null);
+            CollectionAssert.IsSupersetOf(raw, new[] { RefOf(_pistol), RefOf(_armor) });
+        }
+
+        [Test]
+        public void Каталог_отбивает_чужую_запись()
+        {
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(BlobchegRefCatalog.Matches(RefOf(_armor), typeof(TestPistol)), Is.False);
+            Assert.That(BlobchegRefCatalog.Matches(RefOf(_pistol), typeof(TestPistol)), Is.True);
+            Assert.That(BlobchegRefCatalog.Matches(null, typeof(TestPistol)), Is.False);
+        }
+
+        [Test]
         public void Пустое_поле_бросает_а_не_отдаёт_ноль()
         {
             var empty = new BlobchegRef<TestPistol>(null);

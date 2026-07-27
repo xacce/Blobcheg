@@ -79,4 +79,4 @@ public sealed class GunNodeSo : BlobchegNodeSo
 ## Тесты
 
 `unity test <project> --mode EditMode --filter Blobcheg.Tests`. Пакет подключён в `testables` обоих
-манифестов. Полный прогон — 29 тестов, включая сквозной путь нода → файл → ref → чтение.
+манифестов. Полный прогон — 31 тест, включая сквозной путь нода → файл → ref → чтение.
