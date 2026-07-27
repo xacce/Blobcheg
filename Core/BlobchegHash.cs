@@ -1,0 +1,30 @@
+using System.Runtime.CompilerServices;
+using Unity.Collections;
+
+namespace Blobcheg
+{
+    /// <summary>
+    /// Хеш содержимого — не адресация. Им меряется целостность файла и ревизия ноды; искать по
+    /// нему нечего, поэтому в v1 больше никаких хешей нет.
+    /// </summary>
+    public static class BlobchegHash
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static unsafe ulong Of(void* data, long length)
+        {
+            var h = xxHash3.Hash64(data, length);
+            return ((ulong)h.y << 32) | h.x;
+        }
+
+        public static unsafe ulong Of(byte[] data, int start, int length)
+        {
+            if (length == 0)
+                return 0;
+
+            fixed (byte* p = &data[start])
+                return Of(p, length);
+        }
+
+        public static ulong Of(byte[] data) => Of(data, 0, data.Length);
+    }
+}

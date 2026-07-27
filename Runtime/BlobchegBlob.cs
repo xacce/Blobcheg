@@ -1,0 +1,114 @@
+using System;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using Unity.Burst;
+using Unity.Collections.LowLevel.Unsafe;
+
+namespace Blobcheg
+{
+    /// <summary>
+    /// Резидентный буфер одной базы. Всю работу делает он; типизированный фасад
+    /// (<c>[Blobcheg]</c>-партиал) — тонкая обёртка сверху, добавляющая констрейнт домена.
+    ///
+    /// Чтение — реинтерпретация по оффсету. Что лежит внутри записи, буфер не знает и знать не
+    /// должен: это вопрос доверия. Проверяются только целостность файла (разово, на подъёме) и
+    /// границы (за <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>).
+    /// </summary>
+    public unsafe struct BlobchegBlob : IDisposable
+    {
+        BlobchegBuffer _buffer;
+        uint _debugOffset;
+
+        /// <summary>Забирает владение буфером, валидирует header и целостность.</summary>
+        public BlobchegBlob(BlobchegBuffer buffer, string what)
+        {
+            if (!buffer.IsCreated)
+                throw new ArgumentException($"Blobcheg: пустой буфер базы '{what}'", nameof(buffer));
+
+            _buffer = buffer;
+            _debugOffset = 0;
+
+            ref var header = ref UnsafeUtility.AsRef<BlobchegHeader>(buffer.Ptr);
+            var contentHash = BlobchegHash.Of(
+                buffer.Ptr + BlobchegFormat.HeaderSize, buffer.Length - BlobchegFormat.HeaderSize);
+
+            header.Validate(what, buffer.Length, contentHash);
+
+            if (header.HasDebug)
+            {
+                BlobchegDebugSection.ValidateProlog(*(uint*)(buffer.Ptr + header.DebugOffset));
+                _debugOffset = header.DebugOffset;
+            }
+        }
+
+        public bool IsCreated => _buffer.IsCreated;
+
+        public int Length => _buffer.Length;
+
+        /// <summary>Есть ли в файле отладочный контур. В билде его не бывает.</summary>
+        public bool HasDebug => _debugOffset != 0;
+
+        /// <summary>
+        /// Единственный способ достать запись. Оффсет потребитель хранит сам — в
+        /// <see cref="BlobchegRefSo"/> и больше нигде.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ref readonly T Read<T>(uint offset) where T : unmanaged
+        {
+            CheckRead<T>(offset);
+            return ref UnsafeUtility.AsRef<T>(_buffer.Ptr + offset);
+        }
+
+        public void Dispose()
+        {
+            _buffer.Dispose();
+            _debugOffset = 0;
+        }
+
+        [Conditional("ENABLE_UNITY_COLLECTIONS_CHECKS")]
+        void CheckRead<T>(uint offset) where T : unmanaged
+        {
+            if (_buffer.Ptr == null)
+                throw new InvalidOperationException("Blobcheg.Read: база не поднята");
+
+            if ((offset & (BlobchegFormat.RecordAlign - 1)) != 0)
+                throw new InvalidOperationException("Blobcheg.Read: оффсет не выровнен на 16 — это не начало записи");
+
+            if (offset < BlobchegFormat.HeaderSize || offset + UnsafeUtility.SizeOf<T>() > (uint)_buffer.Length)
+                throw new InvalidOperationException("Blobcheg.Read: запись не помещается в буфер базы");
+
+            CheckType<T>(offset);
+        }
+
+        [Conditional("BLOBCHEG_DEBUG")]
+        void CheckType<T>(uint offset) where T : unmanaged
+        {
+            if (_debugOffset == 0)
+                return;
+
+            var entry = BlobchegDebugSection.Find(_buffer.Ptr, _debugOffset, offset);
+            if (entry == null)
+                throw new InvalidOperationException("Blobcheg.Read: по этому оффсету записи нет");
+
+            if (entry->TypeHash != unchecked((uint)BurstRuntime.GetHashCode32<T>()))
+                throw new InvalidOperationException("Blobcheg.Read: по этому оффсету лежит запись другого типа");
+        }
+
+        /// <summary>
+        /// Имена типа и ноды по оффсету — только для инструментов едитора. Спрашивать имеет смысл
+        /// после <see cref="HasDebug"/>; без секции или без записи по оффсету — ошибка, а не пустой ответ.
+        /// </summary>
+        public void Describe(uint offset, out string typeName, out string nodeName)
+        {
+            if (_debugOffset == 0)
+                throw new InvalidOperationException(
+                    "Blobcheg.Describe: в файле нет отладочного контура — он собран без BLOBCHEG_DEBUG");
+
+            var entry = BlobchegDebugSection.Find(_buffer.Ptr, _debugOffset, offset);
+            if (entry == null)
+                throw new InvalidOperationException($"Blobcheg.Describe: по оффсету {offset} записи нет");
+
+            BlobchegDebugSection.ReadNames(_buffer.Ptr, *entry, out typeName, out nodeName);
+        }
+    }
+}

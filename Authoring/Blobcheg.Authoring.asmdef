@@ -1,0 +1,22 @@
+{
+    "name": "Blobcheg.Authoring",
+    "rootNamespace": "Blobcheg.Authoring",
+    "references": [
+        "Blobcheg.Core",
+        "Blobcheg.Runtime",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
