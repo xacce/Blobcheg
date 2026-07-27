@@ -18,8 +18,14 @@ namespace Blobcheg
 
         public static unsafe ulong Of(byte[] data, int start, int length)
         {
+            // Пустое тело — не «ноль», а честный хеш пустоты: иначе писатель и читатель расходятся
+            // ровно на пустом файле, и база, из которой удалили последнюю ноду, перестаёт
+            // подниматься. Указатель на конец массива брать нельзя, поэтому считаем от заглушки.
             if (length == 0)
-                return 0;
+            {
+                byte empty = 0;
+                return Of(&empty, 0);
+            }
 
             fixed (byte* p = &data[start])
                 return Of(p, length);

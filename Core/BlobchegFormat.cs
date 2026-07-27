@@ -13,7 +13,11 @@ namespace Blobcheg
         /// <summary>'BCHG' в порядке байтов файла.</summary>
         public const uint Magic = 0x47484342;
 
-        public const ushort Version = 1;
+        /// <summary>
+        /// 2 — появился роутер. Версия общая для всех файлов пакета: они производные и пересобираются
+        /// вместе, а разные версии у базы и роутера были бы лишней осью рассинхрона.
+        /// </summary>
+        public const ushort Version = 2;
 
         /// <summary>Размер header'а и одновременно оффсет первой записи.</summary>
         public const int HeaderSize = 32;
@@ -23,6 +27,9 @@ namespace Blobcheg
 
         /// <summary>Бит flags: в файле есть debug-секция.</summary>
         public const ushort FlagHasDebug = 1 << 0;
+
+        /// <summary>Бит flags: файл — роутер, а не база. Перепутанные отбиваются на подъёме.</summary>
+        public const ushort FlagRouter = 1 << 1;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int AlignUp(int value) => (value + (RecordAlign - 1)) & ~(RecordAlign - 1);
@@ -52,11 +59,13 @@ namespace Blobcheg
 
         public bool HasDebug => (Flags & BlobchegFormat.FlagHasDebug) != 0;
 
+        public bool IsRouter => (Flags & BlobchegFormat.FlagRouter) != 0;
+
         /// <summary>
         /// Проверка при подъёме базы. Не hot path — вызывается раз на базу, поэтому не за дефайном.
         /// Любое расхождение бросает: база либо поднялась целиком, либо игра не поехала.
         /// </summary>
-        public void Validate(string what, int actualLength, ulong actualContentHash)
+        public void Validate(string what, int actualLength, ulong actualContentHash, bool wantRouter = false)
         {
             if (Magic != BlobchegFormat.Magic)
                 throw new InvalidOperationException(
@@ -65,6 +74,11 @@ namespace Blobcheg
             if (Version != BlobchegFormat.Version)
                 throw new InvalidOperationException(
                     $"Blobcheg: '{what}' — версия формата {Version}, читатель понимает {BlobchegFormat.Version}");
+
+            if (IsRouter != wantRouter)
+                throw new InvalidOperationException(
+                    $"Blobcheg: '{what}' — это файл {(IsRouter ? "роутера" : "базы")}, а поднимают его как " +
+                    $"{(wantRouter ? "роутер" : "базу")}");
 
             if (FileLength != (uint)actualLength)
                 throw new InvalidOperationException(

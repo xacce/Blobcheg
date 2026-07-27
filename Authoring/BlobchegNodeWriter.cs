@@ -89,6 +89,35 @@ namespace Blobcheg.Authoring
     {
         internal BlobchegCollector Collector;
         internal BlobchegNodeSo Node;
+        internal BlobchegIdTable Ids;
+
+        /// <summary>
+        /// Свой <see cref="BlobchegId"/> — его можно положить прямо в запись. Известен уже здесь,
+        /// потому что раздаётся по OutTypes, до записи. Роутеров у ноды ноль или несколько —
+        /// исключение, а не догадка.
+        /// </summary>
+        public BlobchegId Id => Ids.Single(Node);
+
+        /// <summary>Свой id в конкретном роутере — форма для ноды, входящей сразу в несколько.</summary>
+        public BlobchegId IdIn<TRouter>() where TRouter : unmanaged, IBlobchegRouter
+            => Ids.Of(Node, typeof(TRouter));
+
+        /// <summary>Id чужой ноды — так одна запись ссылается на другую, не зная её оффсетов.</summary>
+        public BlobchegId IdOf(BlobchegNodeSo other)
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other), "Blobcheg: id несуществующей ноды");
+
+            return Ids.Single(other);
+        }
+
+        public BlobchegId IdOf<TRouter>(BlobchegNodeSo other) where TRouter : unmanaged, IBlobchegRouter
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other), "Blobcheg: id несуществующей ноды");
+
+            return Ids.Of(other, typeof(TRouter));
+        }
 
         /// <summary>Типизированная запись. Домен берётся из маркер-интерфейса <typeparamref name="T"/>.</summary>
         public unsafe void Add<T>(in T record) where T : unmanaged

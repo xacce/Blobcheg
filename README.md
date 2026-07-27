@@ -4,13 +4,17 @@
 файл лежит в памяти целиком, а чтение — реинтерпретация по оффсету. Burst-совместимо,
 `BlobAssetReference` не используется.
 
-Unity 6000.3+, зависимости: Burst, Collections, Mathematics.
+Unity 6000.3+, зависимости: Burst, Collections, Mathematics. Entities — опционально, только под
+бут-группу (сборка `Blobcheg.Entities` гасится сама, если пакета нет).
 
 ## Модель
 
 Одна база = один **домен** = один маркер-интерфейс = один файл. Запись в базе адресуется
 **оффсетом**, и только им: таблиц в файле нет. Оффсет хранит потребитель — в `BlobchegRefSo`,
 sub-asset'е, который пересборка создаёт на пару (нода × домен) и перевыставляет.
+
+Второй адрес — **`BlobchegId`**: имя ноды, общее для всех баз одного роутера. По нему роутер отдаёт
+оффсеты ноды во всех своих базах сразу; см. «Роутер».
 
 Содержимое записи не проверяется: `Read<T>` реинтерпретирует байты. Проверяется целостность файла
 целиком — при подъёме базы, всегда.
@@ -62,7 +66,8 @@ public sealed class WeaponAuthoring : MonoBehaviour
 }
 ```
 
-Подъём базы — своя система, живёт пару кадров:
+Подъём базы руками — своя система, живёт пару кадров (в проекте на Entities её выпускает кодоген,
+см. «Подъём в ECS»):
 
 ```csharp
 public partial struct CombatDbBootSystem : ISystem
@@ -96,6 +101,77 @@ public partial struct CombatDbBootSystem : ISystem
 ref readonly var gun = ref db.Read<GunData>(weapon.gun);   // чужой домен не скомпилируется
 ```
 
+## Роутер: все записи ноды по одному id
+
+Оффсет — прямой путь: знаешь запись на бейке, храни оффсет. Роутер — путь для «на руках только
+имя»: один `uint` вместо пачки оффсетов.
+
+```csharp
+[BlobchegRouter]
+public partial struct GameRouter { }                        // тело дописывает генератор
+
+[Blobcheg(typeof(IHotPathCombatData), "combatData")]        // второй аргумент — имя члена в строке
+public partial struct CombatDb { }
+
+[Blobcheg(typeof(IColdData), "coldData")]
+public partial struct ColdDb { }
+```
+
+Имя члена — это и есть вступление в роутер; без него база живёт сама по себе. Роутер не назван —
+берётся единственный роутер **в сборке этой базы**; их ноль или несколько — ошибка компиляции,
+`Router = typeof(...)` в атрибуте её снимает. **Роутер и его базы обязаны лежать в одной сборке**:
+генератор роутера видит только свою компиляцию. Домен входит максимум в один роутер.
+
+Ссылка в authoring'е — поле, типизированное роутером; бейкер кладёт в компонент `uint`:
+
+```csharp
+public BlobchegIdRef<GameRouter> gun;      // пикер покажет только ноды этого роутера
+...
+AddComponent(entity, new GunRef { id = a.gun.Id });
+```
+
+Чтение:
+
+```csharp
+var row = router.Get(id);                              // неизвестный id — бросает
+ref readonly var hot = ref combatDb.Read<GunData>(row.combatData);   // нет записи — бросает
+if (row.HasColdData) { ... }
+
+uint offset = router.GetCombatData(id);                // бросает и на id, и на отсутствии записи
+if (router.TryGetCombatData(id, out offset)) { ... }   // не бросает никогда
+```
+
+`Get` — метод экземпляра: статикой под Бёрстом он нереализуем (`BC1051`), поэтому роутер живёт
+синглтоном ровно как база. Внутри строки — битовая маска и упакованные оффсеты, `flag → index`
+считается одним `countbits`.
+
+Нода узнаёт свой id **до записи** — он выводится из `OutTypes`, а не из написанного:
+
+```csharp
+public override void Write(ref BlobchegNodeWriter w)
+    => w.Add(new GunData { id = w.Id, twin = w.IdOf(twinNode) });
+```
+
+`w.Id` — свой id, `w.IdIn<GameRouter>()` — если нода входит сразу в несколько роутеров,
+`w.IdOf(node)` — чужой.
+
+Id — позиция строки, а не хеш: правка значений его не двигает, двигают появление и удаление ноды.
+Нумерацию бит кодоген и едитор считают независимо, поэтому сходимость доказывается `LayoutHash`:
+файл, собранный под другой набор баз, не поднимется.
+
+## Подъём в ECS
+
+Если проект на Entities, подъём писать не нужно: объяви базу или роутер `IComponentData` и сошлись
+на сборку `Blobcheg.Entities` — генератор выпустит бут-систему в `BlobchegBootGroup`. Группа стоит в
+начале инициализации, **до** `BeginInitializationEntityCommandBufferSystem`.
+
+```csharp
+[Blobcheg(typeof(IHotPathCombatData), "combatData")]
+public partial struct CombatDb : IComponentData { }   // CombatDbBootSystem выпустит кодоген
+```
+
+Не объявил `IComponentData` — подъём пишется руками (см. ниже), группа при этом остаётся к услугам.
+
 ## Пересборка
 
 Кнопки Save нет. Домены пересобираются по импорту ноды, при входе в PlayMode и перед билдом; перед
@@ -107,13 +183,16 @@ ref readonly var gun = ref db.Read<GunData>(weapon.gun);   // чужой дом�
 записи или ревизия ноды, поэтому нетронутые субсцены не перепекаются.
 
 Выход пересборки — `Assets/StreamingAssets/Blobcheg/{Домен}.bcheg` и манифест домена
-`Assets/Blobcheg/{Домен}.asset`. И то и другое производно от ассетов; в гит их класть не нужно.
+`Assets/Blobcheg/{Домен}.asset`; роутер кладёт туда же `{Роутер}.bcheg` и свой манифест, где ноды
+перечислены в порядке id. Всё это производно от ассетов; в гит класть не нужно.
 
 ## Ошибки и дефайны
 
 Ошибка бросается, а не возвращается: нет `TryX` и нет «вернём false, вызывающий разберётся». Нет
 файла, битый header, не сошлась целостность, две записи одной ноды в домен, обращение к оффсету до
-`Flush`, пустой или чужой `BlobchegRef<T>` — исключение.
+`Flush`, пустой или чужой `BlobchegRef<T>`/`BlobchegIdRef<T>`, неизвестный id, отсутствие записи в
+базе — исключение. Единственное исключение из правила — `TryGet*`/`Has*` у роутера: там отсутствие
+записи и есть нормальный ответ, и они не бросают никогда.
 
 | Дефайн | Что включает |
 |---|---|
@@ -127,8 +206,9 @@ ref readonly var gun = ref db.Read<GunData>(weapon.gun);   // чужой дом�
 | asmdef | что внутри | платформы |
 |---|---|---|
 | `Blobcheg.Core` | формат, транспорт, писатель | все |
-| `Blobcheg.Runtime` | `[Blobcheg]`, `BlobchegBlob`, `BlobchegRefSo`, `BlobchegRef<T>`, генератор | все |
-| `Blobcheg.Authoring` | ноды, пересборка, пикер поля | Editor |
+| `Blobcheg.Runtime` | `[Blobcheg]`, `[BlobchegRouter]`, `BlobchegBlob`, `BlobchegRouterBlob`, `BlobchegId`, ref-поля, генератор | все |
+| `Blobcheg.Entities` | `BlobchegBootGroup` | все, только с Entities |
+| `Blobcheg.Authoring` | ноды, пересборка, реестр роутеров, пикеры полей | Editor |
 
 ## Генератор
 
@@ -142,7 +222,9 @@ ref readonly var gun = ref db.Read<GunData>(weapon.gun);   // чужой дом�
 ## Тесты
 
 ```
-unity test <project> --mode EditMode --filter Blobcheg.Tests
+unity test <project> --mode EditMode --filter Blobcheg
 ```
 
-Пакет должен быть в `testables` манифеста проекта.
+Фильтр по `Blobcheg`, а не по `Blobcheg.Tests`: тесты бут-группы лежат отдельной сборкой
+`Blobcheg.Entities.Tests` (она гасится без Entities). Пакет должен быть в `testables` манифеста
+проекта.

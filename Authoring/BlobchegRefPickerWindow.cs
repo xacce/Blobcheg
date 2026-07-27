@@ -8,7 +8,10 @@ namespace Blobcheg.Authoring
     /// <summary>
     /// Пикер поля-ссылки. Свой, а не нативный: нативный умеет фильтровать только по типу ассета, а
     /// ассет-тип у нас один на всю систему — в списке оказались бы записи всех доменов сразу.
-    /// Здесь список собран по типу записи, поэтому положить чужое просто нечем.
+    /// Здесь список собран заранее (по типу записи или по роутеру), поэтому положить чужое нечем.
+    ///
+    /// Список приходит готовым, а не собирается внутри: окно одно и на записи, и на носители id, и
+    /// знать про них обоих ему незачем.
     /// </summary>
     sealed class BlobchegRefPickerWindow : EditorWindow
     {
@@ -16,23 +19,28 @@ namespace Blobcheg.Authoring
         const float Width = 340f;
         const float Height = 320f;
 
-        List<BlobchegRefSo> _all;
-        List<BlobchegRefSo> _shown;
-        Action<BlobchegRefSo> _pick;
-        Type _recordType;
+        List<ScriptableObject> _all;
+        List<ScriptableObject> _shown;
+        Action<ScriptableObject> _pick;
+        Func<ScriptableObject, string> _hint;
+        string _title;
+        string _empty;
         string _search = string.Empty;
         Vector2 _scroll;
         int _hot = -1;
         bool _focused;
 
-        public static void Open(Rect fieldRect, Type recordType, BlobchegRefSo current, Action<BlobchegRefSo> pick)
+        public static void Open(Rect fieldRect, string title, string empty, List<ScriptableObject> candidates,
+            ScriptableObject current, Func<ScriptableObject, string> hint, Action<ScriptableObject> pick)
         {
             var window = CreateInstance<BlobchegRefPickerWindow>();
-            window._recordType = recordType;
+            window._title = title;
+            window._empty = empty;
             window._pick = pick;
-            window._all = BlobchegRefCatalog.Candidates(recordType);
-            window._shown = window._all;
-            window._hot = current == null ? -1 : window._all.IndexOf(current);
+            window._hint = hint;
+            window._all = candidates;
+            window._shown = candidates;
+            window._hot = current == null ? -1 : candidates.IndexOf(current);
 
             var screen = GUIUtility.GUIToScreenRect(fieldRect);
             window.ShowAsDropDown(screen, new Vector2(Mathf.Max(Width, fieldRect.width), Height));
@@ -40,15 +48,9 @@ namespace Blobcheg.Authoring
 
         void OnGUI()
         {
-            DrawHeader();
+            EditorGUILayout.LabelField(_title, EditorStyles.boldLabel);
             DrawSearch();
             DrawList();
-        }
-
-        void DrawHeader()
-        {
-            var title = _recordType == null ? "Сырые записи" : _recordType.Name;
-            EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
         }
 
         void DrawSearch()
@@ -69,16 +71,16 @@ namespace Blobcheg.Authoring
             _focused = true;
         }
 
-        List<BlobchegRefSo> Filter()
+        List<ScriptableObject> Filter()
         {
             if (string.IsNullOrEmpty(_search))
                 return _all;
 
-            var found = new List<BlobchegRefSo>();
-            foreach (var reference in _all)
+            var found = new List<ScriptableObject>();
+            foreach (var candidate in _all)
             {
-                if (reference.name.IndexOf(_search, StringComparison.OrdinalIgnoreCase) >= 0)
-                    found.Add(reference);
+                if (candidate.name.IndexOf(_search, StringComparison.OrdinalIgnoreCase) >= 0)
+                    found.Add(candidate);
             }
 
             return found;
@@ -87,7 +89,7 @@ namespace Blobcheg.Authoring
         void DrawList()
         {
             var picked = false;
-            BlobchegRefSo choice = null;
+            ScriptableObject choice = null;
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
@@ -95,24 +97,17 @@ namespace Blobcheg.Authoring
                 picked = true;
 
             var selected = Selected();
-            foreach (var reference in _shown)
+            foreach (var candidate in _shown)
             {
-                if (!Row(reference.name, reference, ReferenceEquals(reference, selected)))
+                if (!Row(candidate.name, candidate, ReferenceEquals(candidate, selected)))
                     continue;
 
                 picked = true;
-                choice = reference;
+                choice = candidate;
             }
 
             if (_shown.Count == 0)
-            {
-                EditorGUILayout.HelpBox(
-                    _all.Count == 0
-                        ? "Записей этого типа в проекте нет. Нода, которая его пишет, ещё не создана — " +
-                          "или пересборка не дошла до ref-ассетов."
-                        : "По запросу ничего не нашлось.",
-                    MessageType.Info);
-            }
+                EditorGUILayout.HelpBox(_all.Count == 0 ? _empty : "По запросу ничего не нашлось.", MessageType.Info);
 
             EditorGUILayout.EndScrollView();
 
@@ -124,9 +119,9 @@ namespace Blobcheg.Authoring
             Close();
         }
 
-        BlobchegRefSo Selected() => _hot >= 0 && _hot < _all.Count ? _all[_hot] : null;
+        ScriptableObject Selected() => _hot >= 0 && _hot < _all.Count ? _all[_hot] : null;
 
-        bool Row(string label, BlobchegRefSo reference, bool selected)
+        bool Row(string label, ScriptableObject candidate, bool selected)
         {
             var rect = GUILayoutUtility.GetRect(0, RowHeight, GUILayout.ExpandWidth(true));
 
@@ -135,16 +130,16 @@ namespace Blobcheg.Authoring
                 if (selected)
                     EditorGUI.DrawRect(rect, new Color(0.24f, 0.37f, 0.59f, 1f));
 
-                var content = reference == null
+                var content = candidate == null
                     ? new GUIContent(label)
-                    : new GUIContent(label, AssetPreview.GetMiniThumbnail(reference));
+                    : new GUIContent(label, AssetPreview.GetMiniThumbnail(candidate));
 
                 EditorStyles.label.Draw(rect, content, false, false, selected, false);
 
-                if (reference != null)
+                if (candidate != null && _hint != null)
                 {
-                    var offset = new Rect(rect.xMax - 90f, rect.y, 88f, rect.height);
-                    EditorStyles.miniLabel.Draw(offset, new GUIContent("offset " + reference.offset), false, false, false, false);
+                    var hint = new Rect(rect.xMax - 90f, rect.y, 88f, rect.height);
+                    EditorStyles.miniLabel.Draw(hint, new GUIContent(_hint(candidate)), false, false, false, false);
                 }
             }
 

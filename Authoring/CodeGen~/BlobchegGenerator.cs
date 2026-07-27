@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -7,14 +8,17 @@ using Microsoft.CodeAnalysis.Text;
 namespace Blobcheg.CodeGen
 {
     /// <summary>
-    /// Дописывает партиал базы по <c>[Blobcheg(typeof(IДомен))]</c>. Генератор выпускает ТОЛЬКО
-    /// структуру: ScriptableObject он выпускать не может — у типа из кодогена нет MonoScript, и
-    /// ассетом такой тип не станет.
+    /// Дописывает партиал базы по <c>[Blobcheg(typeof(IДомен))]</c> и партиал роутера по
+    /// <c>[BlobchegRouter]</c>. Генератор выпускает ТОЛЬКО структуры и системы: ScriptableObject он
+    /// выпускать не может — у типа из кодогена нет MonoScript, и ассетом такой тип не станет.
     /// </summary>
     [Generator]
     public sealed class BlobchegGenerator : IIncrementalGenerator
     {
-        const string AttributeName = "Blobcheg.BlobchegAttribute";
+        const string DbAttributeName = "Blobcheg.BlobchegAttribute";
+        const string RouterAttributeName = "Blobcheg.BlobchegRouterAttribute";
+        const string EntitiesAssembly = "Blobcheg.Entities";
+        const string ComponentData = "Unity.Entities.IComponentData";
 
         static readonly DiagnosticDescriptor NotPartial = new DiagnosticDescriptor(
             "BCHG001", "База обязана быть partial",
@@ -31,74 +35,251 @@ namespace Blobcheg.CodeGen
             "В [Blobcheg] у структуры '{0}' передан '{1}' — домен объявляется интерфейсом",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
+        static readonly DiagnosticDescriptor NoRouter = new DiagnosticDescriptor(
+            "BCHG004", "Роутер не определён",
+            "У структуры '{0}' задано имя члена роутера, но роутер не выбран: {1}. " +
+            "Укажи Router = typeof(...) в [Blobcheg]",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
+        static readonly DiagnosticDescriptor RouterNotPartial = new DiagnosticDescriptor(
+            "BCHG005", "Роутер обязан быть partial и не вложенным",
+            "Структура '{0}' помечена [BlobchegRouter], но не объявлена partial или вложена в другой тип",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
+        static readonly DiagnosticDescriptor RouterClash = new DiagnosticDescriptor(
+            "BCHG006", "Роутер собран из противоречивых баз",
+            "Роутер '{0}': {1}",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
+        static readonly DiagnosticDescriptor TooManyDomains = new DiagnosticDescriptor(
+            "BCHG007", "В роутере больше 64 баз",
+            "Роутер '{0}' собран из {1} баз — потолок 64. Это не «мало бит», а неправильно нарезанный проект",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
+        static readonly DiagnosticDescriptor NoEntitiesReference = new DiagnosticDescriptor(
+            "BCHG008", "Нет ссылки на Blobcheg.Entities",
+            "Структура '{0}' объявлена IComponentData — под неё выпускается бут-система, а сборка не " +
+            "референсит Blobcheg.Entities. Добавь ссылку или убери IComponentData",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
         public void Initialize(IncrementalGeneratorInitializationContext context)
         {
-            var bases = context.SyntaxProvider.ForAttributeWithMetadataName(
-                AttributeName,
+            var model = context.CompilationProvider.Select(static (compilation, _) => Model.Build(compilation));
+
+            var databases = context.SyntaxProvider.ForAttributeWithMetadataName(
+                DbAttributeName,
                 static (node, _) => node is StructDeclarationSyntax,
                 static (ctx, _) => ctx);
 
-            context.RegisterSourceOutput(bases, static (source, ctx) =>
-            {
-                var symbol = (INamedTypeSymbol)ctx.TargetSymbol;
-                var declaration = (StructDeclarationSyntax)ctx.TargetNode;
+            var routers = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RouterAttributeName,
+                static (node, _) => node is StructDeclarationSyntax,
+                static (ctx, _) => ctx);
 
-                if (!declaration.Modifiers.Any(m => m.ValueText == "partial"))
-                {
-                    source.ReportDiagnostic(Diagnostic.Create(NotPartial, declaration.Identifier.GetLocation(), symbol.Name));
-                    return;
-                }
-
-                if (symbol.ContainingType != null)
-                {
-                    source.ReportDiagnostic(Diagnostic.Create(Nested, declaration.Identifier.GetLocation(), symbol.Name));
-                    return;
-                }
-
-                var attribute = ctx.Attributes[0];
-                if (attribute.ConstructorArguments.Length != 1
-                    || !(attribute.ConstructorArguments[0].Value is INamedTypeSymbol domain))
-                    return;
-
-                if (domain.TypeKind != TypeKind.Interface)
-                {
-                    source.ReportDiagnostic(Diagnostic.Create(
-                        BadDomain, declaration.Identifier.GetLocation(), symbol.Name, domain.Name));
-                    return;
-                }
-
-                source.AddSource(symbol.Name + ".blobcheg.g.cs",
-                    SourceText.From(Emit(symbol, domain), Encoding.UTF8));
-            });
+            context.RegisterSourceOutput(databases.Combine(model), static (source, pair) => EmitDatabase(source, pair.Left, pair.Right));
+            context.RegisterSourceOutput(routers.Combine(model), static (source, pair) => EmitRouter(source, pair.Left, pair.Right));
         }
 
-        static string Emit(INamedTypeSymbol database, INamedTypeSymbol domain)
+        // ---------------------------------------------------------------- модель
+
+        sealed class DbInfo
         {
+            public string DbName;
+            public string DomainMetadata;
+            public string Member;
+            public string RouterName;
+
+            /// <summary>Роутер назван, но в этой сборке его нет — значит он в чужой.</summary>
+            public string RouterElsewhere;
+        }
+
+        sealed class RouterInfo
+        {
+            public string Name;
+            public readonly List<DbInfo> Dbs = new List<DbInfo>();
+        }
+
+        /// <summary>
+        /// Базы и роутеры ЭТОЙ сборки. Чужие сборки не смотрим намеренно: генератор роутера считает
+        /// биты по списку баз, а видит он только свою компиляцию — база из сборки, которая ссылается
+        /// на роутер, ему не видна, и биты вышли бы посчитанными не по всем.
+        ///
+        /// Отсюда правило: роутер и его базы лежат в одной сборке. Обратный порядок ссылок делу не
+        /// помогает — база, видящая роутер, роутеру не видна by construction.
+        /// </summary>
+        sealed class Model
+        {
+            public readonly List<DbInfo> Dbs = new List<DbInfo>();
+            public readonly Dictionary<string, RouterInfo> Routers = new Dictionary<string, RouterInfo>();
+            public bool HasEntities;
+
+            public static Model Build(Compilation compilation)
+            {
+                var model = new Model
+                {
+                    HasEntities = compilation.ReferencedAssemblyNames.Any(a => a.Name == EntitiesAssembly),
+                };
+
+                var dbAttribute = compilation.GetTypeByMetadataName(DbAttributeName);
+                var routerAttribute = compilation.GetTypeByMetadataName(RouterAttributeName);
+                if (dbAttribute == null || routerAttribute == null)
+                    return model;
+
+                var raw = new List<(INamedTypeSymbol Type, AttributeData Attribute)>();
+
+                foreach (var type in AllTypes(compilation))
+                {
+                    foreach (var attribute in type.GetAttributes())
+                    {
+                        if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, routerAttribute))
+                        {
+                            var name = type.Name;
+                            if (!model.Routers.ContainsKey(name))
+                                model.Routers.Add(name, new RouterInfo { Name = name });
+                        }
+                        else if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, dbAttribute))
+                        {
+                            raw.Add((type, attribute));
+                        }
+                    }
+                }
+
+                foreach (var pair in raw)
+                {
+                    var domain = pair.Attribute.ConstructorArguments.Length > 0
+                        ? pair.Attribute.ConstructorArguments[0].Value as INamedTypeSymbol
+                        : null;
+
+                    if (domain == null)
+                        continue;
+
+                    var info = new DbInfo
+                    {
+                        DbName = pair.Type.Name,
+                        DomainMetadata = MetadataName(domain),
+                        Member = pair.Attribute.ConstructorArguments.Length > 1
+                            ? pair.Attribute.ConstructorArguments[1].Value as string
+                            : null,
+                        RouterName = RouterNameOf(pair.Attribute),
+                    };
+
+                    if (string.IsNullOrEmpty(info.Member))
+                    {
+                        info.Member = null;
+                        info.RouterName = null;
+                    }
+                    else if (info.RouterName == null && model.Routers.Count == 1)
+                    {
+                        info.RouterName = model.Routers.Keys.First();
+                    }
+
+                    if (info.RouterName != null && !model.Routers.ContainsKey(info.RouterName))
+                    {
+                        info.RouterElsewhere = info.RouterName;
+                        info.RouterName = null;
+                    }
+
+                    model.Dbs.Add(info);
+
+                    if (info.RouterName != null && model.Routers.TryGetValue(info.RouterName, out var router))
+                        router.Dbs.Add(info);
+                }
+
+                foreach (var router in model.Routers.Values)
+                    router.Dbs.Sort((a, b) => string.CompareOrdinal(a.DomainMetadata, b.DomainMetadata));
+
+                return model;
+            }
+
+            public DbInfo Find(string dbName) => Dbs.FirstOrDefault(db => db.DbName == dbName);
+
+            static string RouterNameOf(AttributeData attribute)
+            {
+                foreach (var named in attribute.NamedArguments)
+                {
+                    if (named.Key == "Router" && named.Value.Value is INamedTypeSymbol router)
+                        return router.Name;
+                }
+
+                return null;
+            }
+
+            static IEnumerable<INamedTypeSymbol> AllTypes(Compilation compilation)
+                => Walk(compilation.Assembly.GlobalNamespace);
+
+            static IEnumerable<INamedTypeSymbol> Walk(INamespaceSymbol space)
+            {
+                foreach (var type in space.GetTypeMembers())
+                    yield return type;
+
+                foreach (var nested in space.GetNamespaceMembers())
+                {
+                    foreach (var type in Walk(nested))
+                        yield return type;
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------- базы
+
+        static void EmitDatabase(SourceProductionContext source, GeneratorAttributeSyntaxContext ctx, Model model)
+        {
+            var symbol = (INamedTypeSymbol)ctx.TargetSymbol;
+            var declaration = (StructDeclarationSyntax)ctx.TargetNode;
+
+            if (!declaration.Modifiers.Any(m => m.ValueText == "partial"))
+            {
+                source.ReportDiagnostic(Diagnostic.Create(NotPartial, declaration.Identifier.GetLocation(), symbol.Name));
+                return;
+            }
+
+            if (symbol.ContainingType != null)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(Nested, declaration.Identifier.GetLocation(), symbol.Name));
+                return;
+            }
+
+            var attribute = ctx.Attributes[0];
+            if (attribute.ConstructorArguments.Length < 1
+                || !(attribute.ConstructorArguments[0].Value is INamedTypeSymbol domain))
+                return;
+
+            if (domain.TypeKind != TypeKind.Interface)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(
+                    BadDomain, declaration.Identifier.GetLocation(), symbol.Name, domain.Name));
+                return;
+            }
+
+            var info = model.Find(symbol.Name);
+            if (info != null && info.Member != null && info.RouterName == null)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(
+                    NoRouter, declaration.Identifier.GetLocation(), symbol.Name,
+                    info.RouterElsewhere != null
+                        ? $"роутер '{info.RouterElsewhere}' лежит в другой сборке, а роутер и его базы обязаны быть в одной"
+                        : model.Routers.Count == 0
+                            ? "в этой сборке нет ни одного [BlobchegRouter]"
+                            : $"роутеров в сборке сразу {model.Routers.Count}"));
+                return;
+            }
+
+            var boot = Boot(source, symbol, declaration, model);
+
             var text = new StringBuilder();
             var domainFull = domain.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            var space = database.ContainingNamespace.IsGlobalNamespace
-                ? null
-                : database.ContainingNamespace.ToDisplayString();
-
-            text.AppendLine("// <auto-generated/> Blobcheg");
-            text.AppendLine("#pragma warning disable");
-
-            if (space != null)
-            {
-                text.Append("namespace ").AppendLine(space);
-                text.AppendLine("{");
-            }
+            Open(text, symbol, out var space);
 
             // Без unsafe: тип с указателем внутри держится полем и в безопасном коде, а требовать
             // от потребителя allowUnsafeCode ради объявления базы незачем.
-            text.Append("    ").Append(Access(database)).Append(" partial struct ")
-                .Append(database.Name).AppendLine(" : global::System.IDisposable");
+            text.Append("    ").Append(Access(symbol)).Append(" partial struct ")
+                .Append(symbol.Name).AppendLine(" : global::System.IDisposable");
             text.AppendLine("    {");
             text.Append("        public const string DomainName = \"").Append(domain.Name).AppendLine("\";");
             text.AppendLine();
             text.AppendLine("        global::Blobcheg.BlobchegBlob __blob;");
             text.AppendLine();
-            text.Append("        public ").Append(database.Name).AppendLine("(global::Blobcheg.BlobchegBuffer buffer)");
+            text.Append("        public ").Append(symbol.Name).AppendLine("(global::Blobcheg.BlobchegBuffer buffer)");
             text.AppendLine("        {");
             text.AppendLine("            __blob = new global::Blobcheg.BlobchegBlob(buffer, DomainName);");
             text.AppendLine("        }");
@@ -119,13 +300,365 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        public void Dispose() => __blob.Dispose();");
             text.AppendLine("    }");
 
+            if (boot)
+                EmitBootSystem(text, symbol.Name, Access(symbol));
+
+            Close(text, space);
+
+            source.AddSource(symbol.Name + ".blobcheg.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
+        }
+
+        // ---------------------------------------------------------------- роутер
+
+        static void EmitRouter(SourceProductionContext source, GeneratorAttributeSyntaxContext ctx, Model model)
+        {
+            var symbol = (INamedTypeSymbol)ctx.TargetSymbol;
+            var declaration = (StructDeclarationSyntax)ctx.TargetNode;
+
+            if (!declaration.Modifiers.Any(m => m.ValueText == "partial") || symbol.ContainingType != null)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(RouterNotPartial, declaration.Identifier.GetLocation(), symbol.Name));
+                return;
+            }
+
+            if (!model.Routers.TryGetValue(symbol.Name, out var router))
+                return;
+
+            if (router.Dbs.Count == 0)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(RouterClash, declaration.Identifier.GetLocation(),
+                    symbol.Name, "ни одна база в него не вступила — назови член в [Blobcheg(typeof(...), \"имя\")]"));
+                return;
+            }
+
+            if (router.Dbs.Count > 64)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(TooManyDomains, declaration.Identifier.GetLocation(),
+                    symbol.Name, router.Dbs.Count));
+                return;
+            }
+
+            var domains = new HashSet<string>();
+            var members = new HashSet<string>();
+            foreach (var db in router.Dbs)
+            {
+                if (!domains.Add(db.DomainMetadata))
+                {
+                    source.ReportDiagnostic(Diagnostic.Create(RouterClash, declaration.Identifier.GetLocation(),
+                        symbol.Name, $"домен '{db.DomainMetadata}' вступил в него дважды"));
+                    return;
+                }
+
+                if (!members.Add(db.Member))
+                {
+                    source.ReportDiagnostic(Diagnostic.Create(RouterClash, declaration.Identifier.GetLocation(),
+                        symbol.Name, $"имя члена '{db.Member}' занято дважды"));
+                    return;
+                }
+            }
+
+            var maskWidth = MaskWidthFor(router.Dbs.Count);
+            var layoutHash = LayoutHash(router.Dbs, maskWidth);
+            var boot = Boot(source, symbol, declaration, model);
+
+            var text = new StringBuilder();
+            Open(text, symbol, out var space);
+
+            var access = Access(symbol);
+            var enumName = symbol.Name + "Db";
+            var rowName = symbol.Name + "Row";
+
+            // enum бит: ширина по числу баз — она же ширина маски в файле.
+            text.AppendLine("    /// <summary>Базы роутера. Номер бита — позиция домена в отсортированном списке.</summary>");
+            text.AppendLine("    [global::System.Flags]");
+            text.Append("    ").Append(access).Append(" enum ").Append(enumName).Append(" : ")
+                .AppendLine(EnumBase(maskWidth));
+            text.AppendLine("    {");
+            text.AppendLine("        None = 0,");
+            for (var i = 0; i < router.Dbs.Count; i++)
+                text.Append("        ").Append(Pascal(router.Dbs[i].Member)).Append(" = 1").Append(i == 0 ? "" : " << " + i).AppendLine(",");
+            text.AppendLine("    }");
+            text.AppendLine();
+
+            text.AppendLine("    /// <summary>Одна нода во всех базах роутера сразу.</summary>");
+            text.Append("    ").Append(access).Append(" readonly struct ").AppendLine(rowName);
+            text.AppendLine("    {");
+            text.AppendLine("        readonly global::Blobcheg.BlobchegRouterRow __row;");
+            text.AppendLine();
+            text.Append("        internal ").Append(rowName).AppendLine("(global::Blobcheg.BlobchegRouterRow row) => __row = row;");
+            text.AppendLine();
+            text.Append("        public ").Append(enumName).Append(" Mask => (").Append(enumName).AppendLine(")__row.Mask;");
+
+            for (var i = 0; i < router.Dbs.Count; i++)
+            {
+                var db = router.Dbs[i];
+                text.AppendLine();
+                text.Append("        /// <summary>Есть ли запись ноды в базе ").Append(db.DbName).AppendLine(".</summary>");
+                text.Append("        public bool Has").Append(Pascal(db.Member)).Append(" => __row.Has(").Append(i).AppendLine(");");
+                text.AppendLine();
+                text.Append("        /// <summary>Оффсет записи в базе ").Append(db.DbName)
+                    .AppendLine("; записи нет — бросает.</summary>");
+                text.Append("        public uint ").Append(db.Member).Append(" => __row.Offset(").Append(i).AppendLine(");");
+            }
+
+            text.AppendLine("    }");
+            text.AppendLine();
+
+            text.Append("    ").Append(access).Append(" partial struct ").Append(symbol.Name)
+                .AppendLine(" : global::System.IDisposable, global::Blobcheg.IBlobchegRouter");
+            text.AppendLine("    {");
+            text.Append("        public const string RouterName = \"").Append(symbol.Name).AppendLine("\";");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Хеш нумерации бит. Файл, собранный под другой набор баз, не поднимется.</summary>");
+            text.Append("        public const ulong LayoutHash = 0x").Append(layoutHash.ToString("X16")).AppendLine("UL;");
+            text.AppendLine();
+            text.Append("        public const int DomainCount = ").Append(router.Dbs.Count).AppendLine(";");
+            text.AppendLine();
+            text.AppendLine("        global::Blobcheg.BlobchegRouterBlob __router;");
+            text.AppendLine();
+            text.Append("        public ").Append(symbol.Name).AppendLine("(global::Blobcheg.BlobchegBuffer buffer)");
+            text.AppendLine("        {");
+            text.AppendLine("            __router = new global::Blobcheg.BlobchegRouterBlob(buffer, RouterName, DomainCount, LayoutHash);");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Имя файла роутера — его же спрашивает транспорт.</summary>");
+            text.AppendLine("        public static string FileName => global::Blobcheg.BlobchegNaming.FileName(RouterName);");
+            text.AppendLine();
+            text.AppendLine("        public string Name => RouterName;");
+            text.AppendLine();
+            text.AppendLine("        public bool IsCreated => __router.IsCreated;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Строк, то есть нод. Он же потолок валидного id.</summary>");
+            text.AppendLine("        public int Count => __router.Count;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Строка ноды. Неизвестный id — бросает.</summary>");
+            text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+            text.Append("        public ").Append(rowName).Append(" Get(global::Blobcheg.BlobchegId id) => new ")
+                .Append(rowName).AppendLine("(__router.Get(id));");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Строка ноды без исключений: неизвестный id — false.</summary>");
+            text.Append("        public bool TryGet(global::Blobcheg.BlobchegId id, out ").Append(rowName).AppendLine(" row)");
+            text.AppendLine("        {");
+            text.AppendLine("            if (!__router.TryGet(id, out var found))");
+            text.AppendLine("            {");
+            text.AppendLine("                row = default;");
+            text.AppendLine("                return false;");
+            text.AppendLine("            }");
+            text.AppendLine();
+            text.Append("            row = new ").Append(rowName).AppendLine("(found);");
+            text.AppendLine("            return true;");
+            text.AppendLine("        }");
+
+            for (var i = 0; i < router.Dbs.Count; i++)
+            {
+                var db = router.Dbs[i];
+                var pascal = Pascal(db.Member);
+
+                text.AppendLine();
+                text.Append("        /// <summary>Оффсет в базе ").Append(db.DbName)
+                    .AppendLine(". Неизвестный id или отсутствие записи — бросает.</summary>");
+                text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+                text.Append("        public uint Get").Append(pascal)
+                    .Append("(global::Blobcheg.BlobchegId id) => __router.Get(id).Offset(").Append(i).AppendLine(");");
+                text.AppendLine();
+                text.AppendLine("        /// <summary>То же без исключений: не бросает никогда.</summary>");
+                text.Append("        public bool TryGet").Append(pascal)
+                    .AppendLine("(global::Blobcheg.BlobchegId id, out uint offset)");
+                text.AppendLine("        {");
+                text.AppendLine("            if (!__router.TryGet(id, out var row))");
+                text.AppendLine("            {");
+                text.AppendLine("                offset = 0;");
+                text.AppendLine("                return false;");
+                text.AppendLine("            }");
+                text.AppendLine();
+                text.Append("            return row.TryOffset(").Append(i).AppendLine(", out offset);");
+                text.AppendLine("        }");
+                text.AppendLine();
+                text.Append("        public bool Has").Append(pascal)
+                    .Append("(global::Blobcheg.BlobchegId id) => __router.TryGet(id, out var row) && row.Has(")
+                    .Append(i).AppendLine(");");
+            }
+
+            text.AppendLine();
+            text.AppendLine("        public void Dispose() => __router.Dispose();");
+            text.AppendLine("    }");
+
+            if (boot)
+                EmitBootSystem(text, symbol.Name, access);
+
+            Close(text, space);
+
+            source.AddSource(symbol.Name + ".blobcheg.router.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
+        }
+
+        // ---------------------------------------------------------------- бут
+
+        /// <summary>
+        /// Бут-система выпускается на структуру, объявленную <c>IComponentData</c>: это и есть явный
+        /// опт-ин «хочу её синглтоном». Не объявлена — подъём пишется руками, как в v1.
+        /// </summary>
+        static bool Boot(SourceProductionContext source, INamedTypeSymbol symbol,
+            StructDeclarationSyntax declaration, Model model)
+        {
+            var component = symbol.AllInterfaces.Any(i => i.ToDisplayString() == ComponentData);
+            if (!component)
+                return false;
+
+            if (model.HasEntities)
+                return true;
+
+            source.ReportDiagnostic(Diagnostic.Create(NoEntitiesReference, declaration.Identifier.GetLocation(), symbol.Name));
+            return false;
+        }
+
+        /// <summary>
+        /// Только SystemState, EntityManager и EntityQuery: генераторы не видят выход друг друга,
+        /// поэтому SystemAPI в выпущенной системе Unity'шный генератор уже не обработает.
+        /// </summary>
+        static void EmitBootSystem(StringBuilder text, string typeName, string access)
+        {
+            text.AppendLine();
+            text.Append("    /// <summary>Подъём '").Append(typeName).AppendLine("' в синглтон. Выпущен кодогеном.</summary>");
+            text.AppendLine("    [global::Unity.Entities.UpdateInGroup(typeof(global::Blobcheg.BlobchegBootGroup))]");
+            text.Append("    ").Append(access).Append(" partial struct ").Append(typeName)
+                .AppendLine("BootSystem : global::Unity.Entities.ISystem");
+            text.AppendLine("    {");
+            text.AppendLine("        global::Blobcheg.BlobchegLoad __load;");
+            text.AppendLine("        global::Unity.Entities.EntityQuery __query;");
+            text.AppendLine("        bool __created;");
+            text.AppendLine();
+            text.AppendLine("        public void OnCreate(ref global::Unity.Entities.SystemState state)");
+            text.AppendLine("        {");
+            text.Append("            __load = global::Blobcheg.BlobchegTransport.Default.Read(").Append(typeName)
+                .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
+            text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadOnly<")
+                .Append(typeName).AppendLine(">());");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        public void OnUpdate(ref global::Unity.Entities.SystemState state)");
+            text.AppendLine("        {");
+            text.AppendLine("            if (!__load.Poll())");
+            text.AppendLine("                return;");
+            text.AppendLine();
+            text.Append("            state.EntityManager.CreateSingleton(new ").Append(typeName)
+                .AppendLine("(__load.Acquire()));");
+            text.AppendLine("            __created = true;");
+            text.AppendLine("            state.Enabled = false;");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        public void OnDestroy(ref global::Unity.Entities.SystemState state)");
+            text.AppendLine("        {");
+            text.AppendLine("            if (__created)");
+            text.AppendLine("            {");
+            text.Append("                var value = __query.GetSingleton<").Append(typeName).AppendLine(">();");
+            text.AppendLine("                value.Dispose();");
+            text.AppendLine("            }");
+            text.AppendLine("            else");
+            text.AppendLine("            {");
+            text.AppendLine("                __load.Dispose();");
+            text.AppendLine("            }");
+            text.AppendLine("        }");
+            text.AppendLine("    }");
+        }
+
+        // ---------------------------------------------------------------- мелочь
+
+        static void Open(StringBuilder text, INamedTypeSymbol symbol, out string space)
+        {
+            space = symbol.ContainingNamespace.IsGlobalNamespace ? null : symbol.ContainingNamespace.ToDisplayString();
+
+            text.AppendLine("// <auto-generated/> Blobcheg");
+            text.AppendLine("#pragma warning disable");
+
+            if (space == null)
+                return;
+
+            text.Append("namespace ").AppendLine(space);
+            text.AppendLine("{");
+        }
+
+        static void Close(StringBuilder text, string space)
+        {
             if (space != null)
                 text.AppendLine("}");
-
-            return text.ToString();
         }
 
         static string Access(INamedTypeSymbol symbol)
             => symbol.DeclaredAccessibility == Accessibility.Public ? "public" : "internal";
+
+        static string EnumBase(int maskWidth)
+        {
+            switch (maskWidth)
+            {
+                case 1: return "byte";
+                case 2: return "ushort";
+                case 4: return "uint";
+                default: return "ulong";
+            }
+        }
+
+        static int MaskWidthFor(int domainCount)
+        {
+            if (domainCount <= 8)
+                return 1;
+            if (domainCount <= 16)
+                return 2;
+            if (domainCount <= 32)
+                return 4;
+            return 8;
+        }
+
+        static string Pascal(string member)
+        {
+            if (string.IsNullOrEmpty(member))
+                return member;
+
+            return char.ToUpperInvariant(member[0]) + member.Substring(1);
+        }
+
+        /// <summary>Имя как его видит рефлексия: вложенные через '+'. Едитор считает хеш по нему же.</summary>
+        static string MetadataName(INamedTypeSymbol symbol)
+        {
+            var name = symbol.MetadataName;
+
+            for (var owner = symbol.ContainingType; owner != null; owner = owner.ContainingType)
+                name = owner.MetadataName + "+" + name;
+
+            return symbol.ContainingNamespace.IsGlobalNamespace
+                ? name
+                : symbol.ContainingNamespace.ToDisplayString() + "." + name;
+        }
+
+        /// <summary>
+        /// fnv1a-64 по доменам и именам членов в порядке бит плюс ширина маски. Продублирован в
+        /// <c>BlobchegRouterFormat.LayoutHash</c> — менять только парно, на этом стоит вся сходимость
+        /// нумерации бит между кодогеном и едитором.
+        /// </summary>
+        static ulong LayoutHash(IReadOnlyList<DbInfo> dbs, int maskWidth)
+        {
+            const ulong prime = 1099511628211;
+            var hash = 14695981039346656037;
+
+            foreach (var db in dbs)
+            {
+                Feed(db.DomainMetadata);
+                Feed("\n");
+                Feed(db.Member);
+                Feed("\n");
+            }
+
+            hash ^= (byte)maskWidth;
+            hash *= prime;
+            return hash;
+
+            void Feed(string value)
+            {
+                foreach (var b in Encoding.UTF8.GetBytes(value ?? string.Empty))
+                {
+                    hash ^= b;
+                    hash *= prime;
+                }
+            }
+        }
     }
 }

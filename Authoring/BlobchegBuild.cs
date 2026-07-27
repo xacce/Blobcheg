@@ -11,16 +11,18 @@ namespace Blobcheg.Authoring
     public struct BlobchegBuildReport
     {
         public int Domains;
+        public int Routers;
         public int Records;
         public int ChangedFiles;
+        public int ChangedManifests;
         public int ChangedRefs;
         public int RemovedRefs;
 
-        public bool Changed => ChangedFiles > 0 || ChangedRefs > 0 || RemovedRefs > 0;
+        public bool Changed => ChangedFiles > 0 || ChangedRefs > 0 || RemovedRefs > 0 || ChangedManifests > 0;
 
         public override string ToString()
-            => $"домены {Domains}, записи {Records}, переписано файлов {ChangedFiles}, " +
-               $"обновлено ref'ов {ChangedRefs}, удалено {RemovedRefs}";
+            => $"домены {Domains}, роутеры {Routers}, записи {Records}, переписано файлов {ChangedFiles}, " +
+               $"манифестов {ChangedManifests}, обновлено ref'ов {ChangedRefs}, удалено {RemovedRefs}";
     }
 
     /// <summary>
@@ -51,6 +53,10 @@ namespace Blobcheg.Authoring
             var collector = new BlobchegCollector(OutputDirectory);
             var nodes = FindNodes();
 
+            // Id раздаются ДО записи: они выводятся из OutTypes, а не из того, что нода написала,
+            // поэтому нода может положить свой id прямо в запись за один проход.
+            var ids = BlobchegIdTable.Assign(nodes);
+
             // Писатель открывается на КАЖДЫЙ объявленный домен, даже пустой: иначе домен, из
             // которого удалили последнюю ноду, остался бы на диске старым файлом.
             foreach (var domain in BlobchegDomains.All)
@@ -58,7 +64,7 @@ namespace Blobcheg.Authoring
 
             foreach (var node in nodes)
             {
-                var writer = new BlobchegNodeWriter { Collector = collector, Node = node };
+                var writer = new BlobchegNodeWriter { Collector = collector, Node = node, Ids = ids };
                 node.Write(ref writer);
 
                 foreach (var domain in BlobchegDomains.DomainsOf(node))
@@ -78,8 +84,13 @@ namespace Blobcheg.Authoring
                     report.ChangedFiles++;
             }
 
+            // Роутеры собираются ПОСЛЕ Flush: до него оффсетов, из которых состоят строки, не
+            // существует вовсе.
+            BuildRouters(collector, ids, ref report);
+
             SyncRefs(collector, nodes, ref report);
-            SyncManifests(collector, nodes);
+            SyncIds(ids, nodes, ref report);
+            SyncManifests(collector, nodes, ref report);
 
             if (report.Changed)
             {
@@ -218,38 +229,214 @@ namespace Blobcheg.Authoring
             }
         }
 
-        static void SyncManifests(BlobchegCollector collector, List<BlobchegNodeSo> nodes)
+        /// <summary>
+        /// Файл роутера: строка на ноду в порядке id, в строке — оффсеты во всех базах роутера, где
+        /// нода есть. Пустая строка допустима: нода могла войти в роутер одной базой из десяти.
+        /// </summary>
+        static void BuildRouters(BlobchegCollector collector, BlobchegIdTable ids, ref BlobchegBuildReport report)
+        {
+            if (BlobchegRouters.All.Length == 0)
+                return;
+
+            var offsets = new Dictionary<(BlobchegNodeSo, Type), uint>();
+            foreach (var entry in collector.Entries)
+                offsets[(entry.Node, entry.Domain)] = collector.Writers[entry.Domain].OffsetOf(entry.Ticket);
+
+            foreach (var router in BlobchegRouters.All)
+            {
+                // Сверка с кодогеном до записи файла: собрать файл под одну нумерацию бит, а читать
+                // кодом под другую — ровно то расхождение, ради которого заведён LayoutHash.
+                BlobchegRouters.RequireCodeGenAgrees(router);
+
+                var domains = BlobchegRouters.DomainsOf(router);
+                var name = BlobchegRouters.NameOf(router);
+                var writer = BlobchegRouterWriter.Open(
+                    OutputDirectory, name, domains.Length, BlobchegRouters.LayoutHashOf(router));
+
+                var members = ids.NodesOf(router);
+                var cells = new List<BlobchegRouterCell>();
+
+                foreach (var node in members)
+                {
+                    cells.Clear();
+                    for (var bit = 0; bit < domains.Length; bit++)
+                    {
+                        if (offsets.TryGetValue((node, domains[bit]), out var offset))
+                            cells.Add(new BlobchegRouterCell(bit, offset));
+                    }
+
+                    writer.Append(node.name, cells);
+                }
+
+                writer.Flush(WithDebug);
+
+                report.Routers++;
+                if (writer.FileChanged)
+                    report.ChangedFiles++;
+
+                SyncRouterManifest(name, writer, members, ref report);
+            }
+        }
+
+        static void SyncRouterManifest(string name, BlobchegRouterWriter writer,
+            IReadOnlyList<BlobchegNodeSo> members, ref BlobchegBuildReport report)
+        {
+            // Порядок нод в манифесте — порядок id. Это и есть таблица «id → нода» для глаз.
+            SyncManifest(name, true, members.ToArray(), writer.RowCount,
+                writer.ContentHash, writer.FileChanged, ref report);
+        }
+
+        /// <summary>Носители id: по одному sub-ассету на пару (нода × роутер).</summary>
+        static void SyncIds(BlobchegIdTable ids, List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
+        {
+            var wanted = new HashSet<BlobchegIdSo>();
+
+            foreach (var router in BlobchegRouters.All)
+            {
+                var name = BlobchegRouters.NameOf(router);
+                var members = ids.NodesOf(router);
+
+                foreach (var node in members)
+                    wanted.Add(UpsertId(node, name, ids.Of(node, router), ref report));
+            }
+
+            foreach (var node in nodes)
+            {
+                foreach (var stale in IdsOf(node).Where(id => !wanted.Contains(id)).ToList())
+                {
+                    AssetDatabase.RemoveObjectFromAsset(stale);
+                    UnityEngine.Object.DestroyImmediate(stale, true);
+                    report.RemovedRefs++;
+                }
+            }
+        }
+
+        static BlobchegIdSo UpsertId(BlobchegNodeSo node, string routerName, BlobchegId id, ref BlobchegBuildReport report)
+        {
+            var wantedName = node.name + "_" + routerName;
+
+            var carrier = IdsOf(node).FirstOrDefault(existing => existing.RouterName == routerName);
+            if (carrier == null)
+            {
+                carrier = ScriptableObject.CreateInstance<BlobchegIdSo>();
+                carrier.name = wantedName;
+                carrier.routerName = routerName;
+                AssetDatabase.AddObjectToAsset(carrier, node);
+            }
+            else if (carrier.id == id.Value && carrier.name == wantedName)
+            {
+                return carrier;
+            }
+
+            carrier.name = wantedName;
+            carrier.routerName = routerName;
+            carrier.id = id.Value;
+
+            AssetDatabase.SetLabels(carrier, new[] { "BlobchegId", routerName });
+            EditorUtility.SetDirty(carrier);
+            report.ChangedRefs++;
+            return carrier;
+        }
+
+        /// <summary>Носители id ноды — по одному на роутер, в который она входит.</summary>
+        public static IEnumerable<BlobchegIdSo> IdsOf(BlobchegNodeSo node)
+        {
+            var path = AssetDatabase.GetAssetPath(node);
+            if (string.IsNullOrEmpty(path))
+                yield break;
+
+            foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path))
+            {
+                if (asset is BlobchegIdSo carrier)
+                    yield return carrier;
+            }
+        }
+
+        static void SyncManifests(BlobchegCollector collector, List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
         {
             foreach (var pair in collector.Writers)
             {
                 var domainName = BlobchegDomains.NameOf(pair.Key);
-                var manifest = LoadOrCreateManifest(domainName);
+                var members = nodes.Where(n => Array.IndexOf(n.OutTypes, pair.Key) >= 0).ToArray();
 
-                manifest.domainName = domainName;
-                manifest.fileName = BlobchegNaming.FileName(domainName);
-                manifest.recordCount = pair.Value.RecordCount;
-                manifest.nodes = nodes.Where(n => Array.IndexOf(n.OutTypes, pair.Key) >= 0).ToArray();
-
-                if (manifest.ContentHash == pair.Value.ContentHash && !pair.Value.FileChanged)
-                    continue;
-
-                manifest.ContentHash = pair.Value.ContentHash;
-                manifest.builtAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-                EditorUtility.SetDirty(manifest);
+                SyncManifest(domainName, false, members, pair.Value.RecordCount,
+                    pair.Value.ContentHash, pair.Value.FileChanged, ref report);
             }
         }
 
-        static BlobchegDomainSo LoadOrCreateManifest(string domainName)
+        /// <summary>
+        /// Манифест переписывается, если ХОТЬ ЧТО-ТО в нём разошлось с собранным — не только хеш.
+        /// Иначе манифест, созданный в заход, где больше ничего не изменилось, так и остаётся на
+        /// диске пустой заготовкой: <c>CreateAsset</c> пишет его до заполнения полей, а
+        /// <c>SaveAssets</c> в таком заходе не зовётся вовсе.
+        /// </summary>
+        static void SyncManifest(string name, bool isRouter, BlobchegNodeSo[] members, int recordCount,
+            ulong contentHash, bool fileChanged, ref BlobchegBuildReport report)
+        {
+            var fileName = BlobchegNaming.FileName(name);
+            var manifest = LoadOrCreateManifest(name, out var created);
+
+            var same = !created
+                       && !fileChanged
+                       && manifest.isRouter == isRouter
+                       && manifest.domainName == name
+                       && manifest.fileName == fileName
+                       && manifest.recordCount == recordCount
+                       && manifest.ContentHash == contentHash
+                       && SameNodes(manifest.nodes, members);
+
+            if (same)
+                return;
+
+            manifest.isRouter = isRouter;
+            manifest.domainName = name;
+            manifest.fileName = fileName;
+            manifest.recordCount = recordCount;
+            manifest.nodes = members;
+            manifest.ContentHash = contentHash;
+            manifest.builtAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            // Пишется адресно, а не общим SaveAssets в конце: свежесозданный CreateAsset'ом манифест
+            // база успевает перечитать с диска (пустой заготовкой, какой он был до заполнения полей),
+            // и заполнение теряется молча.
+            EditorUtility.SetDirty(manifest);
+            AssetDatabase.SaveAssetIfDirty(manifest);
+            report.ChangedManifests++;
+        }
+
+        static bool SameNodes(BlobchegNodeSo[] were, BlobchegNodeSo[] are)
+        {
+            if (were == null || were.Length != are.Length)
+                return false;
+
+            // Сравнение Unity'шным ==, а не ReferenceEquals: реимпорт ассета меняет managed-обёртку,
+            // оставляя тот же объект — на ReferenceEquals манифест «менялся» бы каждую пересборку.
+            for (var i = 0; i < are.Length; i++)
+            {
+                if (were[i] != are[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        static BlobchegDomainSo LoadOrCreateManifest(string domainName, out bool created)
         {
             var path = ManifestFolder + "/" + domainName + ".asset";
             var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(path);
+            created = manifest == null;
             if (manifest != null)
                 return manifest;
 
             Directory.CreateDirectory(ManifestFolder);
+            AssetDatabase.ImportAsset(ManifestFolder);
+
             manifest = ScriptableObject.CreateInstance<BlobchegDomainSo>();
             AssetDatabase.CreateAsset(manifest, path);
-            return manifest;
+
+            // Дальше работаем с тем объектом, который держит база, а не с тем, который ей отдали:
+            // после CreateAsset это не обязательно один и тот же экземпляр.
+            return AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(path) ?? manifest;
         }
     }
 }

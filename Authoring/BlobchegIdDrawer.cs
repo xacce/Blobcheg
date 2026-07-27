@@ -8,16 +8,11 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Драйвер поля-обёртки. Тип поля держит компилятор, а этот слой не даёт положить в
-    /// <c>BlobchegRef&lt;GunData&gt;</c> ассет чужой записи — ни пикером, ни перетаскиванием.
-    /// Пустое поле и чужая запись подсвечиваются: молча нулевой оффсет не поедет.
-    ///
-    /// Поле рисуется своё, а не <c>EditorGUI.ObjectField</c>: нативный пикер фильтрует только по
-    /// типу ассета, а ассет-тип у нас один на всю систему — в списке лежали бы записи всех доменов.
+    /// Драйвер поля-id. Роутер держит компилятор параметром типа, а этот слой не даёт положить в
+    /// <c>BlobchegIdRef&lt;GameRouter&gt;</c> носитель чужого роутера — ни пикером, ни перетаскиванием.
     /// </summary>
-    [CustomPropertyDrawer(typeof(BlobchegRef<>), true)]
-    [CustomPropertyDrawer(typeof(BlobchegRawRef), true)]
-    public sealed class BlobchegRefDrawer : PropertyDrawer
+    [CustomPropertyDrawer(typeof(BlobchegIdRef<>), true)]
+    public sealed class BlobchegIdDrawer : PropertyDrawer
     {
         const float Gap = 2f;
         const float PingWidth = 26f;
@@ -31,8 +26,8 @@ namespace Blobcheg.Authoring
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
             var asset = property.FindPropertyRelative("asset");
-            var expected = ExpectedRecordType(fieldInfo);
-            var current = asset.objectReferenceValue as BlobchegRefSo;
+            var router = ExpectedRouterName(fieldInfo);
+            var current = asset.objectReferenceValue as BlobchegIdSo;
 
             var line = new Rect(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
 
@@ -42,10 +37,10 @@ namespace Blobcheg.Authoring
             var field = new Rect(body.x, body.y, body.width - PingWidth - Gap, body.height);
             var ping = new Rect(field.xMax + Gap, body.y, PingWidth, body.height);
 
-            DragAndDropInto(field, expected, asset);
+            DragAndDropInto(field, router, asset);
 
-            if (GUI.Button(field, Caption(current, expected), EditorStyles.objectField))
-                OpenPicker(field, property, expected, current);
+            if (GUI.Button(field, Caption(current, router), EditorStyles.objectField))
+                OpenPicker(field, property, router, current);
 
             using (new EditorGUI.DisabledScope(current == null))
             {
@@ -66,43 +61,41 @@ namespace Blobcheg.Authoring
             EditorGUI.EndProperty();
         }
 
-        static GUIContent Caption(BlobchegRefSo current, Type expected)
+        static GUIContent Caption(BlobchegIdSo current, string router)
         {
             if (current == null)
-                return new GUIContent("Нет ссылки (" + (expected == null ? "сырая запись" : expected.Name) + ")");
+                return new GUIContent("Нет ноды (" + (router ?? "роутер не определён") + ")");
 
             return new GUIContent(current.name, AssetPreview.GetMiniThumbnail(current));
         }
 
-        static void OpenPicker(Rect field, SerializedProperty property, Type expected, BlobchegRefSo current)
+        static void OpenPicker(Rect field, SerializedProperty property, string router, BlobchegIdSo current)
         {
             // SerializedProperty живёт до конца кадра, а пикер отвечает позже — поэтому запоминаем
             // объект и путь, а свойство ищем заново в момент выбора.
             var serialized = property.serializedObject;
             var path = property.propertyPath;
-
-            var candidates = BlobchegRefCatalog.Candidates(expected).ConvertAll(r => (ScriptableObject)r);
+            var candidates = BlobchegIdCatalog.Candidates(router).ConvertAll(c => (ScriptableObject)c);
 
             BlobchegRefPickerWindow.Open(field,
-                expected == null ? "Сырые записи" : expected.Name,
-                "Записей этого типа в проекте нет. Нода, которая его пишет, ещё не создана — " +
-                "или пересборка не дошла до ref-ассетов.",
+                router ?? "Ноды роутера",
+                "Нод этого роутера в проекте нет — или пересборка не дошла до носителей id.",
                 candidates,
                 current,
-                asset => "offset " + ((BlobchegRefSo)asset).offset,
+                asset => "id " + ((BlobchegIdSo)asset).id,
                 picked =>
-            {
-                var found = serialized.FindProperty(path);
-                if (found == null)
-                    return;
+                {
+                    var found = serialized.FindProperty(path);
+                    if (found == null)
+                        return;
 
-                found.FindPropertyRelative("asset").objectReferenceValue = picked;
-                serialized.ApplyModifiedProperties();
-                InternalEditorUtility.RepaintAllViews();
-            });
+                    found.FindPropertyRelative("asset").objectReferenceValue = picked;
+                    serialized.ApplyModifiedProperties();
+                    InternalEditorUtility.RepaintAllViews();
+                });
         }
 
-        static void DragAndDropInto(Rect field, Type expected, SerializedProperty asset)
+        static void DragAndDropInto(Rect field, string router, SerializedProperty asset)
         {
             var evt = Event.current;
             if (evt.type != EventType.DragUpdated && evt.type != EventType.DragPerform)
@@ -112,10 +105,10 @@ namespace Blobcheg.Authoring
                 return;
 
             var dragged = DragAndDrop.objectReferences.Length == 1
-                ? DragAndDrop.objectReferences[0] as BlobchegRefSo
+                ? DragAndDrop.objectReferences[0] as BlobchegIdSo
                 : null;
 
-            var fits = BlobchegRefCatalog.Matches(dragged, expected);
+            var fits = BlobchegIdCatalog.Matches(dragged, router);
             DragAndDrop.visualMode = fits ? DragAndDropVisualMode.Link : DragAndDropVisualMode.Rejected;
 
             if (fits && evt.type == EventType.DragPerform)
@@ -129,19 +122,19 @@ namespace Blobcheg.Authoring
 
         string Problem(SerializedProperty property)
         {
-            var asset = property.FindPropertyRelative("asset").objectReferenceValue as BlobchegRefSo;
+            var asset = property.FindPropertyRelative("asset").objectReferenceValue as BlobchegIdSo;
             if (asset == null)
-                return "запись не назначена";
+                return "нода не назначена";
 
-            var expected = ExpectedRecordType(fieldInfo);
-            if (!BlobchegRefCatalog.Matches(asset, expected))
-                return $"чужая запись: '{asset.RecordType}' вместо '{expected?.FullName}'";
+            var router = ExpectedRouterName(fieldInfo);
+            if (!BlobchegIdCatalog.Matches(asset, router))
+                return $"чужой роутер: '{asset.RouterName}' вместо '{router}'";
 
             return null;
         }
 
-        /// <summary>Тип записи из параметра поля. <c>null</c> — сырой ref, проверять нечего.</summary>
-        static Type ExpectedRecordType(FieldInfo field)
+        /// <summary>Имя роутера из параметра поля.</summary>
+        static string ExpectedRouterName(FieldInfo field)
         {
             var type = field.FieldType;
 
@@ -150,8 +143,8 @@ namespace Blobcheg.Authoring
             else if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
                 type = type.GetGenericArguments()[0];
 
-            if (type != null && type.IsGenericType && type.GetGenericTypeDefinition() == typeof(BlobchegRef<>))
-                return type.GetGenericArguments()[0];
+            if (type != null && type.IsGenericType && type.GetGenericTypeDefinition() == typeof(BlobchegIdRef<>))
+                return BlobchegIdCatalog.RouterNameOf(type.GetGenericArguments()[0]);
 
             return null;
         }

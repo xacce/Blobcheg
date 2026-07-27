@@ -9,6 +9,9 @@ namespace Blobcheg.Authoring
     /// </summary>
     public sealed class BlobchegDomainSo : ScriptableObject
     {
+        /// <summary>Манифест роутера, а не домена: тогда <c>nodes</c> идут в порядке id.</summary>
+        public bool isRouter;
+
         public string domainName;
         public string fileName;
         public string builtAt;

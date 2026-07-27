@@ -25,8 +25,11 @@ namespace Blobcheg.Tests
         public float Hp;
     }
 
-    /// <summary>Объявление базы. Всё тело дописывает генератор — если он не отработал, тест не соберётся.</summary>
-    [Blobcheg(typeof(ITestCombatData))]
+    /// <summary>
+    /// Объявление базы. Всё тело дописывает генератор — если он не отработал, тест не соберётся.
+    /// Имя члена вступает в роутер: роутер в сборке один, поэтому называть его не нужно.
+    /// </summary>
+    [Blobcheg(typeof(ITestCombatData), "combat")]
     public partial struct TestCombatDb
     {
     }
@@ -81,13 +84,7 @@ namespace Blobcheg.Tests
         public void TearDown()
         {
             AssetDatabase.DeleteAsset(_folder);
-            AssetDatabase.DeleteAsset(BlobchegBuild.ManifestFolder + "/ITestCombatData.asset");
-
-            var file = Path.Combine(BlobchegBuild.OutputDirectory, BlobchegNaming.FileName("ITestCombatData"));
-            if (File.Exists(file))
-                File.Delete(file);
-
-            AssetDatabase.Refresh();
+            BlobchegTestArtifacts.Wipe();
         }
 
         T Create<T>(string name) where T : ScriptableObject
@@ -151,7 +148,8 @@ namespace Blobcheg.Tests
 
             var again = BlobchegBuild.RebuildAll();
             Assert.That(again.Changed, Is.False,
-                "ничего не изменилось — не должен быть тронут ни файл, ни один ассет, иначе всё перепечётся");
+                "ничего не изменилось — не должен быть тронут ни файл, ни один ассет, иначе всё перепечётся. " +
+                $"Отчёт: {again}");
         }
 
         [Test]
