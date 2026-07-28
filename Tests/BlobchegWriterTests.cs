@@ -123,6 +123,96 @@ namespace Blobcheg.Tests
         }
 
         [Test]
+        public void Заявленный_адрес_остаётся_за_записью_а_новая_садится_в_хвост()
+        {
+            var before = BlobchegWriter.Open(_dir, "Domain");
+            var only = before.Append(Rec("Gun", "b", 1));
+            before.Flush();
+            var kept = before.OffsetOf(only);
+
+            var after = BlobchegWriter.Open(_dir, "Domain");
+            var newcomer = after.Append(Rec("Gun", "a", 5));
+            var old = after.Append(Rec("Gun", "b", 1));
+            after.Claim(old, kept);
+            after.Flush();
+
+            Assert.That(after.OffsetOf(old), Is.EqualTo(kept), "прежний адрес обязан остаться за прежней записью");
+            Assert.That(after.OffsetOf(newcomer), Is.GreaterThan(kept),
+                "новая запись садится в хвост, хотя по ключу шла бы первой — иначе она сдвинет чужой адрес");
+        }
+
+        [Test]
+        public void Удалённая_запись_оставляет_дырку_а_соседи_не_едут()
+        {
+            var before = BlobchegWriter.Open(_dir, "Domain");
+            var a = before.Append(Rec("Gun", "a", 1));
+            var b = before.Append(Rec("Gun", "b", 2));
+            var c = before.Append(Rec("Gun", "c", 3));
+            before.Flush();
+            var keptA = before.OffsetOf(a);
+            var keptC = before.OffsetOf(c);
+            Assert.That(before.OffsetOf(b), Is.GreaterThan(keptA));
+
+            var after = BlobchegWriter.Open(_dir, "Domain");
+            var a2 = after.Append(Rec("Gun", "a", 1));
+            var c2 = after.Append(Rec("Gun", "c", 3));
+            after.Claim(a2, keptA);
+            after.Claim(c2, keptC);
+            after.Flush();
+
+            Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA));
+            Assert.That(after.OffsetOf(c2), Is.EqualTo(keptC), "дырка от удалённой записи не подтягивает следующую");
+        }
+
+        [Test]
+        public void Наехавшая_заявка_уступает_соседке_и_уезжает_в_хвост()
+        {
+            var before = BlobchegWriter.Open(_dir, "Domain");
+            var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
+            var b = before.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            before.Flush();
+            var keptA = before.OffsetOf(a);
+            var keptB = before.OffsetOf(b);
+
+            // Сырая запись выросла и накрыла место соседки: место остаётся за той, что раньше.
+            var after = BlobchegWriter.Open(_dir, "Domain");
+            var a2 = after.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
+            var b2 = after.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            after.Claim(a2, keptA);
+            after.Claim(b2, keptB);
+            after.Flush();
+
+            Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA));
+            Assert.That(after.OffsetOf(b2), Is.GreaterThanOrEqualTo(keptA + 40),
+                "наложения в файле быть не может: потерявшая место запись уезжает в хвост");
+        }
+
+        [Test]
+        public void Мусорная_заявка_раскладку_не_ломает()
+        {
+            var plain = BlobchegWriter.Open(_dir, "Plain");
+            var expected = plain.Append(Rec("Gun", "a", 1));
+            plain.Flush();
+
+            var claimed = BlobchegWriter.Open(_dir, "Claimed");
+            var ticket = claimed.Append(Rec("Gun", "a", 1));
+            claimed.Claim(ticket, 7);
+            claimed.Flush();
+
+            Assert.That(claimed.OffsetOf(ticket), Is.EqualTo(plain.OffsetOf(expected)),
+                "адрес не по выравниванию — не адрес; запись получает место как новая");
+        }
+
+        [Test]
+        public void Claim_после_Flush_бросает()
+        {
+            var writer = BlobchegWriter.Open(_dir, "Domain");
+            var ticket = writer.Append(Rec("Gun", "a", 1));
+            writer.Flush();
+            Assert.Throws<InvalidOperationException>(() => writer.Claim(ticket, BlobchegFormat.HeaderSize));
+        }
+
+        [Test]
         public void Две_записи_одной_ноды_в_домен_бросают()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");

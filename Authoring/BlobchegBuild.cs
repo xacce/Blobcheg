@@ -56,11 +56,17 @@ namespace Blobcheg.Authoring
             using (BlobchegProfile.Section("FindNodes"))
                 nodes = FindNodes();
 
+            // Носители читаются один раз на всю пересборку: они и журнал уже выданных адресов, и
+            // то, что в конце придётся сверить и переписать.
+            BlobchegCarriers carriers;
+            using (BlobchegProfile.Section("Чтение носителей"))
+                carriers = BlobchegCarriers.Read(nodes);
+
             // Id раздаются ДО записи: они выводятся из OutTypes, а не из того, что нода написала,
             // поэтому нода может положить свой id прямо в запись за один проход.
             BlobchegIdTable ids;
             using (BlobchegProfile.Section("Assign id'ов"))
-                ids = BlobchegIdTable.Assign(nodes);
+                ids = BlobchegIdTable.Assign(nodes, carriers);
 
             // Писатель открывается на КАЖДЫЙ объявленный домен, даже пустой: иначе домен, из
             // которого удалили последнюю ноду, остался бы на диске старым файлом.
@@ -80,6 +86,19 @@ namespace Blobcheg.Authoring
                             throw new InvalidOperationException(
                                 $"Blobcheg: нода '{node.name}' объявила домен '{domain.Name}' в OutTypes, но ничего в него не написала");
                     }
+                }
+            }
+
+            // Адреса прошлой пересборки уходят писателю ДО Flush: раскладка обязана оставить
+            // нетронутые записи на их местах, иначе каждая новая нода двигает чужие адреса, а на
+            // них через DependsOn завязаны запечённые субсцены.
+            using (BlobchegProfile.Section("Заявки на прежние адреса"))
+            {
+                foreach (var entry in collector.Entries)
+                {
+                    var reference = carriers.Ref(entry.Node, BlobchegDomains.NameOf(entry.Domain));
+                    if (reference != null)
+                        collector.Writers[entry.Domain].Claim(entry.Ticket, reference.offset);
                 }
             }
 
@@ -110,10 +129,10 @@ namespace Blobcheg.Authoring
             try
             {
                 using (BlobchegProfile.Section("SyncRefs"))
-                    SyncRefs(collector, nodes, ref report);
+                    SyncRefs(collector, carriers, nodes, ref report);
 
                 using (BlobchegProfile.Section("SyncIds"))
-                    SyncIds(ids, nodes, ref report);
+                    SyncIds(ids, carriers, nodes, ref report);
             }
             finally
             {
@@ -182,14 +201,15 @@ namespace Blobcheg.Authoring
             return nodes.OrderBy(AssetDatabase.GetAssetPath, StringComparer.Ordinal).ToList();
         }
 
-        static void SyncRefs(BlobchegCollector collector, List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
+        static void SyncRefs(BlobchegCollector collector, BlobchegCarriers carriers,
+            List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
         {
             var wanted = new HashSet<BlobchegRefSo>();
 
             foreach (var entry in collector.Entries)
             {
                 var writer = collector.Writers[entry.Domain];
-                var reference = Upsert(entry, writer, ref report);
+                var reference = Upsert(entry, writer, carriers, ref report);
                 wanted.Add(reference);
             }
 
@@ -197,9 +217,7 @@ namespace Blobcheg.Authoring
             // ref-ассет обязан уехать вместе с записью.
             foreach (var node in nodes)
             {
-                List<BlobchegRefSo> staleRefs;
-                using (BlobchegProfile.Section("  refs: поиск лишних (RefsOf)"))
-                    staleRefs = RefsOf(node).Where(r => !wanted.Contains(r)).ToList();
+                var staleRefs = carriers.RefsOf(node).Where(r => !wanted.Contains(r)).ToList();
 
                 foreach (var stale in staleRefs)
                 {
@@ -210,16 +228,15 @@ namespace Blobcheg.Authoring
             }
         }
 
-        static BlobchegRefSo Upsert(BlobchegEntry entry, BlobchegWriter writer, ref BlobchegBuildReport report)
+        static BlobchegRefSo Upsert(BlobchegEntry entry, BlobchegWriter writer, BlobchegCarriers carriers,
+            ref BlobchegBuildReport report)
         {
             var domainName = BlobchegDomains.NameOf(entry.Domain);
             var wantedName = entry.Node.name + "_" + domainName;
             var offset = writer.OffsetOf(entry.Ticket);
             var revision = unchecked((long)writer.RevisionOf(entry.Ticket));
 
-            BlobchegRefSo reference;
-            using (BlobchegProfile.Section("  refs: RefsOf (LoadAllAssetsAtPath)"))
-                reference = RefsOf(entry.Node).FirstOrDefault(r => r.domainName == domainName);
+            var reference = carriers.Ref(entry.Node, domainName);
 
             if (reference == null)
             {
@@ -228,6 +245,8 @@ namespace Blobcheg.Authoring
                 reference.domainName = domainName;
                 using (BlobchegProfile.Section("  refs: AddObjectToAsset"))
                     AssetDatabase.AddObjectToAsset(reference, entry.Node);
+
+                carriers.Add(entry.Node, reference);
             }
             else if (reference.offset == offset
                      && reference.revision == revision
@@ -298,13 +317,19 @@ namespace Blobcheg.Authoring
                 foreach (var node in members)
                 {
                     cells.Clear();
-                    for (var bit = 0; bit < domains.Length; bit++)
+
+                    // Дырка от удалённой ноды: строка есть, но пустая. Убрать её — значит сдвинуть
+                    // id всех, кто стоит следом, а id уже уехал в чужие сейвы и субсцены.
+                    if (node != null)
                     {
-                        if (offsets.TryGetValue((node, domains[bit]), out var offset))
-                            cells.Add(new BlobchegRouterCell(bit, offset));
+                        for (var bit = 0; bit < domains.Length; bit++)
+                        {
+                            if (offsets.TryGetValue((node, domains[bit]), out var offset))
+                                cells.Add(new BlobchegRouterCell(bit, offset));
+                        }
                     }
 
-                    writer.Append(node.name, cells);
+                    writer.Append(node == null ? string.Empty : node.name, cells);
                 }
 
                 writer.Flush(WithDebug);
@@ -326,7 +351,8 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>Носители id: по одному sub-ассету на пару (нода × роутер).</summary>
-        static void SyncIds(BlobchegIdTable ids, List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
+        static void SyncIds(BlobchegIdTable ids, BlobchegCarriers carriers,
+            List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
         {
             var wanted = new HashSet<BlobchegIdSo>();
 
@@ -336,14 +362,15 @@ namespace Blobcheg.Authoring
                 var members = ids.NodesOf(router);
 
                 foreach (var node in members)
-                    wanted.Add(UpsertId(node, name, ids.Of(node, router), ref report));
+                {
+                    if (node != null)
+                        wanted.Add(UpsertId(node, name, ids.Of(node, router), carriers, ref report));
+                }
             }
 
             foreach (var node in nodes)
             {
-                List<BlobchegIdSo> staleIds;
-                using (BlobchegProfile.Section("  ids: поиск лишних (IdsOf)"))
-                    staleIds = IdsOf(node).Where(id => !wanted.Contains(id)).ToList();
+                var staleIds = carriers.IdsOf(node).Where(id => !wanted.Contains(id)).ToList();
 
                 foreach (var stale in staleIds)
                 {
@@ -354,13 +381,12 @@ namespace Blobcheg.Authoring
             }
         }
 
-        static BlobchegIdSo UpsertId(BlobchegNodeSo node, string routerName, BlobchegId id, ref BlobchegBuildReport report)
+        static BlobchegIdSo UpsertId(BlobchegNodeSo node, string routerName, BlobchegId id,
+            BlobchegCarriers carriers, ref BlobchegBuildReport report)
         {
             var wantedName = node.name + "_" + routerName;
 
-            BlobchegIdSo carrier;
-            using (BlobchegProfile.Section("  ids: IdsOf (LoadAllAssetsAtPath)"))
-                carrier = IdsOf(node).FirstOrDefault(existing => existing.RouterName == routerName);
+            var carrier = carriers.Id(node, routerName);
 
             if (carrier == null)
             {
@@ -369,6 +395,8 @@ namespace Blobcheg.Authoring
                 carrier.routerName = routerName;
                 using (BlobchegProfile.Section("  ids: AddObjectToAsset"))
                     AssetDatabase.AddObjectToAsset(carrier, node);
+
+                carriers.Add(node, carrier);
             }
             else if (carrier.id == id.Value && carrier.name == wantedName)
             {

@@ -270,6 +270,69 @@ namespace Blobcheg.Tests
         }
 
         [Test]
+        public void Новая_нода_не_двигает_ни_чужой_id_ни_чужой_оффсет()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var id = IdOf(_module);
+            var offset = BlobchegBuild.RefsOf(_module)
+                .Single(r => r.DomainName == "ITestColdData").offset;
+
+            // GUID у новой ноды случаен, поэтому в раскладке по GUID она садится где угодно — в том
+            // числе перед уже существующими.
+            Create<TestColdOnlyNodeSo>("Newcomer");
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(IdOf(_module), Is.EqualTo(id), "id соседа обязан пережить появление новой ноды");
+            Assert.That(BlobchegBuild.RefsOf(_module).Single(r => r.DomainName == "ITestColdData").offset,
+                Is.EqualTo(offset), "оффсет соседа обязан пережить появление новой ноды");
+        }
+
+        [Test]
+        public void Удалённая_нода_оставляет_дырку_а_чужой_id_остаётся()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var keep = IdOf(_module);
+            var killed = IdOf(_cold);
+            Assert.That(killed, Is.Not.EqualTo(keep));
+
+            var rows = LoadRouterRowCount();
+
+            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(_cold));
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(IdOf(_module), Is.EqualTo(keep), "чужой id не съезжает следом за удалённым");
+            Assert.That(LoadRouterRowCount(), Is.EqualTo(rows),
+                "строка удалённой ноды остаётся дыркой: подтянуть следующую — значит сдвинуть её id");
+
+            var router = LoadRouter();
+            try
+            {
+                Assert.That(router.Get(keep).HasCold, Is.True, "оставшаяся нода по своему id читается как читалась");
+                Assert.That(router.Get(killed).HasCold, Is.False, "дырка пуста, а не показывает на соседа");
+            }
+            finally
+            {
+                router.Dispose();
+            }
+        }
+
+        static int LoadRouterRowCount()
+        {
+            var router = LoadRouter();
+            try
+            {
+                return (int)router.Count;
+            }
+            finally
+            {
+                router.Dispose();
+            }
+        }
+
+        [Test]
         public void Пересборка_с_роутером_идемпотентна()
         {
             BlobchegBuild.RebuildAll();

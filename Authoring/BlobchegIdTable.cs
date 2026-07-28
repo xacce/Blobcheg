@@ -9,22 +9,28 @@ namespace Blobcheg.Authoring
     /// выводятся из её <c>OutTypes</c>, а это декларация — поэтому второго прохода по <c>Write</c> не
     /// нужно, id уже на руках у первого.
     ///
-    /// Id — позиция ноды в списке нод роутера, отсортированном по GUID ассета. GUID, а не путь:
-    /// переименование ноды не должно двигать id, как правка значения не двигает оффсет.
+    /// Выданный однажды id остаётся за нодой навсегда: он лежит на её носителе
+    /// <see cref="BlobchegIdSo"/> и оттуда же читается следующей пересборкой. Новая нода получает
+    /// id в хвосте, удалённая оставляет дырку — пустую строку в файле роутера. Пересчитывать
+    /// позиции заново нельзя: id уезжает в чужие сейвы и в запечённые субсцены, и сдвиг там
+    /// молча приводит к другой ноде.
+    ///
+    /// Порядок GUID остался только для новичков — чтобы две пересборки подряд раздали одно и то же.
     /// </summary>
     sealed class BlobchegIdTable
     {
-        readonly Dictionary<Type, List<BlobchegNodeSo>> _nodes = new Dictionary<Type, List<BlobchegNodeSo>>();
+        readonly Dictionary<Type, BlobchegNodeSo[]> _rows = new Dictionary<Type, BlobchegNodeSo[]>();
         readonly Dictionary<Type, Dictionary<BlobchegNodeSo, uint>> _ids =
             new Dictionary<Type, Dictionary<BlobchegNodeSo, uint>>();
 
-        public static BlobchegIdTable Assign(IReadOnlyList<BlobchegNodeSo> nodes)
+        public static BlobchegIdTable Assign(IReadOnlyList<BlobchegNodeSo> nodes, BlobchegCarriers carriers = null)
         {
             var table = new BlobchegIdTable();
 
             foreach (var router in BlobchegRouters.All)
             {
                 var domains = BlobchegRouters.DomainsOf(router);
+                var routerName = BlobchegRouters.NameOf(router);
 
                 var members = nodes
                     .Where(node => node.OutTypes != null && node.OutTypes.Any(domain => Array.IndexOf(domains, domain) >= 0))
@@ -32,19 +38,57 @@ namespace Blobcheg.Authoring
                     .ToList();
 
                 var ids = new Dictionary<BlobchegNodeSo, uint>();
-                for (var i = 0; i < members.Count; i++)
-                    ids.Add(members[i], (uint)i);
+                var taken = new Dictionary<uint, BlobchegNodeSo>();
 
-                table._nodes.Add(router, members);
+                foreach (var node in members)
+                {
+                    var carrier = carriers?.Id(node, routerName);
+                    if (carrier == null || carrier.id == BlobchegId.NoneValue)
+                        continue;
+
+                    // Двое на одном id — так бывает после копии ноды вместе с носителем. Место
+                    // остаётся за тем, кто раньше по GUID, второй уезжает в хвост как новичок.
+                    if (taken.ContainsKey(carrier.id))
+                        continue;
+
+                    taken.Add(carrier.id, node);
+                    ids.Add(node, carrier.id);
+                }
+
+                var next = 0u;
+                foreach (var id in taken.Keys)
+                {
+                    if (id >= next)
+                        next = id + 1;
+                }
+
+                foreach (var node in members)
+                {
+                    if (ids.ContainsKey(node))
+                        continue;
+
+                    ids.Add(node, next);
+                    taken.Add(next, node);
+                    next++;
+                }
+
+                var rows = new BlobchegNodeSo[next];
+                foreach (var pair in taken)
+                    rows[pair.Key] = pair.Value;
+
+                table._rows.Add(router, rows);
                 table._ids.Add(router, ids);
             }
 
             return table;
         }
 
-        /// <summary>Ноды роутера в порядке id — он же порядок строк в файле.</summary>
+        /// <summary>
+        /// Строки роутера по id — он же индекс в массиве. <c>null</c> — дырка от удалённой ноды:
+        /// строка в файле есть, но пустая, и id за ней больше никому не выдаётся.
+        /// </summary>
         public IReadOnlyList<BlobchegNodeSo> NodesOf(Type router)
-            => _nodes.TryGetValue(router, out var found) ? found : Array.Empty<BlobchegNodeSo>();
+            => _rows.TryGetValue(router, out var found) ? found : Array.Empty<BlobchegNodeSo>();
 
         public BlobchegId Of(BlobchegNodeSo node, Type router)
         {
