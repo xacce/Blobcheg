@@ -1,7 +1,6 @@
 using System;
 using UnityEditor;
 using UnityEditor.Build;
-using UnityEditor.Build.Reporting;
 using UnityEngine;
 
 namespace Blobcheg.Authoring
@@ -123,12 +122,27 @@ namespace Blobcheg.Authoring
             => path.Replace('\\', '/').Contains("/StreamingAssets/" + BlobchegNaming.DefaultFolder + "/");
     }
 
-    /// <summary>Пре-билд: блоб обязан быть собран и детерминирован до того, как поедет в плеер.</summary>
-    public sealed class BlobchegBuildGate : IPreprocessBuildWithReport
+    /// <summary>
+    /// Пре-билд: блоб обязан быть собран, сжат и детерминирован до того, как поедет в плеер.
+    ///
+    /// Компакт именно здесь: дырки от удалённых нод — это байты, которые едут в билд ни за чем, а
+    /// пересортировка двигает все адреса, и позволить её можно только там, где следом всё равно
+    /// перепекается всё. В редакторе на неё есть отдельная команда, сама она не случается.
+    /// </summary>
+    public sealed class BlobchegBuildGate : BuildPlayerProcessor
     {
-        public int callbackOrder => 0;
+        // Не IPreprocessBuildWithReport: субсцены Entities печёт в PrepareForBuild
+        // (EntitySceneBuildPlayerProcessor), а эта фаза идёт раньше пре-билд-колбэков. Сжать базу
+        // после бейка — значит увезти в билд субсцены со старыми адресами и не заметить этого.
+        // Отсюда и фаза, и порядок: раньше всех, кто печёт.
+        public override int callbackOrder => -10000;
 
-        public void OnPreprocessBuild(BuildReport report)
-            => BlobchegBuild.RequireUpToDate("пре-билд");
+        public override void PrepareForBuild(BuildPlayerContext context)
+        {
+            Debug.Log("Blobcheg: пре-билд — компакт до бейка субсцен");
+
+            BlobchegBuild.Compact();
+            BlobchegBuild.RequireUpToDate("пре-билд");
+        }
     }
 }

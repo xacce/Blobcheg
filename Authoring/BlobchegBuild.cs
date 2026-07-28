@@ -55,7 +55,7 @@ namespace Blobcheg.Authoring
         /// есть она случается на каждое сохранение ноды, и стоить обязана столько, сколько
         /// изменилось.
         /// </summary>
-        public static BlobchegBuildReport RebuildAll() => Rebuild(true);
+        public static BlobchegBuildReport RebuildAll() => Rebuild(true, false);
 
         /// <summary>
         /// Пересборка с нуля: кеш забыт, проект обойдён, Write позван у всех. Ею идут пре-билд и
@@ -64,10 +64,24 @@ namespace Blobcheg.Authoring
         public static BlobchegBuildReport RebuildFull()
         {
             BlobchegCache.Drop();
-            return Rebuild(false);
+            return Rebuild(false, false);
         }
 
-        static BlobchegBuildReport Rebuild(bool incremental)
+        /// <summary>
+        /// Компакт: раскладка считается с нуля, дырки от удалённых нод исчезают, адреса и id
+        /// выдаются заново подряд. Сам собой он не случается — уезжают ВСЕ адреса, а на них через
+        /// DependsOn завязано всё, что их когда-то запомнило.
+        ///
+        /// Мест ровно два: пре-билд, где следом всё равно перепекается всё, и команда в редакторе,
+        /// которую человек зовёт сам.
+        /// </summary>
+        public static BlobchegBuildReport Compact()
+        {
+            BlobchegCache.Drop();
+            return Rebuild(false, true);
+        }
+
+        static BlobchegBuildReport Rebuild(bool incremental, bool compact)
         {
             var report = new BlobchegBuildReport();
             var collector = new BlobchegCollector(OutputDirectory);
@@ -75,7 +89,7 @@ namespace Blobcheg.Authoring
             Building = true;
             try
             {
-                return Run(collector, incremental, ref report);
+                return Run(collector, incremental, compact, ref report);
             }
             finally
             {
@@ -83,7 +97,8 @@ namespace Blobcheg.Authoring
             }
         }
 
-        static BlobchegBuildReport Run(BlobchegCollector collector, bool incremental, ref BlobchegBuildReport report)
+        static BlobchegBuildReport Run(BlobchegCollector collector, bool incremental, bool compact,
+            ref BlobchegBuildReport report)
         {
             IReadOnlyList<BlobchegCache.Entry> entries;
             using (BlobchegProfile.Section("Список нод"))
@@ -110,7 +125,7 @@ namespace Blobcheg.Authoring
             // поэтому нода может положить свой id прямо в запись за один проход.
             BlobchegIdTable ids;
             using (BlobchegProfile.Section("Assign id'ов"))
-                ids = BlobchegIdTable.Assign(nodes, carriers);
+                ids = BlobchegIdTable.Assign(nodes, compact ? null : carriers);
 
             // Писатель открывается на КАЖДЫЙ объявленный домен, даже пустой: иначе домен, из
             // которого удалили последнюю ноду, остался бы на диске старым файлом.
@@ -133,6 +148,10 @@ namespace Blobcheg.Authoring
             {
                 foreach (var entry in collector.Entries)
                 {
+                    // Компакт — это отказ от прежних адресов: заявок нет вовсе.
+                    if (compact)
+                        break;
+
                     var reference = carriers.Ref(entry.Node, BlobchegDomains.NameOf(entry.Domain));
                     if (reference != null)
                         collector.Writers[entry.Domain].Claim(entry.Ticket, reference.offset);

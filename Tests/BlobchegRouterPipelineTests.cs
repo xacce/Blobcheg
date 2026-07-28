@@ -339,6 +339,41 @@ namespace Blobcheg.Tests
         }
 
         [Test]
+        public void Компакт_убирает_дырку_и_раздаёт_адреса_заново()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var first = IdOf(_module).Value < IdOf(_cold).Value;
+            var victim = first ? (BlobchegNodeSo)_module : _cold;
+            var survivor = first ? (BlobchegNodeSo)_cold : _module;
+
+            var before = IdOf(survivor);
+            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(LoadRouterRowCount(), Is.EqualTo(2), "дырка на месте: обычная пересборка её не трогает");
+            Assert.That(IdOf(survivor), Is.EqualTo(before));
+
+            BlobchegBuild.Compact();
+
+            Assert.That(LoadRouterRowCount(), Is.EqualTo(1), "компакт обязан убрать пустую строку");
+            Assert.That(IdOf(survivor).Value, Is.EqualTo(0u), "и раздать id заново подряд");
+
+            var router = LoadRouter();
+            try
+            {
+                Assert.That(router.Get(IdOf(survivor)).HasCold, Is.True, "нода по новому id читается");
+            }
+            finally
+            {
+                router.Dispose();
+            }
+
+            Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False,
+                "после компакта раскладка обязана сойтись сама с собой");
+        }
+
+        [Test]
         public void Пересборка_с_роутером_идемпотентна()
         {
             BlobchegBuild.RebuildAll();
