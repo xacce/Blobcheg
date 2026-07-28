@@ -51,42 +51,54 @@ namespace Blobcheg.Authoring
         {
             var report = new BlobchegBuildReport();
             var collector = new BlobchegCollector(OutputDirectory);
-            var nodes = FindNodes();
+
+            List<BlobchegNodeSo> nodes;
+            using (BlobchegProfile.Section("FindNodes"))
+                nodes = FindNodes();
 
             // Id раздаются ДО записи: они выводятся из OutTypes, а не из того, что нода написала,
             // поэтому нода может положить свой id прямо в запись за один проход.
-            var ids = BlobchegIdTable.Assign(nodes);
+            BlobchegIdTable ids;
+            using (BlobchegProfile.Section("Assign id'ов"))
+                ids = BlobchegIdTable.Assign(nodes);
 
             // Писатель открывается на КАЖДЫЙ объявленный домен, даже пустой: иначе домен, из
             // которого удалили последнюю ноду, остался бы на диске старым файлом.
             foreach (var domain in BlobchegDomains.All)
                 collector.WriterOf(domain);
 
-            foreach (var node in nodes)
+            using (BlobchegProfile.Section("node.Write — все ноды"))
             {
-                var writer = new BlobchegNodeWriter { Collector = collector, Node = node, Ids = ids };
-                node.Write(ref writer);
-
-                foreach (var domain in BlobchegDomains.DomainsOf(node))
+                foreach (var node in nodes)
                 {
-                    if (!collector.Wrote(node, domain))
-                        throw new InvalidOperationException(
-                            $"Blobcheg: нода '{node.name}' объявила домен '{domain.Name}' в OutTypes, но ничего в него не написала");
+                    var writer = new BlobchegNodeWriter { Collector = collector, Node = node, Ids = ids };
+                    node.Write(ref writer);
+
+                    foreach (var domain in BlobchegDomains.DomainsOf(node))
+                    {
+                        if (!collector.Wrote(node, domain))
+                            throw new InvalidOperationException(
+                                $"Blobcheg: нода '{node.name}' объявила домен '{domain.Name}' в OutTypes, но ничего в него не написала");
+                    }
                 }
             }
 
-            foreach (var pair in collector.Writers)
+            using (BlobchegProfile.Section("Flush баз"))
             {
-                pair.Value.Flush(WithDebug);
-                report.Domains++;
-                report.Records += pair.Value.RecordCount;
-                if (pair.Value.FileChanged)
-                    report.ChangedFiles++;
+                foreach (var pair in collector.Writers)
+                {
+                    pair.Value.Flush(WithDebug);
+                    report.Domains++;
+                    report.Records += pair.Value.RecordCount;
+                    if (pair.Value.FileChanged)
+                        report.ChangedFiles++;
+                }
             }
 
             // Роутеры собираются ПОСЛЕ Flush: до него оффсетов, из которых состоят строки, не
             // существует вовсе.
-            BuildRouters(collector, ids, ref report);
+            using (BlobchegProfile.Section("BuildRouters"))
+                BuildRouters(collector, ids, ref report);
 
             // Носители пишутся пачкой: поштучный AddObjectToAsset переимпортирует ноду на каждый
             // сабассет, и на большом проекте вся пересборка — это он и есть. Замер на 500 нодах:
@@ -97,20 +109,28 @@ namespace Blobcheg.Authoring
             AssetDatabase.StartAssetEditing();
             try
             {
-                SyncRefs(collector, nodes, ref report);
-                SyncIds(ids, nodes, ref report);
+                using (BlobchegProfile.Section("SyncRefs"))
+                    SyncRefs(collector, nodes, ref report);
+
+                using (BlobchegProfile.Section("SyncIds"))
+                    SyncIds(ids, nodes, ref report);
             }
             finally
             {
-                AssetDatabase.StopAssetEditing();
+                using (BlobchegProfile.Section("StopAssetEditing — переимпорт пачки"))
+                    AssetDatabase.StopAssetEditing();
             }
 
-            SyncManifests(collector, nodes, ref report);
+            using (BlobchegProfile.Section("SyncManifests"))
+                SyncManifests(collector, nodes, ref report);
 
             if (report.Changed)
             {
-                AssetDatabase.SaveAssets();
-                AssetDatabase.Refresh();
+                using (BlobchegProfile.Section("SaveAssets"))
+                    AssetDatabase.SaveAssets();
+
+                using (BlobchegProfile.Section("Refresh"))
+                    AssetDatabase.Refresh();
             }
 
             return report;
@@ -177,7 +197,11 @@ namespace Blobcheg.Authoring
             // ref-ассет обязан уехать вместе с записью.
             foreach (var node in nodes)
             {
-                foreach (var stale in RefsOf(node).Where(r => !wanted.Contains(r)).ToList())
+                List<BlobchegRefSo> staleRefs;
+                using (BlobchegProfile.Section("  refs: поиск лишних (RefsOf)"))
+                    staleRefs = RefsOf(node).Where(r => !wanted.Contains(r)).ToList();
+
+                foreach (var stale in staleRefs)
                 {
                     AssetDatabase.RemoveObjectFromAsset(stale);
                     UnityEngine.Object.DestroyImmediate(stale, true);
@@ -193,13 +217,17 @@ namespace Blobcheg.Authoring
             var offset = writer.OffsetOf(entry.Ticket);
             var revision = unchecked((long)writer.RevisionOf(entry.Ticket));
 
-            var reference = RefsOf(entry.Node).FirstOrDefault(r => r.domainName == domainName);
+            BlobchegRefSo reference;
+            using (BlobchegProfile.Section("  refs: RefsOf (LoadAllAssetsAtPath)"))
+                reference = RefsOf(entry.Node).FirstOrDefault(r => r.domainName == domainName);
+
             if (reference == null)
             {
                 reference = ScriptableObject.CreateInstance<BlobchegRefSo>();
                 reference.name = wantedName;
                 reference.domainName = domainName;
-                AssetDatabase.AddObjectToAsset(reference, entry.Node);
+                using (BlobchegProfile.Section("  refs: AddObjectToAsset"))
+                    AssetDatabase.AddObjectToAsset(reference, entry.Node);
             }
             else if (reference.offset == offset
                      && reference.revision == revision
@@ -215,20 +243,16 @@ namespace Blobcheg.Authoring
             reference.offset = offset;
             reference.revision = revision;
 
-            AssetDatabase.SetLabels(reference, LabelsFor(entry.RecordType));
-            EditorUtility.SetDirty(reference);
+            using (BlobchegProfile.Section("  refs: SetDirty"))
+                EditorUtility.SetDirty(reference);
+
             report.ChangedRefs++;
             return reference;
         }
 
-        static string[] LabelsFor(string recordType)
-        {
-            if (string.IsNullOrEmpty(recordType))
-                return new[] { "BlobchegRaw" };
-
-            var dot = recordType.LastIndexOf('.');
-            return new[] { dot < 0 ? recordType : recordType.Substring(dot + 1) };
-        }
+        // Лейблов на носителях больше нет. Их не читал никто — ни пикер (он ходит по нодам и
+        // смотрит recordType), ни бейк, — а стоил каждый AssetDatabase.SetLabels 4,7 мс: на 500
+        // нодах это 7,1 с из 14,4 с холодной сборки. Замер: docs/blobcheg-editor-scale.md.
 
         /// <summary>Ref-ассеты ноды — по одному на домен, в который она пишет.</summary>
         public static IEnumerable<BlobchegRefSo> RefsOf(BlobchegNodeSo node)
@@ -317,7 +341,11 @@ namespace Blobcheg.Authoring
 
             foreach (var node in nodes)
             {
-                foreach (var stale in IdsOf(node).Where(id => !wanted.Contains(id)).ToList())
+                List<BlobchegIdSo> staleIds;
+                using (BlobchegProfile.Section("  ids: поиск лишних (IdsOf)"))
+                    staleIds = IdsOf(node).Where(id => !wanted.Contains(id)).ToList();
+
+                foreach (var stale in staleIds)
                 {
                     AssetDatabase.RemoveObjectFromAsset(stale);
                     UnityEngine.Object.DestroyImmediate(stale, true);
@@ -330,13 +358,17 @@ namespace Blobcheg.Authoring
         {
             var wantedName = node.name + "_" + routerName;
 
-            var carrier = IdsOf(node).FirstOrDefault(existing => existing.RouterName == routerName);
+            BlobchegIdSo carrier;
+            using (BlobchegProfile.Section("  ids: IdsOf (LoadAllAssetsAtPath)"))
+                carrier = IdsOf(node).FirstOrDefault(existing => existing.RouterName == routerName);
+
             if (carrier == null)
             {
                 carrier = ScriptableObject.CreateInstance<BlobchegIdSo>();
                 carrier.name = wantedName;
                 carrier.routerName = routerName;
-                AssetDatabase.AddObjectToAsset(carrier, node);
+                using (BlobchegProfile.Section("  ids: AddObjectToAsset"))
+                    AssetDatabase.AddObjectToAsset(carrier, node);
             }
             else if (carrier.id == id.Value && carrier.name == wantedName)
             {
@@ -347,8 +379,9 @@ namespace Blobcheg.Authoring
             carrier.routerName = routerName;
             carrier.id = id.Value;
 
-            AssetDatabase.SetLabels(carrier, new[] { "BlobchegId", routerName });
-            EditorUtility.SetDirty(carrier);
+            using (BlobchegProfile.Section("  ids: SetDirty"))
+                EditorUtility.SetDirty(carrier);
+
             report.ChangedRefs++;
             return carrier;
         }
