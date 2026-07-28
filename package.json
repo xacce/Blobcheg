@@ -8,5 +8,12 @@
     "com.unity.burst": "1.8.29",
     "com.unity.collections": "2.6.8",
     "com.unity.mathematics": "1.3.2"
-  }
+  },
+  "samples": [
+    {
+      "displayName": "Деструктивные тесты (core dev)",
+      "description": "Сквозной набор, который ломает пакет от ассета до байта в файле. В компиляцию не попадает, пока его не импортируешь: это инструмент разработчика пакета, а не потребителя.",
+      "path": "Samples~/AdvancedTests"
+    }
+  ]
 }
