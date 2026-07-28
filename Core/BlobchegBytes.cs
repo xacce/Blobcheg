@@ -72,8 +72,12 @@ namespace Blobcheg
             stream.Write(bytes, 0, bytes.Length);
         }
 
-        /// <summary>Печатает header поверх собранного тела и возвращает хеш содержимого.</summary>
-        public static ulong Seal(byte[] file, ushort flags, uint debugOffset)
+        /// <summary>
+        /// Печатает header поверх собранного тела и возвращает хеш содержимого. Личность файла
+        /// (<paramref name="nameHash"/>) приходит снаружи: писатель базы и писатель роутера знают
+        /// своё имя, а байты — нет.
+        /// </summary>
+        public static ulong Seal(byte[] file, ushort flags, uint debugOffset, ulong nameHash)
         {
             var contentHash = BlobchegHash.Of(file, BlobchegFormat.HeaderSize, file.Length - BlobchegFormat.HeaderSize);
 
@@ -83,7 +87,7 @@ namespace Blobcheg
             WriteU32(file, 8, (uint)file.Length);
             WriteU32(file, 12, debugOffset);
             WriteU64(file, 16, contentHash);
-            WriteU64(file, 24, 0);
+            WriteU64(file, 24, nameHash);
 
             return contentHash;
         }

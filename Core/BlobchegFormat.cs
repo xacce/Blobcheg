@@ -14,10 +14,11 @@ namespace Blobcheg
         public const uint Magic = 0x47484342;
 
         /// <summary>
-        /// 2 — появился роутер. Версия общая для всех файлов пакета: они производные и пересобираются
-        /// вместе, а разные версии у базы и роутера были бы лишней осью рассинхрона.
+        /// 2 — появился роутер, 3 — у файла появилась личность (хеш имени в header'е). Версия общая
+        /// для всех файлов пакета: они производные и пересобираются вместе, а разные версии у базы и
+        /// роутера были бы лишней осью рассинхрона.
         /// </summary>
-        public const ushort Version = 2;
+        public const ushort Version = 3;
 
         /// <summary>Размер header'а и одновременно оффсет первой записи.</summary>
         public const int HeaderSize = 32;
@@ -55,7 +56,12 @@ namespace Blobcheg
         /// <summary>xxHash3 всего, что после header'а. Integrity, сверяется всегда, без дефайнов.</summary>
         public ulong ContentHash;
 
-        ulong _padding;
+        /// <summary>
+        /// Личность файла: <see cref="BlobchegNaming.NameHash"/> имени домена или роутера. Без неё
+        /// два переставленных местами .bcheg поднимаются оба и молча отдают чужие байты — целостность
+        /// у каждого своя и сходится.
+        /// </summary>
+        public ulong NameHash;
 
         public bool HasDebug => (Flags & BlobchegFormat.FlagHasDebug) != 0;
 
@@ -79,6 +85,13 @@ namespace Blobcheg
                 throw new InvalidOperationException(
                     $"Blobcheg: '{what}' — это файл {(IsRouter ? "роутера" : "базы")}, а поднимают его как " +
                     $"{(wantRouter ? "роутер" : "базу")}");
+
+            var wantedName = BlobchegNaming.NameHash(what);
+            if (NameHash != wantedName)
+                throw new InvalidOperationException(
+                    $"Blobcheg: '{what}' — это файл другого {(wantRouter ? "роутера" : "домена")} " +
+                    $"(в header'е {NameHash:X16}, у '{what}' {wantedName:X16}). Файлы переставлены местами " +
+                    "или пересобраны под другими именами");
 
             if (FileLength != (uint)actualLength)
                 throw new InvalidOperationException(

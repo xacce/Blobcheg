@@ -228,6 +228,20 @@ namespace Blobcheg.Authoring
                 }
             }
 
+            // Тег — старший байт id, и на нём стоит вся защита от чужого id. Совпал у двух роутеров
+            // — защиты нет, поэтому уникальность доказывается здесь, а не остаётся надеждой на хеш.
+            var byTag = new Dictionary<byte, Type>();
+            foreach (var router in routers)
+            {
+                var tag = BlobchegNaming.TagOf(router.Name);
+                if (byTag.TryGetValue(tag, out var already))
+                    throw new InvalidOperationException(
+                        $"Blobcheg: роутеры '{already.Name}' и '{router.Name}' сошлись на одном теге {tag} — " +
+                        "id одного стал бы валидным в другом. Переименуй один из них");
+
+                byTag.Add(tag, router);
+            }
+
             _byDomain = byDomain;
             _domains = ordered;
             _all = routers;

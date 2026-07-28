@@ -232,10 +232,17 @@ namespace Blobcheg.Tests
             var router = LoadRouter();
             try
             {
-                var beyond = new BlobchegId((uint)router.Count);
+                var beyond = BlobchegId.In(TestGameRouter.RouterName, (uint)router.Count);
                 Assert.Throws<InvalidOperationException>(() => router.Get(beyond));
                 Assert.Throws<InvalidOperationException>(() => router.Get(BlobchegId.None));
                 Assert.That(router.TryGet(beyond, out _), Is.False);
+
+                // Тег заведомо не этого роутера: имя чужого роутера могло бы совпасть тегом.
+                var alienTag = (byte)(BlobchegNaming.TagOf(TestGameRouter.RouterName) % 255 + 1);
+                var alien = BlobchegId.Make(alienTag, 0);
+                Assert.Throws<InvalidOperationException>(() => router.Get(alien),
+                    "строка ноль в этом роутере есть, но id выдан не им");
+                Assert.That(router.TryGet(alien, out _), Is.False);
             }
             finally
             {
@@ -296,13 +303,13 @@ namespace Blobcheg.Tests
 
             // Дырку оставляет только тот, у кого id не последний, а раздаются они по GUID —
             // поэтому кого убить, решает замер, а не порядок создания в тесте.
-            var first = IdOf(_module).Value < IdOf(_cold).Value;
+            var first = IdOf(_module).Index < IdOf(_cold).Index;
             var victim = first ? (BlobchegNodeSo)_module : _cold;
             var survivor = first ? (BlobchegNodeSo)_cold : _module;
 
             var keep = IdOf(survivor);
             var killed = IdOf(victim);
-            Assert.That(killed.Value, Is.LessThan(keep.Value));
+            Assert.That(killed.Index, Is.LessThan(keep.Index));
 
             var rows = LoadRouterRowCount();
 
@@ -343,7 +350,7 @@ namespace Blobcheg.Tests
         {
             BlobchegBuild.RebuildAll();
 
-            var first = IdOf(_module).Value < IdOf(_cold).Value;
+            var first = IdOf(_module).Index < IdOf(_cold).Index;
             var victim = first ? (BlobchegNodeSo)_module : _cold;
             var survivor = first ? (BlobchegNodeSo)_cold : _module;
 
@@ -357,7 +364,7 @@ namespace Blobcheg.Tests
             BlobchegBuild.Compact();
 
             Assert.That(LoadRouterRowCount(), Is.EqualTo(1), "компакт обязан убрать пустую строку");
-            Assert.That(IdOf(survivor).Value, Is.EqualTo(0u), "и раздать id заново подряд");
+            Assert.That(IdOf(survivor).Index, Is.EqualTo(0u), "и раздать id заново подряд");
 
             var router = LoadRouter();
             try
@@ -442,7 +449,7 @@ namespace Blobcheg.Tests
             for (var i = 0; i < manifest.nodes.Length; i++)
             {
                 var carrier = BlobchegBuild.IdsOf(manifest.nodes[i]).Single();
-                Assert.That(carrier.id, Is.EqualTo((uint)i));
+                Assert.That(new BlobchegId(carrier.id).Index, Is.EqualTo((uint)i));
             }
         }
     }

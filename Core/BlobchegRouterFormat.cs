@@ -84,7 +84,7 @@ namespace Blobcheg
     [StructLayout(LayoutKind.Sequential)]
     public struct BlobchegRouterProlog
     {
-        /// <summary>Строк, то есть нод роутера. Он же потолок <c>BlobchegId</c>.</summary>
+        /// <summary>Строк, то есть нод роутера. Он же потолок номера строки в валидном id.</summary>
         public uint Count;
 
         public uint DomainCount;

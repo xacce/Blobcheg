@@ -138,6 +138,10 @@ namespace Blobcheg
             if (_flushed)
                 throw new InvalidOperationException($"Blobcheg: повторный Flush домена '{DomainName}'");
 
+            // Пустой базе описывать нечего, а секция из нуля записей сделала бы её длиннее header'а
+            // и утащила бы за собой смысл «в базе не осталось ни одной ноды».
+            withDebug &= _records.Count > 0;
+
             var order = BuildOrder();
             var file = Layout(order, withDebug, out var offsets);
 
@@ -147,7 +151,8 @@ namespace Blobcheg
                 _revisions[i] = BlobchegHash.Of(_records[i].Bytes);
 
             var flags = withDebug ? BlobchegFormat.FlagHasDebug : (ushort)0;
-            ContentHash = BlobchegBytes.Seal(file, flags, withDebug ? DebugOffset : 0u);
+            ContentHash = BlobchegBytes.Seal(file, flags, withDebug ? DebugOffset : 0u,
+                BlobchegNaming.NameHash(DomainName));
 
             _flushed = true;
             FileChanged = BlobchegBytes.WriteIfChanged(Directory, FilePath, file, ContentHash);
@@ -243,7 +248,7 @@ namespace Blobcheg
 
                     offsets[ticket] = (uint)claim;
                     placed[ticket] = true;
-                    position = claim + _records[ticket].Bytes.Length;
+                    position = claim + SpanOf(ticket);
                 }
             }
 
@@ -255,7 +260,7 @@ namespace Blobcheg
 
                 position = BlobchegFormat.AlignUp(position);
                 offsets[ticket] = (uint)position;
-                position += _records[ticket].Bytes.Length;
+                position += SpanOf(ticket);
             }
 
             var debugOffset = 0;
@@ -280,6 +285,17 @@ namespace Blobcheg
 
             DebugOffset = (uint)debugOffset;
             return file;
+        }
+
+        /// <summary>
+        /// Сколько места запись занимает в раскладке. Запись нулевой длины занимает байт, а не ноль:
+        /// иначе позиция после неё не двигается, следующее выравнивание возвращает тот же адрес, и
+        /// две разные записи получают ОДИН адрес — а адрес и есть единственная личность записи.
+        /// </summary>
+        int SpanOf(int ticket)
+        {
+            var length = _records[ticket].Bytes.Length;
+            return length > 0 ? length : 1;
         }
 
         uint DebugOffset { get; set; }

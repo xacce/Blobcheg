@@ -107,6 +107,19 @@ namespace Blobcheg.AdvancedTests
         public long Tag;
     }
 
+    /// <summary>Указатель не на виду, а в поле-структуре: IntPtr ничем не лучше <c>byte*</c>.</summary>
+    public struct AdvPointerHolder
+    {
+        public IntPtr Handle;
+    }
+
+    /// <summary>Запись, у которой указатель лежит на второй ступени вложенности.</summary>
+    public struct AdvNestedPointerRecord : IAdvLoose
+    {
+        public long Head;
+        public AdvPointerHolder Inner;
+    }
+
     /// <summary>Четверть толстой записи — 64 Б.</summary>
     public struct AdvChunk
     {
@@ -391,7 +404,12 @@ namespace Blobcheg.AdvancedTests
 
         static int _depth;
 
-        public static void Reset()
+        /// <summary>
+        /// Зваться <c>Reset</c> ей нельзя: у ScriptableObject это магическое имя, и Unity зовёт его
+        /// сама при создании экземпляра — на статическом методе это ошибка в консоли на каждый
+        /// CreateInstance.
+        /// </summary>
+        public static void Forget()
         {
             Reentered = 0;
             _depth = 0;
@@ -430,6 +448,15 @@ namespace Blobcheg.AdvancedTests
 
         public override unsafe void Write(ref BlobchegNodeWriter w)
             => w.Add(new AdvPointerRecord { Ptr = (byte*)0xDEADBEEF, Tag = 42 });
+    }
+
+    /// <summary>Кладёт в файл указатель, спрятанный на второй ступени вложенности.</summary>
+    public sealed class AdvNestedPointerNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+            => w.Add(new AdvNestedPointerRecord { Head = 1, Inner = new AdvPointerHolder { Handle = new IntPtr(0x1234) } });
     }
 
     /// <summary>Запись без полей.</summary>

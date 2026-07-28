@@ -11,8 +11,10 @@ namespace Blobcheg
     /// (<c>[Blobcheg]</c>-партиал) — тонкая обёртка сверху, добавляющая констрейнт домена.
     ///
     /// Чтение — реинтерпретация по оффсету. Что лежит внутри записи, буфер не знает и знать не
-    /// должен: это вопрос доверия. Проверяются только целостность файла (разово, на подъёме) и
-    /// границы (за <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>).
+    /// должен: это вопрос доверия. Всегда проверяются целостность файла и его личность (разово, на
+    /// подъёме); границы и тип записи — за <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>, то есть в
+    /// редакторе и в development-билде. Тип сверяется по отладочному контуру, а его в релизном
+    /// плеере нет — там чтение снова становится чистой реинтерпретацией.
     /// </summary>
     public unsafe struct BlobchegBlob : IDisposable
     {
@@ -45,7 +47,7 @@ namespace Blobcheg
 
         public int Length => _buffer.Length;
 
-        /// <summary>Есть ли в файле отладочный контур. В билде его не бывает.</summary>
+        /// <summary>Есть ли в файле отладочный контур. В релизном билде его не бывает.</summary>
         public bool HasDebug => _debugOffset != 0;
 
         /// <summary>
@@ -80,7 +82,15 @@ namespace Blobcheg
             CheckType<T>(offset);
         }
 
-        [Conditional("BLOBCHEG_DEBUG")]
+        /// <summary>
+        /// Отладочный контур: есть ли по этому адресу запись и та ли она. Зовётся из
+        /// <see cref="CheckRead{T}"/>, то есть живёт под тем же <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c> —
+        /// в редакторе и в development-билде. Раньше он висел на отдельном <c>BLOBCHEG_DEBUG</c>,
+        /// которого не ставил никто, и единственная проверка типа существовала на бумаге.
+        ///
+        /// Секции в файле может не быть (релизный билд, файл, собранный чужим инструментом) — тогда
+        /// проверять нечем, и это не ошибка чтения.
+        /// </summary>
         void CheckType<T>(uint offset) where T : unmanaged
         {
             if (_debugOffset == 0)
@@ -102,7 +112,7 @@ namespace Blobcheg
         {
             if (_debugOffset == 0)
                 throw new InvalidOperationException(
-                    "Blobcheg.Describe: в файле нет отладочного контура — он собран без BLOBCHEG_DEBUG");
+                    "Blobcheg.Describe: в файле нет отладочного контура — он собран для релизного плеера");
 
             var entry = BlobchegDebugSection.Find(_buffer.Ptr, _debugOffset, offset);
             if (entry == null)

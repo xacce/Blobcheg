@@ -201,14 +201,14 @@ namespace Blobcheg.AdvancedTests
 
             try
             {
-                var edges = blob.Get(new BlobchegId(0));
+                var edges = blob.Get(blob.IdAt(0));
                 Assert.That(edges.Has(0), Is.True);
                 Assert.That(edges.Has(count - 1), Is.True, "старший бит маски — тот, на котором ломается popcount");
                 Assert.That(edges.Offset(0), Is.EqualTo(0x100u));
                 Assert.That(edges.Offset(count - 1), Is.EqualTo(0x200u));
                 Assert.That(edges.Has(1), Is.False);
 
-                var empty = blob.Get(new BlobchegId(1));
+                var empty = blob.Get(blob.IdAt(1));
                 Assert.That(empty.Mask, Is.EqualTo(0ul), "строка без единой базы допустима");
                 Assert.Throws<InvalidOperationException>(() => empty.Offset(0),
                     "но оффсета у неё нет, и сентинела вместо него быть не может");
@@ -232,13 +232,17 @@ namespace Blobcheg.AdvancedTests
             {
                 Assert.That(router.Count, Is.EqualTo(2));
 
-                Assert.Throws<InvalidOperationException>(() => router.Get(new BlobchegId((uint)router.Count)),
+                Assert.Throws<InvalidOperationException>(() => router.Get(router.IdAt((uint)router.Count)),
                     "строки с таким номером нет — это ошибка, а не пустая строка");
+                Assert.Throws<InvalidOperationException>(() => router.Get(router.IdAt(BlobchegId.MaxIndex)));
                 Assert.Throws<InvalidOperationException>(() => router.Get(new BlobchegId(uint.MaxValue - 1)));
                 Assert.Throws<InvalidOperationException>(() => router.Get(BlobchegId.None));
 
-                Assert.That(router.TryGet(new BlobchegId((uint)router.Count), out _), Is.False);
+                Assert.That(router.TryGet(router.IdAt((uint)router.Count), out _), Is.False);
                 Assert.That(router.TryGet(BlobchegId.None, out _), Is.False);
+
+                Assert.Throws<ArgumentOutOfRangeException>(() => router.IdAt(BlobchegId.MaxIndex + 1),
+                    "строка за потолком роутера — это не id, а мусор с чужим тегом внутри");
             }
             finally
             {
@@ -246,13 +250,11 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        // BUG: запись читается типом-близнецом того же размера молча, и наружу едут чужие байты.
-        // Ожидалось: чтение записи не тем типом обязано быть отбито явно.
-        // Корень: BlobchegBlob.CheckType — единственная проверка типа — висит на
-        // [Conditional("BLOBCHEG_DEBUG")], а сама debug-секция пишется только при том же дефайне.
-        // В обычном редакторе и в билде дефайна нет вообще, поэтому проверка не вызывается ни разу:
-        // и пишущая, и читающая стороны молчат. Констрейнт домена в сгенерированном Read<T> ловит
-        // только ЧУЖОЙ домен — близнец внутри своего домена проходит компилятор насквозь.
+        /// <summary>
+        /// Констрейнт домена в сгенерированном <c>Read&lt;T&gt;</c> ловит только ЧУЖОЙ домен —
+        /// близнец внутри своего домена проходит компилятор насквозь. Ловит его отладочный контур,
+        /// и он живёт под тем же дефайном, что и проверка границ: в редакторе и в development-билде.
+        /// </summary>
         [Test]
         public void Близнец_того_же_размера_обязан_быть_отбит()
         {

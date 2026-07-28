@@ -45,7 +45,7 @@ namespace Blobcheg.AdvancedTests
             Scratch = Path.Combine(Path.GetTempPath(), name);
             Directory.CreateDirectory(Scratch);
 
-            AdvReentrantNodeSo.Reset();
+            AdvReentrantNodeSo.Forget();
 
             // Набор нарочно ломает пересборку, а хук импорта зовёт её сам, отложенным вызовом — то
             // есть между тестами. Прилетевшая оттуда ошибка не должна валить СОСЕДНИЙ тест: что
@@ -167,7 +167,8 @@ namespace Blobcheg.AdvancedTests
         {
             var flags = BlobchegBytes.ReadU16(file, 6);
             var debugOffset = BlobchegBytes.ReadU32(file, 12);
-            BlobchegBytes.Seal(file, flags, debugOffset);
+            var nameHash = BlobchegBytes.ReadU64(file, 24);
+            BlobchegBytes.Seal(file, flags, debugOffset, nameHash);
         }
 
         protected static BlobchegBuffer BufferOf(string fileName)

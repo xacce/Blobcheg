@@ -10,7 +10,10 @@ namespace Blobcheg
     /// </summary>
     public sealed class BlobchegIdSo : ScriptableObject
     {
-        /// <summary>Позиция строки ноды в файле роутера. Перевыставляется каждой пересборкой.</summary>
+        /// <summary>
+        /// Значение <see cref="BlobchegId"/>: тег роутера и позиция строки. Перевыставляется каждой
+        /// пересборкой. Ноль — «не назначен», он же значение свежесозданного носителя.
+        /// </summary>
         public uint id = BlobchegId.NoneValue;
 
         [SerializeField] internal string routerName;
@@ -52,11 +55,12 @@ namespace Blobcheg
                         $"Blobcheg: в BlobchegIdRef<{typeof(TRouter).Name}> лежит ассет '{asset.name}' роутера " +
                         $"'{asset.routerName}' — ожидался '{expected}'");
 
-                if (asset.id == BlobchegId.NoneValue)
+                var id = new BlobchegId(asset.id);
+                if (!id.IsValid)
                     throw new InvalidOperationException(
                         $"Blobcheg: ассет '{asset.name}' без id — пересборка до него не дошла");
 
-                return new BlobchegId(asset.id);
+                return id;
             }
         }
     }

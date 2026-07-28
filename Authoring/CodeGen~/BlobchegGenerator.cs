@@ -292,6 +292,13 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("        public int Length => __blob.Length;");
             text.AppendLine();
+            text.AppendLine("        /// <summary>Есть ли в файле отладочный контур. В релизном плеере его не бывает.</summary>");
+            text.AppendLine("        public bool HasDebug => __blob.HasDebug;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Имена типа и ноды по оффсету — только для инструментов едитора.</summary>");
+            text.AppendLine("        public void Describe(uint offset, out string typeName, out string nodeName)");
+            text.AppendLine("            => __blob.Describe(offset, out typeName, out nodeName);");
+            text.AppendLine();
             text.AppendLine("        /// <summary>Чужой домен здесь не компилируется — это единственная проверка, работающая всегда.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.Append("        public ref readonly T Read<T>(uint offset) where T : unmanaged, ")
@@ -429,8 +436,15 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __router.IsCreated;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Строк, то есть нод. Он же потолок валидного id.</summary>");
+            text.AppendLine("        /// <summary>Строк, то есть нод. Он же потолок номера строки в валидном id.</summary>");
             text.AppendLine("        public int Count => __router.Count;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Тег этого роутера — старший байт id, которые он раздаёт.</summary>");
+            text.AppendLine("        public byte Tag => __router.Tag;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Id строки по её номеру — так роутер обходят целиком. Диапазон проверяет Get.</summary>");
+            text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+            text.AppendLine("        public global::Blobcheg.BlobchegId IdAt(uint index) => __router.IdAt(index);");
             text.AppendLine();
             text.AppendLine("        /// <summary>Строка ноды. Неизвестный id — бросает.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");

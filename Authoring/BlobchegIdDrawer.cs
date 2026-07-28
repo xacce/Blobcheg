@@ -82,7 +82,7 @@ namespace Blobcheg.Authoring
                 "Нод этого роутера в проекте нет — или пересборка не дошла до носителей id.",
                 candidates,
                 current,
-                asset => "id " + ((BlobchegIdSo)asset).id,
+                asset => "строка " + new BlobchegId(((BlobchegIdSo)asset).id).Index,
                 picked =>
                 {
                     var found = serialized.FindProperty(path);

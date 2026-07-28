@@ -62,7 +62,7 @@ namespace Blobcheg
         public static BlobchegRouterWriter Open(string directory, string routerName, int domainCount, ulong layoutHash)
             => new BlobchegRouterWriter(directory, routerName, domainCount, layoutHash);
 
-        /// <summary>Кладёт строку и возвращает её id. Пустая строка допустима — нода без записей.</summary>
+        /// <summary>Кладёт строку и возвращает её номер. Пустая строка допустима — нода без записей.</summary>
         public uint Append(string nodeName, IReadOnlyList<BlobchegRouterCell> cells)
         {
             if (_flushed)
@@ -105,6 +105,9 @@ namespace Blobcheg
 
             var count = _masks.Count;
 
+            // Роутеру без строк описывать нечего — см. тот же довод у писателя базы.
+            withDebug &= count > 0;
+
             var masksOffset = BlobchegFormat.AlignUp(BlobchegRouterFormat.PrologOffset + BlobchegRouterFormat.PrologSize);
             var rowStartOffset = BlobchegFormat.AlignUp(masksOffset + count * _maskWidth);
             var offsetsOffset = BlobchegFormat.AlignUp(rowStartOffset + (count + 1) * 4);
@@ -145,13 +148,13 @@ namespace Blobcheg
                 Buffer.BlockCopy(debugSection, 0, file, debugOffset, debugSection.Length);
 
             var flags = (ushort)(BlobchegFormat.FlagRouter | (withDebug ? BlobchegFormat.FlagHasDebug : 0));
-            ContentHash = BlobchegBytes.Seal(file, flags, (uint)debugOffset);
+            ContentHash = BlobchegBytes.Seal(file, flags, (uint)debugOffset, BlobchegNaming.NameHash(RouterName));
 
             _flushed = true;
             FileChanged = BlobchegBytes.WriteIfChanged(Directory, FilePath, file, ContentHash);
         }
 
-        /// <summary>Имя ноды по id — только для инструментов едитора, поэтому за BLOBCHEG_DEBUG.</summary>
+        /// <summary>Имя ноды по id — только для инструментов едитора, поэтому в релизный плеер не едет.</summary>
         byte[] BuildDebugSection(uint sectionOffset)
         {
             var count = _masks.Count;

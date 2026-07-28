@@ -4,8 +4,9 @@ using System.Runtime.InteropServices;
 namespace Blobcheg
 {
     /// <summary>
-    /// Запись debug-секции. Секции нет ни в билде, ни в файле, собранном без дефайна
-    /// <c>BLOBCHEG_DEBUG</c>: что лежит внутри бинарника — вопрос доверия, а это отладочный контур.
+    /// Запись debug-секции. В редакторе она есть всегда — на ней стоит проверка типа при чтении и
+    /// <c>Describe</c> у инструментов. В релизный плеер она не едет: там имена типов и нод не нужны,
+    /// а что лежит внутри бинарника — снова вопрос доверия.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct BlobchegDebugEntry

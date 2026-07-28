@@ -15,16 +15,12 @@ namespace Blobcheg.AdvancedTests
     /// </summary>
     public sealed class HumanFactorTests : AdvancedFixture
     {
-        // BUG: сохранённый id после удаления соседней ноды молча начинает указывать на ДРУГУЮ ноду.
-        // Ожидалось: id, положенный в сейв (или в компонент, или на провод), обязан либо указывать
-        // на ту же ноду, либо стать явно недействительным. Молчаливая подмена — самая дорогая из
-        // возможных: игрок открывает сохранение и получает не тот предмет, без единой ошибки.
-        // Корень: id — позиция строки в списке нод роутера, отсортированном по GUID
-        // (BlobchegIdTable.Assign), и удаление ноды сдвигает ВСЕ последующие позиции. Носители
-        // BlobchegIdSo при пересборке перевыставляются, поэтому путь через ассет остаётся верным, а
-        // любой уже сохранённый uint — нет. В файле роутера нет поколения (в прологе Count,
-        // DomainCount, LayoutHash и оффсеты массивов, и больше ничего), поэтому отличить «id из
-        // прошлой раскладки» от «id из этой» нечем даже теоретически.
+        /// <summary>
+        /// Самая дорогая из возможных поломок: игрок открывает сохранение и получает не тот предмет,
+        /// без единой ошибки. Закрыта тем, что id не пересчитывается — он лежит на носителе ноды и
+        /// наследуется, а удалённая нода оставляет за собой пустую строку. Строка-дырка стоит
+        /// нескольких байт в файле; подтянуть следующую значило бы сдвинуть чужой сохранённый id.
+        /// </summary>
         [Test]
         public void Сохранённый_id_после_удаления_соседа_не_указывает_на_другую_ноду()
         {
@@ -37,7 +33,7 @@ namespace Blobcheg.AdvancedTests
 
             Rebuild();
 
-            var byId = created.OrderBy(n => IdOf(n, AdvRouter.RouterName).Value).ToArray();
+            var byId = created.OrderBy(n => IdOf(n, AdvRouter.RouterName).Index).ToArray();
             for (var i = 0; i < byId.Length; i++)
             {
                 byId[i].tier = 100 * (i + 1);
@@ -48,7 +44,7 @@ namespace Blobcheg.AdvancedTests
 
             // Так делает потребитель: взял id и положил его в сейв. Дальше он видит только число.
             var saved = IdOf(byId[1], AdvRouter.RouterName);
-            Assert.That(saved.Value, Is.EqualTo(1u));
+            Assert.That(saved.Index, Is.EqualTo(1u));
 
             Kill(byId[0]);
             Rebuild();
@@ -57,9 +53,14 @@ namespace Blobcheg.AdvancedTests
             var cold = Cold();
             try
             {
-                Assert.That(router.Count, Is.EqualTo(2));
+                Assert.That(router.Count, Is.EqualTo(3),
+                    "удалённая нода оставила дырку: строк по-прежнему три, первая пуста");
+                Assert.That(router.HasCold(BlobchegId.In(AdvRouter.RouterName, 0)), Is.False, "и она пуста");
+
+                Assert.That(IdOf(byId[1], AdvRouter.RouterName), Is.EqualTo(saved),
+                    "id соседа не съезжает следом за удалённым");
                 Assert.That(cold.Read<AdvColdInfo>(router.GetCold(saved)).Tier, Is.EqualTo(200),
-                    "сохранённый id обязан вести к своей ноде либо честно умереть, а не привести к соседней");
+                    "сохранённый id обязан вести к своей ноде");
             }
             finally
             {
@@ -68,17 +69,14 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        // BUG: закешированный оффсет после появления записи ДРУГОГО типа молча указывает на чужую
-        // запись.
-        // Ожидалось: протухший адрес обязан быть отбит при чтении.
-        // Корень: тот же, что у «Оффсет_из_чужой_базы_не_читается_в_этой» — адрес в этом формате это
-        // голое число без личности и без поколения. Раскладка BlobchegWriter.BuildOrder группирует
-        // записи по FullName типа, поэтому появление ноды с типом, чьё имя сортируется раньше,
-        // сдвигает ВСЕ записи следующих типов. Ревизия у записи есть (BlobchegRefSo.revision), но
-        // она внутренняя и участвует только в решении «переписывать ли ассет», а до рантайма не
-        // доезжает вовсе.
+        /// <summary>
+        /// Кешировать адрес потребитель будет — в компоненте, в статике, в запечённой субсцене.
+        /// Поэтому адрес закреплён за записью: прошлый адрес приезжает в раскладку заявкой с
+        /// носителя ноды, и появление соседа его не двигает. Двигает только компакт — и он на то и
+        /// отдельная команда, что после него перепекается всё, что адрес запомнило.
+        /// </summary>
         [Test]
-        public void Закешированный_оффсет_после_появления_чужой_записи_не_врёт()
+        public void Закешированный_оффсет_переживает_появление_чужой_записи()
         {
             var gun = Node<AdvComboNodeSo>("Combo");
             gun.rpm = 999;
@@ -88,18 +86,56 @@ namespace Blobcheg.AdvancedTests
             // Потребитель закешировал адрес у себя: положил в компонент, в статик, в сейв — неважно.
             var cached = OffsetOf(gun, "IAdvCombat");
 
-            // Появилась ЧУЖАЯ нода с типом, имя которого сортируется раньше AdvGun.
+            // Появилась ЧУЖАЯ нода с типом, имя которого сортируется РАНЬШЕ AdvGun: без заявки на
+            // прежний адрес она сдвинула бы все записи следующих типов.
             Node<AdvArmorNodeSo>("Armor");
             Rebuild();
 
-            Assert.That(OffsetOf(gun, "IAdvCombat"), Is.Not.EqualTo(cached),
-                "сама раскладка при этом обязана была поехать — иначе тест ничего не проверяет");
+            Assert.That(OffsetOf(gun, "IAdvCombat"), Is.EqualTo(cached),
+                "новая нода не имеет права двигать чужой адрес");
 
             var db = Combat();
             try
             {
                 Assert.That(db.Read<AdvGun>(cached).Rpm, Is.EqualTo(999),
-                    "старый адрес указывает на чужую запись, и об этом никто не сказал");
+                    "и по закешированному адресу лежит та же запись");
+            }
+            finally
+            {
+                db.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Обратная сторона: компакт адреса двигает нарочно. Здесь важно, что он не оставляет
+        /// потребителя с протухшим числом молча — носители переписаны, и по старому адресу либо
+        /// лежит не та запись, либо не лежит ничего.
+        /// </summary>
+        [Test]
+        public void Компакт_двигает_адрес_и_переписывает_носитель()
+        {
+            var armor = Node<AdvArmorNodeSo>("Armor");
+            var gun = Node<AdvComboNodeSo>("Combo");
+            Rebuild();
+
+            Kill(armor);
+            Rebuild();
+
+            var withHole = OffsetOf(gun, "IAdvCombat");
+
+            BlobchegBuild.Compact();
+
+            var compacted = OffsetOf(gun, "IAdvCombat");
+            Assert.That(compacted, Is.LessThan(withHole), "компакт убрал дырку и подтянул запись");
+            Assert.That(compacted, Is.EqualTo((uint)BlobchegFormat.HeaderSize),
+                "единственная запись после компакта лежит сразу за header'ом");
+
+            var db = Combat();
+            try
+            {
+                Assert.That(db.Read<AdvGun>(compacted).Rpm, Is.EqualTo(600), "по новому адресу читается");
+                Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(withHole).Rpm; },
+                    "а по старому — уже нет, и это видно, а не молчит");
             }
             finally
             {
@@ -122,14 +158,20 @@ namespace Blobcheg.AdvancedTests
 
             Rebuild();
             Rebuild();
+
             var again = created.Select(n => IdOf(n, AdvRouter.RouterName).Value).ToArray();
 
             CollectionAssert.AreEqual(first, again,
                 "порядок id обязан быть функцией проекта, а не порядка обхода: иначе билд и редактор разъедутся");
         }
 
+        /// <summary>
+        /// Привычка «if (id != 0)» — самая распространённая проверка на свете, и здесь она обязана
+        /// работать. Работает она потому, что тег ноль зарезервирован: строка ноль существует, но
+        /// её id нулём не бывает.
+        /// </summary>
         [Test]
-        public void Проверка_id_на_ноль_не_является_проверкой()
+        public void Привычная_проверка_на_ноль_работает()
         {
             var created = new[]
             {
@@ -139,13 +181,13 @@ namespace Blobcheg.AdvancedTests
 
             Rebuild();
 
-            var zero = created.Select(n => IdOf(n, AdvRouter.RouterName)).Count(id => id.Value == 0);
-            Assert.That(zero, Is.EqualTo(1),
-                "строка ноль — обычная валидная нода, поэтому привычное 'if (id != 0)' не проверяет ничего; " +
-                "признак незаполненности один — BlobchegId.None");
+            var ids = created.Select(n => IdOf(n, AdvRouter.RouterName)).ToArray();
+            Assert.That(ids.Count(id => id.Index == 0), Is.EqualTo(1), "строка ноль есть, как и раньше");
+            Assert.That(ids.Count(id => id.Value == 0), Is.Zero, "а вот id ноль не выдаётся никому");
 
             Assert.That(BlobchegId.None.IsValid, Is.False);
-            Assert.That(new BlobchegId(0).IsValid, Is.True);
+            Assert.That(BlobchegId.None.Value, Is.Zero, "«не назначен» и ноль — одно и то же значение");
+            Assert.That(new BlobchegId(0).IsValid, Is.False);
         }
 
         [Test]
@@ -285,7 +327,7 @@ namespace Blobcheg.AdvancedTests
                 BlobchegBuild.IdsOf(node).Single(c => c.RouterName == AdvRouter.RouterName));
 
             Assert.That(field.IsSet, Is.True);
-            Assert.That(field.Id.Value, Is.EqualTo(0u));
+            Assert.That(field.Id.Index, Is.EqualTo(0u));
 
             Kill(node);
 

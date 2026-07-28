@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Blobcheg.Authoring;
 using NUnit.Framework;
@@ -13,14 +14,11 @@ namespace Blobcheg.AdvancedTests
     /// </summary>
     public sealed class IdentityTests : AdvancedFixture
     {
-        // BUG: id, выданный ДРУГИМ роутером, резолвится в этом молча и отдаёт чужую строку.
-        // Ожидалось: чужой id обязан быть отбит — либо исключением, либо честным «строки нет».
-        // Корень: BlobchegId — это голый uint-индекс, а файл роутера не несёт никакой своей
-        // личности: в прологе лежат Count, DomainCount, LayoutHash и оффсеты массивов, но нет ни
-        // идентификатора роутера, ни поколения. BlobchegRouterBlob.Get проверяет ТОЛЬКО диапазон
-        // (id.Value >= _count), поэтому любой индекс в диапазоне считается своим. Проверка родства
-        // существует ровно на уровне ассетов (BlobchegIdRef сверяет routerName), и как только id
-        // превращается в uint — в компоненте, в сейве, на проводе — родства больше нет.
+        /// <summary>
+        /// Родство id держится на теге — старшем байте значения. Без него голое число попадало бы в
+        /// диапазон соседнего роутера и отдавало чужую строку молча: проверка родства существовала
+        /// бы ровно на уровне ассетов, а в компоненте, в сейве и на проводе от id остаётся uint.
+        /// </summary>
         [Test]
         public void Id_чужого_роутера_не_резолвится_в_этом()
         {
@@ -33,8 +31,40 @@ namespace Blobcheg.AdvancedTests
             var router = Router();
             try
             {
+                Assert.That(alien.Index, Is.EqualTo(0u), "строка та же самая — отличает их только тег");
+                Assert.That(router.Count, Is.GreaterThan((int)alien.Index),
+                    "и она в этом роутере есть, иначе тест поймал бы обычный выход за диапазон");
+
                 Assert.Throws<InvalidOperationException>(() => router.Get(alien),
                     "этот id выдан роутером AdvOtherRouter — в AdvRouter он не значит ничего");
+                Assert.That(router.TryGet(alien, out _), Is.False);
+            }
+            finally
+            {
+                router.Dispose();
+            }
+        }
+
+        [Test]
+        public void Id_несёт_тег_своего_роутера()
+        {
+            var combo = Node<AdvComboNodeSo>("Combo");
+            var other = Node<AdvOtherNodeSo>("Other");
+            Rebuild();
+
+            var mine = IdOf(combo, AdvRouter.RouterName);
+            var alien = IdOf(other, AdvOtherRouter.RouterName);
+
+            Assert.That(mine.Tag, Is.Not.Zero, "тег ноль зарезервирован под «id не назначен»");
+            Assert.That(mine.Tag, Is.Not.EqualTo(alien.Tag), "два роутера — два разных тега");
+            Assert.That(mine.Tag, Is.EqualTo(BlobchegNaming.TagOf(AdvRouter.RouterName)),
+                "тег выводится из имени роутера, поэтому едитор и файл приходят к нему независимо");
+
+            var router = Router();
+            try
+            {
+                Assert.That(router.Tag, Is.EqualTo(mine.Tag));
+                Assert.That(router.IdAt(mine.Index), Is.EqualTo(mine), "обход роутера даёт те же id");
             }
             finally
             {
@@ -80,13 +110,12 @@ namespace Blobcheg.AdvancedTests
                 "а свой тип обязан проходить");
         }
 
-        // BUG: оффсет из ЧУЖОЙ базы читается в этой молча и отдаёт чужие байты как свою запись.
-        // Ожидалось: адрес, выданный другой базой, обязан быть отбит явно.
-        // Корень: в header'е файла (BlobchegHeader) нет ничего, что говорило бы, ЧЕЙ это файл —
-        // только Magic, Version, Flags, длина и хеш содержимого. Единственная проверка чтения,
-        // BlobchegBlob.CheckRead, сверяет оффсет с длиной СВОЕГО буфера и с выравниванием; про то,
-        // что число приехало из соседней базы, узнать нечем. Типизированное поле BlobchegRef<T>
-        // ловит это на уровне ассета, но ровно до того момента, как оффсет станет uint в компоненте.
+        /// <summary>
+        /// Оффсет личности не несёт и нести не может: это позиция в файле, а не имя. Ловит чужой
+        /// адрес отладочный контур — по нему видно, начинается ли в этом месте запись и та ли она.
+        /// В редакторе и в development-билде контур есть всегда, в релизном плеере его нет, и там
+        /// это снова вопрос доверия — ровно как и всё остальное содержимое записи.
+        /// </summary>
         [Test]
         public void Оффсет_из_чужой_базы_не_читается_в_этой()
         {
@@ -100,12 +129,44 @@ namespace Blobcheg.AdvancedTests
             var db = Combat();
             try
             {
+                Assert.That(db.HasDebug, Is.True, "в редакторе отладочный контур обязан быть — на нём стоит проверка");
+                Assert.That(alienOffset + 8u, Is.LessThanOrEqualTo((uint)db.Length),
+                    "адрес обязан помещаться в боевую базу, иначе тест поймал бы обычный выход за границу");
+
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(alienOffset).Rpm; },
                     "этот адрес выдан базой IAdvLoose — в боевой базе по нему лежит что угодно");
             }
             finally
             {
                 db.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// А вот у самого ФАЙЛА личность есть — хеш имени домена в header'е. Без неё два
+        /// переставленных местами .bcheg поднимаются оба: целостность у каждого своя и сходится.
+        /// </summary>
+        [Test]
+        public void Файл_чужой_базы_не_поднимается_под_этим_именем()
+        {
+            Node<AdvLooseNodeSo>("Loose");
+            Node<AdvComboNodeSo>("Combo");
+            Rebuild();
+
+            // Подменяем файл боевой базы файлом холодной — ровно то, что делает неудачный мёрж
+            // или ручное копирование «а, тут же просто данные».
+            Overwrite("IAdvCombat", Bytes("IAdvCold"));
+
+            var buffer = BufferOf(AdvCombatDb.FileName);
+            try
+            {
+                var thrown = Assert.Throws<InvalidOperationException>(() => { _ = new AdvCombatDb(buffer); },
+                    "файл целый и хеш сходится — но это файл другого домена");
+                StringAssert.Contains("другого домена", thrown.Message);
+            }
+            finally
+            {
+                buffer.Dispose();
             }
         }
 
@@ -136,14 +197,11 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        // BUG: default(BlobchegId) — это валидная строка 0, а не «id не назначен».
-        // Ожидалось: значение по умолчанию не должно быть валидным адресом; поле, которое забыли
-        // заполнить, обязано падать, а не молча указывать на первую ноду в базе.
-        // Корень: сентинелом выбран BlobchegId.NoneValue = uint.MaxValue, поэтому нулевая
-        // инициализация — а это ЛЮБОЙ default: поле IComponentData, элемент NativeArray, не
-        // выставленное поле структуры — даёт Value == 0, который проходит проверку
-        // BlobchegRouterBlob.Get (0 < Count) и IsValid. Сентинел 0 с id, начинающимися с единицы,
-        // закрыл бы это by construction; выбранный обратный порядок оставляет ловушку открытой.
+        /// <summary>
+        /// Нулевая инициализация — это ЛЮБОЙ default: поле IComponentData, элемент NativeArray, не
+        /// выставленное поле структуры. Сентинелом выбран ноль именно поэтому: забытое поле обязано
+        /// падать, а не молча приводить к первой ноде роутера.
+        /// </summary>
         [Test]
         public void Дефолтный_BlobchegId_не_валиден()
         {
@@ -156,8 +214,10 @@ namespace Blobcheg.AdvancedTests
             var router = Router();
             try
             {
+                Assert.That(router.Count, Is.EqualTo(1), "строка ноль в роутере при этом есть");
                 Assert.That(router.TryGet(default, out _), Is.False,
                     "нулевой id не имеет права отдавать первую ноду базы");
+                Assert.Throws<InvalidOperationException>(() => router.Get(default));
             }
             finally
             {
@@ -195,23 +255,19 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        // BUG: пересборка, запущенная сразу после переименования ноды, НЕ ВИДИТ эту ноду вовсе —
-        // обход возвращает только соседку, ни под старым путём, ни под новым переименованной нет.
-        // Ожидалось: пересборка обязана видеть все ноды проекта; ассет, только что переименованный,
-        // никуда не девался.
-        // Последствия: заход в таком состоянии выкидывает запись ноды из файла, сдвигает id всех
-        // нод, стоящих после неё, и оставляет ref-ассет указывающим на адрес, которого больше нет.
-        // Молча — отчёт при этом бодро рапортует об успешной пересборке.
-        // Корень: BlobchegBuild.FindNodes обходит AssetDatabase.GetAllAssetPaths(). Комментарий в
-        // нём объясняет, что FindAssets("t:...") не годится — поисковый индекс отстаёт от импорта;
-        // но GetAllAssetPaths отстаёт ТОЖЕ, просто на другом событии: переименование в том же
-        // заходе редактора в него ещё не попало. ImportAsset(..., ForceSynchronousImport) на новый
-        // путь этого не чинит. В обычной работе дыра замаскирована тем, что хук зовёт пересборку
-        // через EditorApplication.delayCall, то есть уже после того, как база ассетов улеглась;
-        // открытой она остаётся для синхронных путей — гейта пре-билда BlobchegBuild.RequireUpToDate
-        // и любого скрипта, который переименовывает ассет и тут же пересобирает.
+        /// <summary>
+        /// Переименовали и тут же пересобрали — так ходит любой скрипт и гейт пре-билда. В этом
+        /// заходе редактора база ассетов переименование ещё не переварила: ассет не поднимается ни
+        /// под старым путём, ни под новым, а поисковый индекс о нём не знает — проверено замером,
+        /// <c>ImportAsset(ForceSynchronousImport)</c> и <c>Refresh</c> этого не чинят.
+        ///
+        /// Значит исходов ровно два, и оба обязаны быть честными: либо обход ноду видит, либо
+        /// пересборка ОТКАЗЫВАЕТСЯ. Чего быть не должно — третьего: молча собранной базы без её
+        /// записи и со съехавшими id соседей. Ассет на диске лежит, GUID его известен, поэтому
+        /// отличить потерю от удаления пакету есть по чему.
+        /// </summary>
         [Test]
-        public void Переименование_ноды_не_двигает_id()
+        public void Переименование_ноды_не_теряет_её_молча()
         {
             var a = Node<AdvColdOnlyNodeSo>("Alpha");
             Node<AdvColdOnlyNodeSo>("Beta");
@@ -227,23 +283,42 @@ namespace Blobcheg.AdvancedTests
             AssetDatabase.SaveAssets();
 
             var renamedPath = Folder + "/Zulu.asset";
-
-            // Импорт после переименования отложенный, и без принудительной синхронизации ассет по
-            // новому пути ещё не загружен: это грабли редактора, а не поведение пакета.
             AssetDatabase.ImportAsset(renamedPath, ImportAssetOptions.ForceSynchronousImport);
-            Rebuild();
 
             Assert.That(AssetDatabase.AssetPathToGUID(renamedPath), Is.EqualTo(guid),
                 "GUID переименованного ассета обязан остаться тем же — на нём и держится id");
 
-            // Ищем ноду тем же обходом, каким её ищет сама пересборка, и ПО ПУТИ, а не по имени:
-            // имя managed-объекта после переименования обновляется отложенно.
-            var seen = BlobchegBuild.FindNodes();
+            List<BlobchegNodeSo> seen = null;
+            InvalidOperationException refused = null;
+            try
+            {
+                seen = BlobchegBuild.FindNodes();
+            }
+            catch (InvalidOperationException e)
+            {
+                refused = e;
+            }
+
+            if (refused != null)
+            {
+                StringAssert.Contains("Zulu", refused.Message, "отказ обязан называть ноду, из-за которой он случился");
+                Assert.Throws<InvalidOperationException>(() => Rebuild(),
+                    "и сама пересборка в этом состоянии обязана отказаться так же, а не собрать базу без ноды");
+
+                // Убираем ассет сами: пока он лежит непереваренным, обход будет отказывать и дальше.
+                AssetDatabase.DeleteAsset(renamedPath);
+                AssetDatabase.Refresh();
+                return;
+            }
+
+            // Ищем ноду ПО ПУТИ, а не по имени: имя managed-объекта после переименования
+            // обновляется отложенно.
             var renamed = seen.FirstOrDefault(n => AssetDatabase.GetAssetPath(n) == renamedPath);
             Assert.That(renamed, Is.Not.Null,
-                "пересборка обязана видеть переименованную ноду; обход вернул: " +
-                string.Join(", ", seen.Select(n => AssetDatabase.GetAssetPath(n) + " [" + n.name + "]")));
+                "обход не отказался — значит обязан был увидеть ноду; вернул: " +
+                string.Join(", ", seen.Select(n => AssetDatabase.GetAssetPath(n))));
 
+            Rebuild();
             Assert.That(IdOf(renamed, AdvRouter.RouterName), Is.EqualTo(before),
                 "id считается по GUID ассета — имя на него влиять не имеет права");
         }
@@ -313,9 +388,9 @@ namespace Blobcheg.AdvancedTests
 
             Rebuild();
 
-            var ids = nodes.Select(n => IdOf(n, AdvRouter.RouterName).Value).OrderBy(v => v).ToArray();
+            var ids = nodes.Select(n => IdOf(n, AdvRouter.RouterName).Index).OrderBy(v => v).ToArray();
             CollectionAssert.AreEqual(new uint[] { 0, 1, 2, 3 }, ids,
-                "id — плотный индекс строки; дырки в нём сделали бы array[id] невозможным");
+                "строка — плотный индекс; дырки в нём сделали бы array[index] невозможным");
 
             var router = Router();
             try

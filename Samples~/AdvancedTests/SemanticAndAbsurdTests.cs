@@ -224,22 +224,34 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        // BUG: запись с сырым указателем внутри уезжает в файл без единого возражения.
-        // Ожидалось: тип, у которого внутри указатель, обязан быть отбит — в файле, который переживёт
-        // перезапуск процесса, адрес чужой памяти не значит ничего и при чтении даёт заряженный
-        // мусор, неотличимый от валидного значения.
-        // Корень: единственный фильтр записи — констрейнт `where T : unmanaged` в
-        // BlobchegNodeWriter.Add. Он пропускает любую структуру с полями-указателями (и IntPtr, и
-        // T*), потому что она формально unmanaged. Дальше UnsafeUtility.CopyStructureToPtr копирует
-        // байты как есть, включая указатель. Проверки «тип пригоден для персиста» в пайплайне нет
-        // ни на едиторной стороне, ни в debug-секции.
+        /// <summary>
+        /// Констрейнт <c>where T : unmanaged</c> отвечает только за «нет managed-ссылок»: структуру
+        /// с полем <c>byte*</c> или <c>IntPtr</c> он пропускает, потому что она формально unmanaged.
+        /// Отбивает её отдельная проверка пайплайна — и отбивать обязан именно пайплайн: адрес
+        /// переживает запись, но не перезапуск процесса, и при чтении отдаёт мусор, неотличимый от
+        /// значения.
+        /// </summary>
         [Test]
         public void Запись_с_сырым_указателем_отбивается()
         {
             var node = Node<AdvPointerNodeSo>("Pointer");
 
-            Assert.Throws<InvalidOperationException>(() => Rebuild(),
+            var thrown = Assert.Throws<InvalidOperationException>(() => Rebuild(),
                 "указатель в файле — это не данные; такую запись обязан отбить пайплайн, а не потребитель");
+            StringAssert.Contains("Ptr", thrown.Message,
+                "и назвать поле: искать его глазами в толстой структуре — работа не человека");
+
+            Kill(node);
+        }
+
+        [Test]
+        public void Указатель_в_глубине_записи_тоже_отбивается()
+        {
+            var node = Node<AdvNestedPointerNodeSo>("Nested");
+
+            var thrown = Assert.Throws<InvalidOperationException>(() => Rebuild(),
+                "указатель, спрятанный в поле-структуре, ничем не лучше указателя на виду");
+            StringAssert.Contains(nameof(AdvPointerHolder.Handle), thrown.Message);
 
             Kill(node);
         }

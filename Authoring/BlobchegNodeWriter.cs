@@ -168,6 +168,8 @@ namespace Blobcheg.Authoring
         /// <summary>Типизированная запись. Домен берётся из маркер-интерфейса <typeparamref name="T"/>.</summary>
         public unsafe void Add<T>(in T record) where T : unmanaged
         {
+            BlobchegRecordTypes.Require(typeof(T));
+
             var bytes = new byte[UnsafeUtility.SizeOf<T>()];
             var copy = record;
             fixed (byte* destination = bytes)

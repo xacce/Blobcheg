@@ -1,6 +1,7 @@
 using System;
 using UnityEditor;
 using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
 using UnityEngine;
 
 namespace Blobcheg.Authoring
@@ -128,6 +129,11 @@ namespace Blobcheg.Authoring
     /// Компакт именно здесь: дырки от удалённых нод — это байты, которые едут в билд ни за чем, а
     /// пересортировка двигает все адреса, и позволить её можно только там, где следом всё равно
     /// перепекается всё. В редакторе на неё есть отдельная команда, сама она не случается.
+    ///
+    /// Здесь же снимается отладочный контур — но только с релизного плеера. В development-билде
+    /// стоит <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>, то есть проверка типа записи там работает, и
+    /// снимать то, на чём она стоит, значило бы выключить её ровно в том билде, который и заводят,
+    /// чтобы ловить.
     /// </summary>
     public sealed class BlobchegBuildGate : BuildPlayerProcessor
     {
@@ -139,10 +145,37 @@ namespace Blobcheg.Authoring
 
         public override void PrepareForBuild(BuildPlayerContext context)
         {
-            Debug.Log("Blobcheg: пре-билд — компакт до бейка субсцен");
+            var development = (context.BuildPlayerOptions.options & BuildOptions.Development) != 0;
 
+            Debug.Log($"Blobcheg: пре-билд — компакт до бейка субсцен, отладочный контур " +
+                      $"{(development ? "остаётся (development)" : "снят")}");
+
+            BlobchegBuild.DebugContour = development;
             BlobchegBuild.Compact();
             BlobchegBuild.RequireUpToDate("пре-билд");
+        }
+    }
+
+    /// <summary>
+    /// После билда редактору возвращают его отладочный контур: файлы в StreamingAssets остались
+    /// собранными под плеер, а в редакторе на контуре стоит проверка типа при чтении.
+    ///
+    /// Билд упал — колбэк не позвали, и до следующей перезагрузки домена контура не будет. Это не
+    /// тихая потеря: <see cref="BlobchegBuild.WithDebug"/> статикой не переживает перезагрузку, а
+    /// первая же пересборка после неё вернёт секцию на место.
+    /// </summary>
+    public sealed class BlobchegDebugContourRestore : IPostprocessBuildWithReport
+    {
+        public int callbackOrder => 10000;
+
+        public void OnPostprocessBuild(BuildReport report)
+        {
+            if (BlobchegBuild.DebugContour)
+                return;
+
+            BlobchegBuild.DebugContour = true;
+            BlobchegBuild.RebuildFull();
+            Debug.Log("Blobcheg: отладочный контур возвращён редактору");
         }
     }
 }

@@ -15,6 +15,9 @@ namespace Blobcheg.Authoring
     /// позиции заново нельзя: id уезжает в чужие сейвы и в запечённые субсцены, и сдвиг там
     /// молча приводит к другой ноде.
     ///
+    /// Старший байт id — тег роутера (<see cref="BlobchegNaming.TagOf"/>): по нему чужой id
+    /// отбивается на лукапе, а нулём инициализированное поле не притворяется первой нодой.
+    ///
     /// Порядок GUID остался только для новичков — чтобы две пересборки подряд раздали одно и то же.
     /// </summary>
     sealed class BlobchegIdTable
@@ -31,6 +34,7 @@ namespace Blobcheg.Authoring
             {
                 var domains = BlobchegRouters.DomainsOf(router);
                 var routerName = BlobchegRouters.NameOf(router);
+                var tag = BlobchegNaming.TagOf(routerName);
 
                 var members = nodes
                     .Where(node => node.OutTypes != null && node.OutTypes.Any(domain => Array.IndexOf(domains, domain) >= 0))
@@ -43,23 +47,29 @@ namespace Blobcheg.Authoring
                 foreach (var node in members)
                 {
                     var carrier = carriers?.Id(node, routerName);
-                    if (carrier == null || carrier.id == BlobchegId.NoneValue)
+                    if (carrier == null)
+                        continue;
+
+                    // Тег чужой — значит носитель приехал от другого роутера (или из времён, когда
+                    // роутер звался иначе). Такой id не наследуется: нода получит новый, в хвосте.
+                    var was = new BlobchegId(carrier.id);
+                    if (!was.IsValid || was.Tag != tag)
                         continue;
 
                     // Двое на одном id — так бывает после копии ноды вместе с носителем. Место
                     // остаётся за тем, кто раньше по GUID, второй уезжает в хвост как новичок.
-                    if (taken.ContainsKey(carrier.id))
+                    if (taken.ContainsKey(was.Index))
                         continue;
 
-                    taken.Add(carrier.id, node);
-                    ids.Add(node, carrier.id);
+                    taken.Add(was.Index, node);
+                    ids.Add(node, was.Value);
                 }
 
                 var next = 0u;
-                foreach (var id in taken.Keys)
+                foreach (var index in taken.Keys)
                 {
-                    if (id >= next)
-                        next = id + 1;
+                    if (index >= next)
+                        next = index + 1;
                 }
 
                 foreach (var node in members)
@@ -67,7 +77,12 @@ namespace Blobcheg.Authoring
                     if (ids.ContainsKey(node))
                         continue;
 
-                    ids.Add(node, next);
+                    if (next > BlobchegId.MaxIndex)
+                        throw new InvalidOperationException(
+                            $"Blobcheg: в роутере '{routerName}' кончились строки — потолок " +
+                            $"{BlobchegId.MaxIndex}. Компакт вернёт дырки от удалённых нод");
+
+                    ids.Add(node, BlobchegId.Make(tag, next).Value);
                     taken.Add(next, node);
                     next++;
                 }

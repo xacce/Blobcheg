@@ -69,20 +69,17 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        // BUG: пересборка входит сама в себя без единого возражения.
-        // Ожидалось: вложенная пересборка обязана быть отбита явно — она идёт поверх наполовину
-        // заполненного коллектора и наполовину розданных id, и «файл собран» после неё не значит
-        // ничего.
-        // Корень: защита от реентранса есть в BlobchegHooks (флаг _running), но она стоит на ХУКЕ
-        // импорта, а не на самой пересборке. BlobchegBuild.RebuildAll — статический метод без
-        // состояния между вызовами: он заново открывает коллектор, заново раздаёт id и заново
-        // пишет файлы, поэтому вход в него из BlobchegNodeSo.Write (а нода может тронуть
-        // AssetDatabase чем угодно) просто выполняет всю пересборку заново изнутри неё же.
+        /// <summary>
+        /// Нода в своём <c>Write</c> может тронуть AssetDatabase чем угодно и войти в пересборку из
+        /// середины пересборки. Защита стоит на самой пересборке, а не на хуке импорта: вложенный
+        /// заход идёт поверх наполовину заполненного коллектора и наполовину розданных id, и «файл
+        /// собран» после него не значит ничего.
+        /// </summary>
         [Test]
         public void Пересборка_из_середины_пересборки_отбивается()
         {
             Node<AdvReentrantNodeSo>("Reentrant");
-            AdvReentrantNodeSo.Reset();
+            AdvReentrantNodeSo.Forget();
 
             Rebuild();
 
@@ -125,7 +122,7 @@ namespace Blobcheg.AdvancedTests
 
                 for (var i = 0; i < rows; i++)
                 {
-                    var row = blob.Get(new BlobchegId((uint)i));
+                    var row = blob.Get(blob.IdAt((uint)i));
                     if (i % 3 == 0)
                     {
                         Assert.That(row.Mask, Is.EqualTo(0ul), $"строка {i} обязана остаться пустой");
@@ -136,7 +133,7 @@ namespace Blobcheg.AdvancedTests
                         $"строка {i} отдала чужой оффсет");
                 }
 
-                Assert.Throws<InvalidOperationException>(() => blob.Get(new BlobchegId((uint)rows)));
+                Assert.Throws<InvalidOperationException>(() => blob.Get(blob.IdAt((uint)rows)));
             }
             finally
             {
@@ -168,7 +165,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Ровно_одна_нода_адресуется_нулевым_id()
+        public void Ровно_одна_нода_адресуется_нулевой_строкой()
         {
             var only = Node<AdvColdOnlyNodeSo>("Only");
             only.tier = 77;
@@ -177,7 +174,8 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             var id = IdOf(only, AdvRouter.RouterName);
-            Assert.That(id.Value, Is.EqualTo(0u), "единственная нода — это строка ноль");
+            Assert.That(id.Index, Is.EqualTo(0u), "единственная нода — это строка ноль");
+            Assert.That(id.IsValid, Is.True, "но её id при этом не ноль: строку ноль от «не назначен» отличает тег");
 
             var router = Router();
             var cold = Cold();
@@ -185,7 +183,7 @@ namespace Blobcheg.AdvancedTests
             {
                 Assert.That(router.Count, Is.EqualTo(1));
                 Assert.That(cold.Read<AdvColdInfo>(router.GetCold(id)).Tier, Is.EqualTo(77));
-                Assert.Throws<InvalidOperationException>(() => router.Get(new BlobchegId(1)));
+                Assert.Throws<InvalidOperationException>(() => router.Get(router.IdAt(1)));
             }
             finally
             {

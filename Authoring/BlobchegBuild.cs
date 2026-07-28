@@ -40,12 +40,14 @@ namespace Blobcheg.Authoring
         public static string OutputDirectory
             => Path.Combine(Application.streamingAssetsPath, BlobchegNaming.DefaultFolder);
 
-        public static bool WithDebug =>
-#if BLOBCHEG_DEBUG
-            true;
-#else
-            false;
-#endif
+        /// <summary>
+        /// Пишется ли в файлы отладочный контур. В редакторе — всегда: на нём стоит проверка типа
+        /// при чтении, и без него она существует только на бумаге. Снимает его ровно одно место —
+        /// гейт пре-билда нерелизного плеера, см. <see cref="BlobchegBuildGate"/>.
+        /// </summary>
+        public static bool WithDebug => DebugContour;
+
+        internal static bool DebugContour = true;
 
         /// <summary>Пересборка идёт внутри — импорт своих же носителей кешу не новость.</summary>
         public static bool Building { get; private set; }
@@ -83,6 +85,16 @@ namespace Blobcheg.Authoring
 
         static BlobchegBuildReport Rebuild(bool incremental, bool compact)
         {
+            // Реентранс отбивается здесь, а не на хуке импорта: нода в своём Write может тронуть
+            // AssetDatabase чем угодно и войти в пересборку из середины пересборки. Вложенный заход
+            // идёт поверх наполовину заполненного коллектора и наполовину розданных id, и «файл
+            // собран» после него не значит ничего.
+            if (Building)
+                throw new InvalidOperationException(
+                    "Blobcheg: пересборка вошла сама в себя — скорее всего нода зовёт RebuildAll " +
+                    "из Write. Пересборка обязана быть одна: вложенная идёт поверх наполовину " +
+                    "розданных адресов и id");
+
             var report = new BlobchegBuildReport();
             var collector = new BlobchegCollector(OutputDirectory);
 
@@ -321,30 +333,146 @@ namespace Blobcheg.Authoring
         /// Состав домена ищется по проекту, а не берётся из ручного списка: список — это ещё одно
         /// место, где можно забыть.
         ///
-        /// Обход идёт по самой базе ассетов, а НЕ через <c>AssetDatabase.FindAssets("t:...")</c>:
-        /// поисковый индекс отстаёт от импорта (в батче свежесозданная нода в нём не находится
-        /// вовсе), а пересборка, молча не нашедшая ноду, — это ровно тот случай, когда всё выглядит
-        /// рабочим и врёт.
+        /// Обходов два, и оба обязательны, потому что отстают они на разных событиях: поисковый
+        /// индекс <c>FindAssets("t:...")</c> отстаёт от импорта (в батче свежесозданная нода в нём
+        /// не находится вовсе), а полный обход <c>GetAllAssetPaths</c> — от переезда ассета.
+        /// Личность ноды здесь GUID, а не путь: под двумя путями это один и тот же ассет.
+        ///
+        /// Есть состояние, в котором ноду не находит НИКАКОЙ обход: сразу после переименования её
+        /// путь уже новый, GUID известен, а тип и объект по нему ещё не поднимаются, и ни
+        /// <c>ImportAsset(ForceSynchronousImport)</c>, ни <c>Refresh</c> этого не меняют (замерено).
+        /// Собирать в таком состоянии нельзя: запись ноды ушла бы из файла, а id соседей поехали бы,
+        /// и всё это молча. Поэтому обход помнит GUID'ы, которые уже видел, и на потере отказывается
+        /// — см. <see cref="Lost"/>.
         /// </summary>
         public static List<BlobchegNodeSo> FindNodes()
+            => FindNodesByGuid().Values.OrderBy(AssetDatabase.GetAssetPath, StringComparer.Ordinal).ToList();
+
+        /// <summary>То же самое, но с GUID'ами: их кладёт себе кеш, чтобы не спрашивать базу заново.</summary>
+        internal static Dictionary<string, BlobchegNodeSo> FindNodesByGuid()
         {
-            var nodes = new List<BlobchegNodeSo>();
+            var found = Walk();
 
-            foreach (var path in AssetDatabase.GetAllAssetPaths())
+            var lost = Lost(found);
+            if (lost != null)
             {
-                if (!path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var type = AssetDatabase.GetMainAssetTypeAtPath(path);
-                if (type == null || !typeof(BlobchegNodeSo).IsAssignableFrom(type))
-                    continue;
-
-                var node = AssetDatabase.LoadAssetAtPath<BlobchegNodeSo>(path);
-                if (node != null)
-                    nodes.Add(node);
+                // База ассетов ещё не переварила переименование: файл на диске лежит, GUID известен,
+                // а ни тип, ни объект по нему ещё не поднимаются. Даём ей досчитать и идём заново.
+                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                found = Walk();
+                lost = Lost(found);
             }
 
-            return nodes.OrderBy(AssetDatabase.GetAssetPath, StringComparer.Ordinal).ToList();
+            if (lost != null)
+                throw new InvalidOperationException(
+                    $"Blobcheg: нода '{lost}' пропала из обхода, но её файл лежит на диске — база " +
+                    "ассетов ещё не переварила переименование. Пересборка в этом состоянии выкинула " +
+                    "бы её запись из файла и сдвинула id соседей, причём молча, поэтому она " +
+                    "отказывается. Повтори, когда редактор доимпортирует");
+
+            Seen.UnionWith(found.Keys);
+            return found;
+        }
+
+        /// <summary>
+        /// GUID'ы нод, о которых пайплайн знает в этой сессии: их кладут сюда и обход, и кеш —
+        /// нода, созданная между полными обходами, известна только кешу. Набор переживает
+        /// <c>BlobchegCache.Drop</c> и не переживает перезагрузку домена — ровно то окно, в котором
+        /// нода и теряется: ассет, переименованный до перезагрузки, после неё импортирован полностью.
+        /// </summary>
+        static readonly HashSet<string> Seen = new HashSet<string>(StringComparer.Ordinal);
+
+        internal static void Remember(string guid)
+        {
+            if (!string.IsNullOrEmpty(guid))
+                Seen.Add(guid);
+        }
+
+        static Dictionary<string, BlobchegNodeSo> Walk()
+        {
+            var byGuid = new Dictionary<string, BlobchegNodeSo>(StringComparer.Ordinal);
+
+            foreach (var path in AssetDatabase.GetAllAssetPaths())
+                Consider(path, null, byGuid);
+
+            foreach (var guid in AssetDatabase.FindAssets("t:" + nameof(BlobchegNodeSo)))
+            {
+                // Сначала GUID, потом путь: на 10 000 нод второй заход почти целиком попадает в
+                // уже найденное, и платить за него native-вызовами незачем.
+                if (byGuid.ContainsKey(guid))
+                    continue;
+
+                Consider(AssetDatabase.GUIDToAssetPath(guid), guid, byGuid);
+            }
+
+            return byGuid;
+        }
+
+        /// <summary>
+        /// Нода, которую обход знал и больше не видит, хотя её файл на месте. Путь такой ноды — или
+        /// <c>null</c>, если потерь нет. Заодно чистит из <see cref="Seen"/> тех, кого действительно
+        /// не стало.
+        ///
+        /// Отличить потерю от нормального ухода можно по трём признакам сразу: файл лежит на диске,
+        /// GUID ещё указывает на путь, а тип по этому пути не спрашивается. Удалённая нода теряет
+        /// файл, переставшая быть нодой — отдаёт свой новый тип, и обе проходят мимо.
+        /// </summary>
+        static string Lost(Dictionary<string, BlobchegNodeSo> found)
+        {
+            List<string> gone = null;
+
+            foreach (var guid in Seen)
+            {
+                if (found.ContainsKey(guid))
+                    continue;
+
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.IsNullOrEmpty(path)
+                    && AssetDatabase.GetMainAssetTypeAtPath(path) == null
+                    && File.Exists(Path.Combine(Application.dataPath, "..", path)))
+                    return path;
+
+                (gone ?? (gone = new List<string>())).Add(guid);
+            }
+
+            if (gone != null)
+            {
+                foreach (var guid in gone)
+                    Seen.Remove(guid);
+            }
+
+            return null;
+        }
+
+        static void Consider(string path, string knownGuid, Dictionary<string, BlobchegNodeSo> byGuid)
+        {
+            if (string.IsNullOrEmpty(path) || !path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var type = AssetDatabase.GetMainAssetTypeAtPath(path);
+            if (type == null || !typeof(BlobchegNodeSo).IsAssignableFrom(type))
+                return;
+
+            var guid = knownGuid ?? AssetDatabase.AssetPathToGUID(path);
+            if (string.IsNullOrEmpty(guid) || byGuid.ContainsKey(guid))
+                return;
+
+            var node = AssetDatabase.LoadAssetAtPath<BlobchegNodeSo>(path);
+
+            if (node == null)
+            {
+                // Путь из обхода отстал от переименования: спрашиваем базу, где ассет лежит сейчас.
+                var now = AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.Equals(now, path, StringComparison.Ordinal))
+                    node = AssetDatabase.LoadAssetAtPath<BlobchegNodeSo>(now);
+            }
+
+            if (node == null)
+                throw new InvalidOperationException(
+                    $"Blobcheg: '{path}' объявлен нодой ({type.Name}), но не грузится. Пропустить его молча " +
+                    "нельзя: его запись ушла бы из базы, а id соседей поехали бы");
+
+            byGuid.Add(guid, node);
         }
 
         static void SyncRefs(BlobchegCollector collector, BlobchegCarriers carriers,

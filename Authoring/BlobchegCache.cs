@@ -35,6 +35,10 @@ namespace Blobcheg.Authoring
         public sealed class Entry
         {
             public string Path;
+
+            /// <summary>Личность ноды: путь у неё меняется, GUID — нет.</summary>
+            public string Guid;
+
             public BlobchegNodeSo Node;
 
             /// <summary>Нужно звать Write заново.</summary>
@@ -78,14 +82,25 @@ namespace Blobcheg.Authoring
             if (_filled)
                 return Entries;
 
-            // Полный обход уже отдаёт ноды в порядке пути, поэтому список набирается в хвост:
-            // вставка поиском места превратила бы наполнение на 10 000 нодах в квадрат.
-            foreach (var node in BlobchegBuild.FindNodes())
+            // Список сортируется разом и набирается в хвост: вставка поиском места превратила бы
+            // наполнение на 10 000 нодах в квадрат. GUID берётся у обхода, а не спрашивается заново:
+            // он там уже посчитан.
+            var found = BlobchegBuild.FindNodesByGuid();
+            var byPath = new List<KeyValuePair<string, Entry>>(found.Count);
+
+            foreach (var pair in found)
             {
-                var path = AssetDatabase.GetAssetPath(node);
-                var entry = new Entry { Path = path, Node = node };
-                Entries.Add(entry);
-                ByPath[path] = entry;
+                var path = AssetDatabase.GetAssetPath(pair.Value);
+                byPath.Add(new KeyValuePair<string, Entry>(path,
+                    new Entry { Path = path, Guid = pair.Key, Node = pair.Value }));
+            }
+
+            byPath.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+
+            foreach (var pair in byPath)
+            {
+                Entries.Add(pair.Value);
+                ByPath[pair.Key] = pair.Value;
             }
 
             _filled = true;
@@ -120,14 +135,48 @@ namespace Blobcheg.Authoring
             foreach (var path in deleted)
                 Remove(path);
 
-            foreach (var path in movedFrom)
-                Remove(path);
+            // Переезд берётся ПАРОЙ, а не двумя независимыми списками: сам ассет никуда не девался,
+            // и перечитывать его по новому пути нельзя — база ассетов о переименовании в этом заходе
+            // ещё не знает, и нода молча выпала бы из пересборки вместе со своей записью.
+            for (var i = 0; i < moved.Length; i++)
+            {
+                if (i < movedFrom.Length && ByPath.TryGetValue(movedFrom[i], out var entry))
+                {
+                    Rekey(entry, moved[i]);
+                    continue;
+                }
+
+                if (i < movedFrom.Length)
+                    Remove(movedFrom[i]);
+
+                Mark(moved[i]);
+            }
 
             foreach (var path in imported)
                 Mark(path);
+        }
 
-            foreach (var path in moved)
-                Mark(path);
+        /// <summary>Тот же ассет по новому пути: запись остаётся, место в списке пересчитывается.</summary>
+        static void Rekey(Entry entry, string path)
+        {
+            ByPath.Remove(entry.Path);
+            Entries.Remove(entry);
+
+            entry.Path = path;
+            entry.Dirty = true;
+
+            var at = Entries.Count;
+            for (var i = 0; i < Entries.Count; i++)
+            {
+                if (string.CompareOrdinal(Entries[i].Path, path) > 0)
+                {
+                    at = i;
+                    break;
+                }
+            }
+
+            Entries.Insert(at, entry);
+            ByPath[path] = entry;
         }
 
         static void Mark(string path)
@@ -162,7 +211,13 @@ namespace Blobcheg.Authoring
         /// <summary>Порядок нод — по пути: он же порядок, в котором их отдаёт полный обход.</summary>
         static void Put(string path, BlobchegNodeSo node)
         {
-            var entry = new Entry { Path = path, Node = node };
+            var guid = AssetDatabase.AssetPathToGUID(path);
+
+            // Нода, созданная между полными обходами, известна только кешу. Обходу о ней надо
+            // сказать: иначе она пропадёт из него незаметно — ему не с чем будет сверить.
+            BlobchegBuild.Remember(guid);
+
+            var entry = new Entry { Path = path, Guid = guid, Node = node };
 
             var at = Entries.Count;
             for (var i = 0; i < Entries.Count; i++)

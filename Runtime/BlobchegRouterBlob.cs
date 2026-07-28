@@ -72,6 +72,7 @@ namespace Blobcheg
         uint _count;
         uint _maskWidth;
         uint _debugOffset;
+        byte _tag;
 
         /// <summary>Забирает владение буфером, валидирует header, целостность и пролог.</summary>
         public BlobchegRouterBlob(BlobchegBuffer buffer, string what, int domainCount, ulong layoutHash)
@@ -81,6 +82,7 @@ namespace Blobcheg
 
             _buffer = buffer;
             _debugOffset = 0;
+            _tag = BlobchegNaming.TagOf(what);
 
             ref var header = ref UnsafeUtility.AsRef<BlobchegHeader>(buffer.Ptr);
             var contentHash = BlobchegHash.Of(
@@ -112,35 +114,49 @@ namespace Blobcheg
 
         public bool IsCreated => _buffer.IsCreated;
 
-        /// <summary>Сколько строк, то есть нод. Он же потолок валидного id.</summary>
+        /// <summary>Сколько строк, то есть нод. Он же потолок номера строки в валидном id.</summary>
         public int Count => (int)_count;
 
         public bool HasDebug => _debugOffset != 0;
 
+        /// <summary>Тег этого роутера — старший байт id, которые он раздаёт.</summary>
+        public byte Tag => _tag;
+
         /// <summary>
-        /// Строка ноды. Проверка id НЕ за дефайном: это одно сравнение, а протухший id в билде читал
-        /// бы чужую память.
+        /// Id строки по её номеру. Диапазон здесь НЕ проверяется — это дело <see cref="Get"/>;
+        /// путь инструментов и тестов, потребитель id не собирает.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public BlobchegId IdAt(uint index) => BlobchegId.Make(_tag, index);
+
+        /// <summary>
+        /// Строка ноды. Обе проверки НЕ за дефайном: это два сравнения, а чужой или протухший id в
+        /// билде читал бы чужую память.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public BlobchegRouterRow Get(BlobchegId id)
         {
-            if (id.Value >= _count)
+            if (id.Tag != _tag)
+                throw new InvalidOperationException(
+                    "Blobcheg.Router: этот id выдан другим роутером — здесь он не значит ничего");
+
+            if (id.Index >= _count)
                 throw new InvalidOperationException(
                     "Blobcheg.Router: неизвестный id — строки с таким номером в роутере нет");
 
-            return new BlobchegRouterRow(_offsets + _rowStart[id.Value], MaskOf(id.Value));
+            return new BlobchegRouterRow(_offsets + _rowStart[id.Index], MaskOf(id.Index));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGet(BlobchegId id, out BlobchegRouterRow row)
         {
-            if (id.Value >= _count)
+            if (id.Tag != _tag || id.Index >= _count)
             {
                 row = default;
                 return false;
             }
 
-            row = new BlobchegRouterRow(_offsets + _rowStart[id.Value], MaskOf(id.Value));
+            row = new BlobchegRouterRow(_offsets + _rowStart[id.Index], MaskOf(id.Index));
             return true;
         }
 
@@ -154,17 +170,17 @@ namespace Blobcheg
             _debugOffset = 0;
         }
 
-        /// <summary>Имя ноды по id — только для инструментов едитора; без BLOBCHEG_DEBUG секции нет.</summary>
+        /// <summary>Имя ноды по id — только для инструментов едитора; в релизном плеере секции нет.</summary>
         public string Describe(BlobchegId id)
         {
             if (_debugOffset == 0)
                 throw new InvalidOperationException(
-                    "Blobcheg.Router.Describe: в файле нет отладочного контура — он собран без BLOBCHEG_DEBUG");
+                    "Blobcheg.Router.Describe: в файле нет отладочного контура — он собран для релизного плеера");
 
-            if (id.Value >= _count)
-                throw new InvalidOperationException($"Blobcheg.Router.Describe: id {id.Value} при {_count} строках");
+            if (id.Tag != _tag || id.Index >= _count)
+                throw new InvalidOperationException($"Blobcheg.Router.Describe: id {id} при {_count} строках");
 
-            var nameOffset = *(uint*)(_buffer.Ptr + _debugOffset + 8 + id.Value * 4);
+            var nameOffset = *(uint*)(_buffer.Ptr + _debugOffset + 8 + id.Index * 4);
             var p = _buffer.Ptr + nameOffset;
             var length = *(ushort*)p;
             return System.Text.Encoding.UTF8.GetString(p + 2, length);

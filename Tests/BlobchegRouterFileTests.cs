@@ -84,19 +84,19 @@ namespace Blobcheg.Tests
             var router = Load("R", domains, hash);
             try
             {
-                var a = router.Get(new BlobchegId(0));
+                var a = router.Get(router.IdAt(0));
                 Assert.That(a.Offset(0), Is.EqualTo(100u));
                 Assert.That(a.Offset(3), Is.EqualTo(300u));
                 Assert.That(a.Offset(5), Is.EqualTo(500u));
                 Assert.That(a.Mask, Is.EqualTo(0b101001ul));
 
-                var b = router.Get(new BlobchegId(1));
+                var b = router.Get(router.IdAt(1));
                 Assert.That(b.Mask, Is.Zero, "нода могла войти в роутер, ничего не написав в его базы");
                 Assert.That(b.Has(0), Is.False);
                 Assert.Throws<InvalidOperationException>(() => b.Offset(0));
                 Assert.That(b.TryOffset(0, out _), Is.False);
 
-                var c = router.Get(new BlobchegId(2));
+                var c = router.Get(router.IdAt(2));
                 Assert.That(c.Offset(7), Is.EqualTo(700u));
                 Assert.That(c.Has(6), Is.False);
 
@@ -122,7 +122,7 @@ namespace Blobcheg.Tests
             var router = Load("R", domains, hash);
             try
             {
-                var row = router.Get(new BlobchegId(0));
+                var row = router.Get(router.IdAt(0));
                 Assert.That(row.Offset(0), Is.EqualTo(16u));
                 Assert.That(row.Offset(top), Is.EqualTo(32u), "старший бит лежит в маске выбранной ширины");
             }
@@ -145,11 +145,11 @@ namespace Blobcheg.Tests
             var router = Load("R", domains, hash);
             try
             {
-                Assert.Throws<InvalidOperationException>(() => router.Get(new BlobchegId(1)));
+                Assert.Throws<InvalidOperationException>(() => router.Get(router.IdAt(1)));
                 Assert.Throws<InvalidOperationException>(() => router.Get(BlobchegId.None));
-                Assert.That(router.TryGet(new BlobchegId(1), out _), Is.False);
+                Assert.That(router.TryGet(router.IdAt(1), out _), Is.False);
                 Assert.That(router.TryGet(BlobchegId.None, out _), Is.False);
-                Assert.That(router.TryGet(new BlobchegId(0), out _), Is.True);
+                Assert.That(router.TryGet(router.IdAt(0), out _), Is.True);
             }
             finally
             {
@@ -191,6 +191,81 @@ namespace Blobcheg.Tests
             finally
             {
                 buffer.Dispose();
+            }
+        }
+
+        [Test]
+        public void Файл_чужого_роутера_не_поднимается_под_этим_именем()
+        {
+            const int domains = 2;
+            var hash = HashOf(domains);
+
+            var writer = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
+            writer.Append("a", Row((0, 48)));
+            writer.Flush();
+
+            // Файлы переставили местами: содержимое целое, целостность сходится, а роутер не тот.
+            File.Copy(Path.Combine(_dir, BlobchegNaming.FileName("R")),
+                Path.Combine(_dir, BlobchegNaming.FileName("Alien")));
+
+            RequireThrows("Alien", domains, hash, "другого роутера");
+        }
+
+        [Test]
+        public void Id_чужого_роутера_отбивается_тегом()
+        {
+            const int domains = 2;
+            var hash = HashOf(domains);
+
+            var mine = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
+            mine.Append("a", Row((0, 48)));
+            mine.Flush();
+
+            var theirs = BlobchegRouterWriter.Open(_dir, "Other", domains, hash);
+            theirs.Append("a", Row((0, 48)));
+            theirs.Flush();
+
+            var router = Load("R", domains, hash);
+            var other = Load("Other", domains, hash);
+            try
+            {
+                var alien = other.IdAt(0);
+                Assert.That(alien.Index, Is.EqualTo(router.IdAt(0).Index), "строка та же — тег разный");
+                Assert.That(alien, Is.Not.EqualTo(router.IdAt(0)));
+
+                Assert.Throws<InvalidOperationException>(() => router.Get(alien),
+                    "id соседнего роутера попадает в диапазон этого — отличает их только тег");
+                Assert.That(router.TryGet(alien, out _), Is.False);
+            }
+            finally
+            {
+                router.Dispose();
+                other.Dispose();
+            }
+        }
+
+        [Test]
+        public void Дефолтный_id_не_резолвится()
+        {
+            const int domains = 2;
+            var hash = HashOf(domains);
+
+            var writer = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
+            writer.Append("a", Row((0, 48)));
+            writer.Flush();
+
+            Assert.That(default(BlobchegId).IsValid, Is.False, "нулём инициализированное поле — это «не задано»");
+
+            var router = Load("R", domains, hash);
+            try
+            {
+                Assert.Throws<InvalidOperationException>(() => router.Get(default),
+                    "иначе забытое поле молча приводило бы к первой ноде роутера");
+                Assert.That(router.TryGet(default, out _), Is.False);
+            }
+            finally
+            {
+                router.Dispose();
             }
         }
 
@@ -237,8 +312,8 @@ namespace Blobcheg.Tests
             try
             {
                 Assert.That(router.HasDebug, Is.True);
-                Assert.That(router.Describe(new BlobchegId(0)), Is.EqualTo("Пистолет"));
-                Assert.That(router.Describe(new BlobchegId(1)), Is.EqualTo("Броня"));
+                Assert.That(router.Describe(router.IdAt(0)), Is.EqualTo("Пистолет"));
+                Assert.That(router.Describe(router.IdAt(1)), Is.EqualTo("Броня"));
             }
             finally
             {

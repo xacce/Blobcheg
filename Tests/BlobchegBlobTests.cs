@@ -18,6 +18,13 @@ namespace Blobcheg.Tests
         public float Hp;
     }
 
+    /// <summary>Близнец <see cref="TestGun"/>: тот же размер, другой тип. Ловушка реинтерпретации.</summary>
+    struct TestGunTwin
+    {
+        public float AmmoMax;
+        public int Rpm;
+    }
+
     /// <summary>
     /// Подъём базы: целостность, чтение по оффсету, отладочный контур. Всё, что за
     /// <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>, проверяется тут — в редакторе дефайн стоит.
@@ -113,6 +120,39 @@ namespace Blobcheg.Tests
             var buffer = BlobchegBuffer.From(built.file, Allocator.Temp);
             Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "Domain"));
             buffer.Dispose();
+        }
+
+        [Test]
+        public void Файл_чужого_домена_не_поднимается_под_этим_именем()
+        {
+            var built = Build();
+
+            // Два .bcheg переставили местами: байты целые, целостность сходится, а домен не тот.
+            var buffer = BlobchegBuffer.From(built.file, Allocator.Temp);
+            var thrown = Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "ЧужойДомен"));
+            StringAssert.Contains("другого домена", thrown.Message);
+            buffer.Dispose();
+        }
+
+        [Test]
+        public void Запись_читается_только_своим_типом()
+        {
+            // Близнец: тот же размер, другой тип. Ловит его отладочный контур, и в редакторе он есть.
+            var built = Build(withDebug: true);
+            var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "Domain");
+            try
+            {
+                Assert.That(blob.Read<TestGun>(built.gun).Rpm, Is.EqualTo(600), "свой тип обязан читаться");
+
+                Assert.Throws<InvalidOperationException>(() => blob.Read<TestGunTwin>(built.gun),
+                    "по этому адресу лежит TestGun — отдавать его как близнеца нельзя даже при равном размере");
+                Assert.Throws<InvalidOperationException>(() => blob.Read<TestShield>(built.gun),
+                    "и не близнеца тоже");
+            }
+            finally
+            {
+                blob.Dispose();
+            }
         }
 
         [Test]
