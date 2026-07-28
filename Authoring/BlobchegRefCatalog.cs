@@ -18,8 +18,8 @@ namespace Blobcheg.Authoring
         {
             var wanted = recordType?.FullName;
 
-            return BlobchegBuild.FindNodes()
-                .SelectMany(BlobchegBuild.RefsOf)
+            return BlobchegCache.Fill()
+                .SelectMany(BlobchegCache.RefsOf)
                 .Where(reference => wanted == null
                                     || string.Equals(reference.RecordType, wanted, StringComparison.Ordinal))
                 .OrderBy(reference => reference.name, StringComparer.Ordinal)

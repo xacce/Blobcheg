@@ -294,16 +294,22 @@ namespace Blobcheg.Tests
         {
             BlobchegBuild.RebuildAll();
 
-            var keep = IdOf(_module);
-            var killed = IdOf(_cold);
-            Assert.That(killed, Is.Not.EqualTo(keep));
+            // Дырку оставляет только тот, у кого id не последний, а раздаются они по GUID —
+            // поэтому кого убить, решает замер, а не порядок создания в тесте.
+            var first = IdOf(_module).Value < IdOf(_cold).Value;
+            var victim = first ? (BlobchegNodeSo)_module : _cold;
+            var survivor = first ? (BlobchegNodeSo)_cold : _module;
+
+            var keep = IdOf(survivor);
+            var killed = IdOf(victim);
+            Assert.That(killed.Value, Is.LessThan(keep.Value));
 
             var rows = LoadRouterRowCount();
 
-            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(_cold));
+            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
             BlobchegBuild.RebuildAll();
 
-            Assert.That(IdOf(_module), Is.EqualTo(keep), "чужой id не съезжает следом за удалённым");
+            Assert.That(IdOf(survivor), Is.EqualTo(keep), "чужой id не съезжает следом за удалённым");
             Assert.That(LoadRouterRowCount(), Is.EqualTo(rows),
                 "строка удалённой ноды остаётся дыркой: подтянуть следующую — значит сдвинуть её id");
 

@@ -103,6 +103,18 @@ namespace Blobcheg.Authoring
             return new BlobchegId(id);
         }
 
+        /// <summary>Id ноды, если он у неё в этом роутере есть. Спрашивает кеш, а не потребитель.</summary>
+        public bool TryOf(BlobchegNodeSo node, Type router, out BlobchegId id)
+        {
+            id = BlobchegId.None;
+
+            if (!_ids.TryGetValue(router, out var ids) || !ids.TryGetValue(node, out var found))
+                return false;
+
+            id = new BlobchegId(found);
+            return true;
+        }
+
         /// <summary>Id ноды, когда роутер у неё один. Ноль или несколько — ошибка, а не догадка.</summary>
         public BlobchegId Single(BlobchegNodeSo node)
         {

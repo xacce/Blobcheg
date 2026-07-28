@@ -25,6 +25,13 @@ namespace Blobcheg.Authoring
 
         static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
         {
+            // Пересборка пишет носители сама и сама знает, что записала: считать эти импорты
+            // чужой правкой — значит объявлять грязными все ноды, которые только что собрали.
+            if (BlobchegBuild.Building)
+                return;
+
+            BlobchegCache.Touch(imported, deleted, moved, movedFrom);
+
             if (_running)
                 return;
 

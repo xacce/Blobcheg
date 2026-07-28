@@ -47,20 +47,64 @@ namespace Blobcheg.Authoring
             false;
 #endif
 
-        public static BlobchegBuildReport RebuildAll()
+        /// <summary>Пересборка идёт внутри — импорт своих же носителей кешу не новость.</summary>
+        public static bool Building { get; private set; }
+
+        /// <summary>
+        /// Обычная пересборка: то, что не менялось, берётся из памяти. Её зовут хуки импорта — то
+        /// есть она случается на каждое сохранение ноды, и стоить обязана столько, сколько
+        /// изменилось.
+        /// </summary>
+        public static BlobchegBuildReport RebuildAll() => Rebuild(true);
+
+        /// <summary>
+        /// Пересборка с нуля: кеш забыт, проект обойдён, Write позван у всех. Ею идут пре-билд и
+        /// всё, где «собралось» обязано значить «собралось из ассетов, а не из памяти».
+        /// </summary>
+        public static BlobchegBuildReport RebuildFull()
+        {
+            BlobchegCache.Drop();
+            return Rebuild(false);
+        }
+
+        static BlobchegBuildReport Rebuild(bool incremental)
         {
             var report = new BlobchegBuildReport();
             var collector = new BlobchegCollector(OutputDirectory);
 
-            List<BlobchegNodeSo> nodes;
-            using (BlobchegProfile.Section("FindNodes"))
-                nodes = FindNodes();
+            Building = true;
+            try
+            {
+                return Run(collector, incremental, ref report);
+            }
+            finally
+            {
+                Building = false;
+            }
+        }
+
+        static BlobchegBuildReport Run(BlobchegCollector collector, bool incremental, ref BlobchegBuildReport report)
+        {
+            IReadOnlyList<BlobchegCache.Entry> entries;
+            using (BlobchegProfile.Section("Список нод"))
+                entries = BlobchegCache.Fill();
+
+            var nodes = new List<BlobchegNodeSo>(entries.Count);
+            foreach (var entry in entries)
+            {
+                nodes.Add(entry.Node);
+
+                // Правка в инспекторе импорта не даёт: ассет грязный в памяти и на диске ещё
+                // старый. Пересборка обязана видеть то, что видит человек на экране.
+                if (!incremental || EditorUtility.IsDirty(entry.Node))
+                    entry.Dirty = true;
+            }
 
             // Носители читаются один раз на всю пересборку: они и журнал уже выданных адресов, и
             // то, что в конце придётся сверить и переписать.
             BlobchegCarriers carriers;
             using (BlobchegProfile.Section("Чтение носителей"))
-                carriers = BlobchegCarriers.Read(nodes);
+                carriers = BlobchegCarriers.Read(entries);
 
             // Id раздаются ДО записи: они выводятся из OutTypes, а не из того, что нода написала,
             // поэтому нода может положить свой id прямо в запись за один проход.
@@ -73,21 +117,14 @@ namespace Blobcheg.Authoring
             foreach (var domain in BlobchegDomains.All)
                 collector.WriterOf(domain);
 
-            using (BlobchegProfile.Section("node.Write — все ноды"))
+            using (BlobchegProfile.Section("node.Write — изменившиеся ноды"))
             {
-                foreach (var node in nodes)
-                {
-                    var writer = new BlobchegNodeWriter { Collector = collector, Node = node, Ids = ids };
-                    node.Write(ref writer);
-
-                    foreach (var domain in BlobchegDomains.DomainsOf(node))
-                    {
-                        if (!collector.Wrote(node, domain))
-                            throw new InvalidOperationException(
-                                $"Blobcheg: нода '{node.name}' объявила домен '{domain.Name}' в OutTypes, но ничего в него не написала");
-                    }
-                }
+                foreach (var entry in entries)
+                    WriteNode(entry, collector, ids);
             }
+
+            using (BlobchegProfile.Section("Записи писателям"))
+                collector.Handover();
 
             // Адреса прошлой пересборки уходят писателю ДО Flush: раскладка обязана оставить
             // нетронутые записи на их местах, иначе каждая новая нода двигает чужие адреса, а на
@@ -152,19 +189,109 @@ namespace Blobcheg.Authoring
                     AssetDatabase.Refresh();
             }
 
+            // Кеш обновляется в самом конце и только тем, что пересборка действительно записала.
+            foreach (var entry in entries)
+            {
+                entry.Refs = carriers.RefListOf(entry.Node);
+                entry.Ids = carriers.IdListOf(entry.Node);
+                entry.Dirty = false;
+            }
+
             return report;
+        }
+
+        /// <summary>
+        /// Нода, которую никто не трогал, отдаёт прошлые байты: <c>Write</c> у неё не зовут вовсе.
+        /// Байты те же самые, что коллектор получил в прошлый раз, поэтому раскладка от этого не
+        /// зависит — зависит только цена.
+        /// </summary>
+        static void WriteNode(BlobchegCache.Entry entry, BlobchegCollector collector, BlobchegIdTable ids)
+        {
+            var node = entry.Node;
+            var now = IdsNow(node, ids);
+
+            if (!entry.Dirty && entry.Records != null && Same(entry.IdsAtWrite, now))
+            {
+                using (BlobchegProfile.Section("  нода из кеша"))
+                {
+                    foreach (var written in entry.Records)
+                        collector.Add(node, written.Domain, written.RecordType, written.TypeHash, written.Bytes);
+                }
+
+                return;
+            }
+
+            using var _ = BlobchegProfile.Section("  нода посчитана заново");
+
+            var start = collector.Entries.Count;
+
+            var writer = new BlobchegNodeWriter { Collector = collector, Node = node, Ids = ids };
+            node.Write(ref writer);
+
+            foreach (var domain in BlobchegDomains.DomainsOf(node))
+            {
+                if (!collector.Wrote(node, domain))
+                    throw new InvalidOperationException(
+                        $"Blobcheg: нода '{node.name}' объявила домен '{domain.Name}' в OutTypes, но ничего в него не написала");
+            }
+
+            var records = new List<BlobchegCache.Written>();
+            for (var i = start; i < collector.Entries.Count; i++)
+            {
+                var written = collector.Entries[i];
+                records.Add(new BlobchegCache.Written
+                {
+                    Domain = written.Domain,
+                    RecordType = written.RecordType,
+                    TypeHash = written.TypeHash,
+                    Bytes = written.Bytes,
+                });
+            }
+
+            entry.Records = records;
+            entry.IdsAtWrite = now;
+        }
+
+        /// <summary>Id ноды во всех роутерах сразу. Нода вне роутера — <see cref="BlobchegId.NoneValue"/>.</summary>
+        static uint[] IdsNow(BlobchegNodeSo node, BlobchegIdTable ids)
+        {
+            var routers = BlobchegRouters.All;
+            var now = new uint[routers.Length];
+
+            for (var i = 0; i < routers.Length; i++)
+                now[i] = ids.TryOf(node, routers[i], out var id) ? id.Value : BlobchegId.NoneValue;
+
+            return now;
+        }
+
+        static bool Same(uint[] were, uint[] are)
+        {
+            if (were == null || are == null || were.Length != are.Length)
+                return false;
+
+            for (var i = 0; i < are.Length; i++)
+            {
+                if (were[i] != are[i])
+                    return false;
+            }
+
+            return true;
         }
 
         /// <summary>
         /// Гейт пре-билда: пересобрать, потом пересобрать ещё раз и потребовать, чтобы второй заход
         /// не изменил ничего. Первый заход чинит протухший блоб, второй доказывает, что раскладка
         /// детерминирована — иначе в билд поехало бы то, что при следующей сборке будет другим.
+        ///
+        /// Оба захода — полные: в билд обязано ехать то, что собралось из ассетов, а не из памяти
+        /// редактора. Заодно это единственная проверка кеша, которая вообще возможна: если он
+        /// разошёлся с ассетами, второй заход это увидит.
         /// </summary>
         public static void RequireUpToDate(string what)
         {
-            RebuildAll();
+            RebuildFull();
 
-            var again = RebuildAll();
+            var again = RebuildFull();
             if (again.Changed)
                 throw new InvalidOperationException(
                     $"Blobcheg: {what} — пересборка не сошлась сама с собой ({again}). " +
@@ -221,6 +348,7 @@ namespace Blobcheg.Authoring
 
                 foreach (var stale in staleRefs)
                 {
+                    carriers.Forget(node, stale);
                     AssetDatabase.RemoveObjectFromAsset(stale);
                     UnityEngine.Object.DestroyImmediate(stale, true);
                     report.RemovedRefs++;
@@ -374,6 +502,7 @@ namespace Blobcheg.Authoring
 
                 foreach (var stale in staleIds)
                 {
+                    carriers.Forget(node, stale);
                     AssetDatabase.RemoveObjectFromAsset(stale);
                     UnityEngine.Object.DestroyImmediate(stale, true);
                     report.RemovedRefs++;
@@ -430,12 +559,31 @@ namespace Blobcheg.Authoring
 
         static void SyncManifests(BlobchegCollector collector, List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
         {
+            // Один проход по нодам на все домены сразу: OutTypes у ноды — свойство, и обычная нода
+            // собирает массив заново на каждый спрос. Спрашивать его по разу на домен — это тот же
+            // проход, умноженный на число доменов.
+            var members = new Dictionary<Type, List<BlobchegNodeSo>>();
+            foreach (var pair in collector.Writers)
+                members.Add(pair.Key, new List<BlobchegNodeSo>());
+
+            foreach (var node in nodes)
+            {
+                var declared = node.OutTypes;
+                if (declared == null)
+                    continue;
+
+                foreach (var domain in declared)
+                {
+                    if (members.TryGetValue(domain, out var list))
+                        list.Add(node);
+                }
+            }
+
             foreach (var pair in collector.Writers)
             {
                 var domainName = BlobchegDomains.NameOf(pair.Key);
-                var members = nodes.Where(n => Array.IndexOf(n.OutTypes, pair.Key) >= 0).ToArray();
 
-                SyncManifest(domainName, false, members, pair.Value.RecordCount,
+                SyncManifest(domainName, false, members[pair.Key].ToArray(), pair.Value.RecordCount,
                     pair.Value.ContentHash, pair.Value.FileChanged, ref report);
             }
         }

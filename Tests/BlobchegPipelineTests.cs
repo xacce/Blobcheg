@@ -176,6 +176,65 @@ namespace Blobcheg.Tests
             }
         }
 
+        static byte[] DomainFile()
+            => File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName));
+
+        /// <summary>
+        /// Главное свойство кеша: собранное из памяти обязано совпасть с собранным из ассетов.
+        /// Полный заход, не изменивший ничего, — и есть доказательство совпадения.
+        /// </summary>
+        [Test]
+        public void Инкрементальная_пересборка_совпадает_с_полной()
+        {
+            BlobchegBuild.RebuildAll();
+
+            _pistol.ammoMax = 3f;
+            EditorUtility.SetDirty(_pistol);
+            BlobchegBuild.RebuildAll();
+
+            var incremental = DomainFile();
+            var full = BlobchegBuild.RebuildFull();
+
+            Assert.That(full.Changed, Is.False,
+                $"полный заход после инкрементального обязан не найти расхождений. Отчёт: {full}");
+            CollectionAssert.AreEqual(incremental, DomainFile());
+        }
+
+        [Test]
+        public void Новая_нода_попадает_в_инкрементальную_пересборку()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var extra = Create<TestArmorNodeSo>("Extra");
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(BlobchegBuild.RefsOf(extra).Any(), Is.True, "нода, созданная после сборки, обязана в неё попасть");
+
+            var incremental = DomainFile();
+            Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False);
+            CollectionAssert.AreEqual(incremental, DomainFile());
+        }
+
+        [Test]
+        public void Удалённая_нода_уходит_из_инкрементальной_пересборки()
+        {
+            var extra = Create<TestArmorNodeSo>("Extra");
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            var records = BlobchegBuild.RebuildAll().Records;
+
+            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(extra));
+            var after = BlobchegBuild.RebuildAll();
+
+            Assert.That(after.Records, Is.EqualTo(records - 1), "запись удалённой ноды обязана уйти из базы");
+
+            var incremental = DomainFile();
+            Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False);
+            CollectionAssert.AreEqual(incremental, DomainFile());
+        }
+
         [Test]
         public void Типизированное_поле_не_принимает_чужую_запись()
         {

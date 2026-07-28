@@ -101,13 +101,42 @@ namespace Blobcheg
 
             var temp = path + ".tmp";
             File.WriteAllBytes(temp, file);
-
-            if (File.Exists(path))
-                File.Replace(temp, path, null);
-            else
-                File.Move(temp, path);
-
+            Swap(temp, path);
             return true;
+        }
+
+        /// <summary>
+        /// Подмена файла с повторами. Собранный файл лежит в StreamingAssets, то есть его импортирует
+        /// Unity, а импорт в Unity 6 идёт отдельными процессами-воркерами — в момент подмены файл
+        /// может быть открыт ими, и обмен падает с «не удаётся удалить заменяемый файл».
+        ///
+        /// Ждать тут можно и нужно: держат файл миллисекунды. Молча писать поверх нельзя — на этом
+        /// месте оборванная запись оставила бы полублоб, который выглядит рабочим и врёт.
+        /// </summary>
+        static void Swap(string temp, string path)
+        {
+            const int attempts = 20;
+
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                        File.Replace(temp, path, null);
+                    else
+                        File.Move(temp, path);
+
+                    return;
+                }
+                catch (IOException) when (attempt < attempts)
+                {
+                    System.Threading.Thread.Sleep(20);
+                }
+                catch (UnauthorizedAccessException) when (attempt < attempts)
+                {
+                    System.Threading.Thread.Sleep(20);
+                }
+            }
         }
 
         static bool SameOnDisk(string path, byte[] file, ulong contentHash)

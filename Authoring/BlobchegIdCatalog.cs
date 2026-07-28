@@ -14,8 +14,8 @@ namespace Blobcheg.Authoring
     {
         public static List<BlobchegIdSo> Candidates(string routerName)
         {
-            return BlobchegBuild.FindNodes()
-                .SelectMany(BlobchegBuild.IdsOf)
+            return BlobchegCache.Fill()
+                .SelectMany(BlobchegCache.IdsOf)
                 .Where(carrier => routerName == null
                                   || string.Equals(carrier.RouterName, routerName, StringComparison.Ordinal))
                 .OrderBy(carrier => carrier.name, StringComparer.Ordinal)

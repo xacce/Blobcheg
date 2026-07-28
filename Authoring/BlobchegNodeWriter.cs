@@ -13,6 +13,11 @@ namespace Blobcheg.Authoring
         public Type Domain;
         public int Ticket;
         public string RecordType;
+
+        /// <summary>Байты записи и хеш типа — их же кладёт в кеш пересборка, чтобы не звать Write.</summary>
+        public byte[] Bytes;
+
+        public uint TypeHash;
     }
 
     /// <summary>
@@ -24,6 +29,20 @@ namespace Blobcheg.Authoring
         readonly string _directory;
         readonly Dictionary<Type, BlobchegWriter> _writers = new Dictionary<Type, BlobchegWriter>();
         readonly HashSet<string> _written = new HashSet<string>(StringComparer.Ordinal);
+
+        // Про ноду всё спрашивается один раз за пересборку. GUID и имя — нативные вызовы в базу
+        // ассетов, OutTypes у обычной ноды собирает массив заново на каждый спрос, а спрашивают их
+        // на КАЖДУЮ запись: на 10 000 нод это десятки тысяч вызовов ради трёх неизменных значений.
+        readonly Dictionary<BlobchegNodeSo, About> _about = new Dictionary<BlobchegNodeSo, About>();
+
+        readonly Dictionary<Type, List<BlobchegRecord>> _pending = new Dictionary<Type, List<BlobchegRecord>>();
+
+        struct About
+        {
+            public string Guid;
+            public string Name;
+            public Type[] OutTypes;
+        }
 
         public BlobchegCollector(string directory) => _directory = directory;
 
@@ -44,20 +63,28 @@ namespace Blobcheg.Authoring
 
         public void Add(BlobchegNodeSo node, Type domain, string recordTypeName, uint typeHash, byte[] bytes)
         {
-            BlobchegDomains.RequireDeclared(domain, $"запись ноды '{node.name}'");
+            var about = AboutOf(node);
 
-            if (Array.IndexOf(node.OutTypes, domain) < 0)
-                throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' пишет в домен '{domain.Name}', которого нет в её OutTypes");
+            // Текст ошибки собирается только когда ошибка есть: на пустом заходе через Add проходят
+            // все записи проекта, и интерполяция на каждую — это и есть цена «ничего не менялось».
+            if (Array.IndexOf(BlobchegDomains.All, domain) < 0)
+                BlobchegDomains.RequireDeclared(domain, $"запись ноды '{about.Name}'");
 
-            var guid = GuidOf(node);
-            if (!_written.Add(domain.FullName + " " + guid))
+            if (Array.IndexOf(about.OutTypes, domain) < 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' пишет в домен '{domain.Name}' второй раз — " +
+                    $"Blobcheg: нода '{about.Name}' пишет в домен '{domain.Name}', которого нет в её OutTypes");
+
+            if (!_written.Add(domain.FullName + " " + about.Guid))
+                throw new InvalidOperationException(
+                    $"Blobcheg: нода '{about.Name}' пишет в домен '{domain.Name}' второй раз — " +
                     "одна нода даёт базе ровно одну запись");
 
-            var ticket = WriterOf(domain).Append(
-                new BlobchegRecord(recordTypeName, guid, typeHash, node.name, bytes));
+            // Записи копятся пачкой и уезжают писателю в Handover: позиция в пачке — это тикет.
+            if (!_pending.TryGetValue(domain, out var pending))
+                _pending[domain] = pending = new List<BlobchegRecord>();
+
+            pending.Add(new BlobchegRecord(recordTypeName, about.Guid, typeHash, about.Name, bytes));
+            var ticket = pending.Count - 1;
 
             Entries.Add(new BlobchegEntry
             {
@@ -65,11 +92,30 @@ namespace Blobcheg.Authoring
                 Domain = domain,
                 Ticket = ticket,
                 RecordType = recordTypeName ?? string.Empty,
+                Bytes = bytes,
+                TypeHash = typeHash,
             });
         }
 
+        /// <summary>Накопленные записи уезжают писателям. Зовётся один раз, перед Flush.</summary>
+        public void Handover()
+        {
+            foreach (var pair in _pending)
+                WriterOf(pair.Key).AppendAll(pair.Value);
+        }
+
         public bool Wrote(BlobchegNodeSo node, Type domain)
-            => _written.Contains(domain.FullName + " " + GuidOf(node));
+            => _written.Contains(domain.FullName + " " + AboutOf(node).Guid);
+
+        About AboutOf(BlobchegNodeSo node)
+        {
+            if (_about.TryGetValue(node, out var about))
+                return about;
+
+            about = new About { Guid = GuidOf(node), Name = node.name, OutTypes = node.OutTypes ?? Type.EmptyTypes };
+            _about.Add(node, about);
+            return about;
+        }
 
         public static string GuidOf(BlobchegNodeSo node)
         {
