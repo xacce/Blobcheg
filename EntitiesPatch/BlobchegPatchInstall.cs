@@ -31,9 +31,12 @@ namespace Blobcheg
             BlobchegPatchHook.AfterApplyChangeSet = BlobchegLiveSweep.Run;
             BlobchegPatchHook.AfterSerializeWorld = BlobchegPatchErrors.ThrowIfAny;
 
-            foreach (var diagnostic in BlobchegPatchTableBuilder.Diagnostics)
-                Debug.LogError(diagnostic);
-
+            // Диагностика сборки таблицы в лог НЕ уходит, и это не забывчивость. Обход видит все
+            // типы процесса, включая тестовые фикстуры пакета, объявленные неправильно нарочно, —
+            // так консоль потребителя получала бы error про чужой тест сразу после установки.
+            // Настоящий сигнал и так есть и точнее: слот, оставшийся оффсетом, бросает на первом
+            // Value, по месту и с именем типа. Список остаётся в BlobchegPatchTableBuilder.Diagnostics
+            // для инструментов и тестов.
             s_Installed = true;
         }
 
