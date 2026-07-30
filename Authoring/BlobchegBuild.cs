@@ -178,7 +178,10 @@ namespace Blobcheg.Authoring
                     report.Domains++;
                     report.Records += pair.Value.RecordCount;
                     if (pair.Value.FileChanged)
+                    {
                         report.ChangedFiles++;
+                        BlobchegFileVersions.Bump(BlobchegNaming.FileName(BlobchegDomains.NameOf(pair.Key)));
+                    }
                 }
             }
 
@@ -611,7 +614,10 @@ namespace Blobcheg.Authoring
 
                 report.Routers++;
                 if (writer.FileChanged)
+                {
                     report.ChangedFiles++;
+                    BlobchegFileVersions.Bump(BlobchegNaming.FileName(name));
+                }
 
                 SyncRouterManifest(name, writer, members, ref report);
             }

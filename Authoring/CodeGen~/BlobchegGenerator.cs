@@ -533,11 +533,19 @@ namespace Blobcheg.CodeGen
         /// <summary>
         /// Только SystemState, EntityManager и EntityQuery: генераторы не видят выход друг друга,
         /// поэтому SystemAPI в выпущенной системе Unity'шный генератор уже не обработает.
+        ///
+        /// Система живёт и в редакторном мире (WorldSystemFilterFlags.Editor): без базы там любой
+        /// проход патча упирается в «домен не поднят», а сущности сабсцен в редакторном мире есть
+        /// всегда. Из-за этого же она в редакторе не гаснет после подъёма, а сторожит номер своего
+        /// файла: пересборка переписала базу — перечитать и переселить слоты. В плеере всё как было,
+        /// один подъём и выключение.
         /// </summary>
         static void EmitBootSystem(StringBuilder text, string typeName, string access, bool autoCreate)
         {
             text.AppendLine();
             text.Append("    /// <summary>Подъём '").Append(typeName).AppendLine("' в синглтон. Выпущен кодогеном.</summary>");
+            text.AppendLine("    [global::Unity.Entities.WorldSystemFilter(");
+            text.AppendLine("        global::Unity.Entities.WorldSystemFilterFlags.Default | global::Unity.Entities.WorldSystemFilterFlags.Editor)]");
             text.AppendLine("    [global::Unity.Entities.UpdateInGroup(typeof(global::Blobcheg.BlobchegBootGroup))]");
             if (!autoCreate)
                 text.AppendLine("    [global::Unity.Entities.DisableAutoCreation]");
@@ -547,25 +555,84 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        global::Blobcheg.BlobchegLoad __load;");
             text.AppendLine("        global::Unity.Entities.EntityQuery __query;");
             text.AppendLine("        bool __created;");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("        int __seen;");
+            text.AppendLine("#endif");
             text.AppendLine();
             text.AppendLine("        public void OnCreate(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");
             text.Append("            __load = global::Blobcheg.BlobchegTransport.Default.Read(").Append(typeName)
                 .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
-            text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadOnly<")
+            // Запрос на запись, а не на чтение: перезаливка кладёт им же новый блоб в синглтон.
+            text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadWrite<")
                 .Append(typeName).AppendLine(">());");
             text.AppendLine("        }");
             text.AppendLine();
             text.AppendLine("        public void OnUpdate(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("            if (__created)");
+            text.AppendLine("            {");
+            text.AppendLine("                __Reraise(ref state);");
+            text.AppendLine("                return;");
+            text.AppendLine("            }");
+            text.AppendLine("#endif");
+            text.AppendLine();
             text.AppendLine("            if (!__load.Poll())");
             text.AppendLine("                return;");
             text.AppendLine();
             text.Append("            state.EntityManager.CreateSingleton(new ").Append(typeName)
                 .AppendLine("(__load.Acquire()));");
             text.AppendLine("            __created = true;");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
+                .AppendLine(".FileName);");
+            text.AppendLine();
+            text.AppendLine("            // Сущности, приехавшие раньше базы, ждут ровно этого прохода: их слоты остались");
+            text.AppendLine("            // оффсетами, и теперь есть куда их переводить.");
+            text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
+            text.AppendLine("#else");
             text.AppendLine("            state.Enabled = false;");
+            text.AppendLine("#endif");
             text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("        /// <summary>");
+            text.AppendLine("        /// Пересборка переписала файл базы — перечитать его в живой мир. Порядок здесь не");
+            text.AppendLine("        /// вкусовой: новый буфер регистрируется первым, чтобы прежний ушёл в отставные");
+            text.AppendLine("        /// поколения, и только по ним слоты со старыми адресами доедут до новых.");
+            text.AppendLine("        /// </summary>");
+            text.AppendLine("        void __Reraise(ref global::Unity.Entities.SystemState state)");
+            text.AppendLine("        {");
+            text.Append("            if (!global::Blobcheg.BlobchegFileVersions.Changed(").Append(typeName)
+                .AppendLine(".FileName, ref __seen))");
+            text.AppendLine("                return;");
+            text.AppendLine();
+            text.Append("            var reload = global::Blobcheg.BlobchegTransport.Default.Read(").Append(typeName)
+                .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
+            text.AppendLine("            try");
+            text.AppendLine("            {");
+            text.AppendLine("                // В редакторе ждать файл можно: это локальный диск, а не StreamingAssets в APK.");
+            text.AppendLine("                reload.Complete();");
+            text.AppendLine("            }");
+            text.AppendLine("            catch");
+            text.AppendLine("            {");
+            text.AppendLine("                reload.Dispose();");
+            text.AppendLine("                throw;");
+            text.AppendLine("            }");
+            text.AppendLine();
+            text.Append("            var fresh = new ").Append(typeName).AppendLine("(reload.Acquire());");
+            text.AppendLine();
+            text.AppendLine("            // Джобы, читающие прежний буфер, обязаны закончить до того, как он освободится.");
+            text.AppendLine("            state.EntityManager.CompleteAllTrackedJobs();");
+            text.AppendLine();
+            text.Append("            var stale = __query.GetSingleton<").Append(typeName).AppendLine(">();");
+            text.AppendLine("            stale.Dispose();");
+            text.AppendLine();
+            text.AppendLine("            __query.SetSingleton(fresh);");
+            text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
+            text.AppendLine("        }");
+            text.AppendLine("#endif");
             text.AppendLine();
             text.AppendLine("        public void OnDestroy(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");

@@ -32,8 +32,22 @@ namespace Blobcheg.PatchTests
                 Ghost = new BlobchegReference<PatchGhostRecord>(BlobchegFormat.HeaderSize),
             });
 
-            var error = Assert.Throws<InvalidOperationException>(() => Patch(),
-                "домен не поднят — это ошибка, а не нули в полях");
+            // Живой проход идёт там, где идёт авторинг, и порядок подъёма баз ему не подчиняется:
+            // редакторный мир грузит сабсцены, когда решит Unity, а базы поднимаются чтением файла.
+            // «Домен ещё не поднят» для него состояние, а не беда, — но слот обязан остаться ровно
+            // тем оффсетом, каким приехал, чтобы проход после подъёма базы довёл его до адреса.
+            Assert.DoesNotThrow(() => Patch(),
+                "живой путь ждёт базу, а не роняет сцену, пока та поднимается");
+            Assert.That(EM.GetComponentData<GhostRef>(entity).Ghost.Data.Value,
+                Is.EqualTo((ulong)BlobchegFormat.HeaderSize),
+                "прощённый провал обязан оставить слот нетронутым");
+
+            // А строгий вопрос — тот, что задаёт плеер, где порядок наш, — по-прежнему беда и
+            // по-прежнему обязан назвать виновных.
+            Load(Save());
+
+            var error = Assert.Throws<InvalidOperationException>(() => BlobchegPatchErrors.ThrowIfAny(),
+                "в плеере сущность, приехавшая раньше базы, остаётся ошибкой");
 
             Assert.That(error.Message, Does.Contain(nameof(GhostRef)),
                 "компонент в сообщении есть — по нему сцену хотя бы можно найти");

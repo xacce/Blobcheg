@@ -32,8 +32,68 @@ namespace Blobcheg.Tests
     /// Выпущенная генератором бут-система. Мир создаётся свой: доказывать надо саму систему, а не
     /// то, в каком порядке её создал дефолтный мир редактора.
     /// </summary>
-    public sealed class BlobchegBootTests
+    public sealed unsafe class BlobchegBootTests
     {
+        [Test]
+        public void Пересборка_под_живым_миром_доезжает_до_синглтона()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var world = new World("blobcheg-boot-reraise-tests");
+            try
+            {
+                var system = world.CreateSystem<TestBootDbBootSystem>();
+                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
+
+                var clock = Stopwatch.StartNew();
+                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                {
+                    system.Update(world.Unmanaged);
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "база не поднялась — дальше проверять нечего");
+
+                var key = BlobchegNaming.NameHash(TestBootDb.DomainName);
+                Assert.That(BlobchegBases.TryGet(key, out var before, out var length), Is.True);
+
+                // Пересборка в редакторе кончается ровно этим: номер файла поднят. Дальше сторожить
+                // его — забота того, кто базу поднял.
+                BlobchegFileVersions.Bump(TestBootDb.FileName);
+                system.Update(world.Unmanaged);
+
+                Assert.That(BlobchegBases.TryGet(key, out var after, out var lengthAfter), Is.True);
+                Assert.That((ulong)after, Is.Not.EqualTo((ulong)before),
+                    "файл переписан — в мире обязан оказаться НОВЫЙ буфер, а не прежние байты");
+                Assert.That(lengthAfter, Is.EqualTo(length), "файл тот же, значит и длина та же");
+
+                var database = query.GetSingleton<TestBootDb>();
+                Assert.That(database.IsCreated, Is.True, "синглтон обязан держать новый блоб, а не освобождённый старый");
+                Assert.That(database.Length, Is.EqualTo(lengthAfter));
+
+                // Второй апдейт без пересборки ничего не трогает: иначе база перечитывалась бы каждый кадр.
+                system.Update(world.Unmanaged);
+                Assert.That(BlobchegBases.TryGet(key, out var idle, out _), Is.True);
+                Assert.That((ulong)idle, Is.EqualTo((ulong)after));
+            }
+            finally
+            {
+                world.Dispose();
+            }
+        }
+
+        [Test]
+        public void Бут_система_заведена_и_в_редакторном_мире()
+        {
+            var filter = (WorldSystemFilterAttribute)typeof(TestBootDbBootSystem)
+                .GetCustomAttributes(typeof(WorldSystemFilterAttribute), false)[0];
+
+            Assert.That(filter.FilterFlags & WorldSystemFilterFlags.Editor, Is.Not.EqualTo(default(WorldSystemFilterFlags)),
+                "без этого флага базы в редакторном мире нет, и любой проход патча там упирается в «домен не поднят»");
+            Assert.That(filter.FilterFlags & WorldSystemFilterFlags.Default, Is.Not.EqualTo(default(WorldSystemFilterFlags)),
+                "а игровой мир при этом никуда не делся");
+        }
+
         [Test]
         public void Бут_система_поднимает_базу_в_синглтон()
         {

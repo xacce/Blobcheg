@@ -29,7 +29,11 @@ namespace Blobcheg
             BlobchegPatchHook.PatchElementsHook =
                 BurstCompiler.CompileFunctionPointer<BlobchegPatchHook.PatchElements>(BlobchegPatchRunner.PatchElements);
             BlobchegPatchHook.AfterApplyChangeSet = BlobchegLiveSweep.Run;
-            BlobchegPatchHook.AfterSerializeWorld = BlobchegPatchErrors.ThrowIfAny;
+            BlobchegPatchHook.AfterSerializeWorld = () => BlobchegPatchErrors.ThrowIfAny();
+
+            // Тот же проход отдаётся наружу: им пользуется всякий, кто поднял базу — кодогенная
+            // бут-система и рукописный подъём одинаково.
+            BlobchegSweep.Hook = BlobchegLiveSweep.Run;
 
             // Диагностика сборки таблицы в лог НЕ уходит, и это не забывчивость. Обход видит все
             // типы процесса, включая тестовые фикстуры пакета, объявленные неправильно нарочно, —
@@ -57,6 +61,7 @@ namespace Blobcheg
             BlobchegPatchHook.PatchElementsHook = default;
             BlobchegPatchHook.AfterApplyChangeSet = null;
             BlobchegPatchHook.AfterSerializeWorld = null;
+            BlobchegSweep.Hook = null;
             BlobchegPatchErrors.Clear();
             BlobchegPatchTableBuilder.Destroy();
             s_Installed = false;
@@ -69,6 +74,9 @@ namespace Blobcheg
     ///
     /// Разбирать чейнджсет не нужно: патч идемпотентен по диапазонной проверке, поэтому дешевле
     /// пройти все сущности с нашими компонентами, чем выяснять, какие именно переписал апплай.
+    ///
+    /// Этим же проходом пользуется подъём базы: он и переводит слоты, приехавшие раньше своей базы,
+    /// и переселяет их с прежнего буфера домена на новый после пересборки.
     /// </summary>
     public static unsafe class BlobchegLiveSweep
     {
@@ -80,7 +88,10 @@ namespace Blobcheg
             foreach (var componentType in BlobchegPatchTableBuilder.RegisteredTypes)
                 Sweep(entityManager, componentType);
 
-            BlobchegPatchErrors.ThrowIfAny();
+            // «Домен не поднят» здесь не беда: этот проход живёт там, где идёт авторинг, а порядок
+            // подъёма баз в редакторном мире ему не подчиняется. Слот остался оффсетом, и проход
+            // сразу после подъёма базы доведёт его до адреса.
+            BlobchegPatchErrors.ThrowIfAny(whileBasesRise: true);
         }
 
         static void Sweep(EntityManager entityManager, ComponentType componentType)
@@ -140,14 +151,26 @@ namespace Blobcheg
     ///
     /// Стоит в бут-группе, то есть в самом начале инициализации — на кадр позже стрима секции, зато
     /// с полным сообщением.
+    ///
+    /// В редакторном мире система тоже нужна (иначе провалы там копились бы молча), но там она
+    /// прощает «домен не поднят»: сабсцены в редакторном мире грузит Unity, когда ей удобно, а базы
+    /// поднимаются чтением файла, и обогнать одно другим здесь законно. В плеере порядок наш, и
+    /// приехавшая раньше базы сущность остаётся ошибкой.
     /// </summary>
+    [WorldSystemFilter(WorldSystemFilterFlags.Default | WorldSystemFilterFlags.Editor)]
     [UpdateInGroup(typeof(BlobchegBootGroup))]
     public partial struct BlobchegPatchErrorSystem : ISystem
     {
         public void OnUpdate(ref SystemState state)
         {
-            if (BlobchegPatchErrors.HasAny)
-                BlobchegPatchErrors.ThrowIfAny();
+            if (!BlobchegPatchErrors.HasAny)
+                return;
+
+#if UNITY_EDITOR
+            BlobchegPatchErrors.ThrowIfAny(whileBasesRise: true);
+#else
+            BlobchegPatchErrors.ThrowIfAny();
+#endif
         }
     }
 }
