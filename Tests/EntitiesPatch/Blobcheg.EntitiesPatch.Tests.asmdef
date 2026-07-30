@@ -1,0 +1,39 @@
+{
+    "name": "Blobcheg.EntitiesPatch.Tests",
+    "rootNamespace": "Blobcheg.PatchTests",
+    "references": [
+        "Blobcheg.Core",
+        "Blobcheg.Runtime",
+        "Blobcheg.Entities",
+        "Blobcheg.Entities.Patch",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics",
+        "Unity.Entities",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS",
+        "UNITY_ENTITIES",
+        "BLOBCHEG_ENTITIES_PATCH"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.entities",
+            "expression": "",
+            "define": "UNITY_ENTITIES"
+        }
+    ],
+    "noEngineReferences": false
+}

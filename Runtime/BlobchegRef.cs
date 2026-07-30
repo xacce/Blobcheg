@@ -59,6 +59,12 @@ namespace Blobcheg
                 return asset.offset;
             }
         }
+
+        /// <summary>
+        /// Слот для компонента: тот же адрес, но в форме, которую патч импорта превратит в
+        /// указатель. Проверка типа записи та же, что у <see cref="Offset"/>.
+        /// </summary>
+        public BlobchegReference<T> ToReference() => new BlobchegReference<T>(Offset);
     }
 
     /// <summary>

@@ -20,6 +20,7 @@ namespace Blobcheg
     {
         BlobchegBuffer _buffer;
         uint _debugOffset;
+        ulong _domainKey;
 
         /// <summary>Забирает владение буфером, валидирует header и целостность.</summary>
         public BlobchegBlob(BlobchegBuffer buffer, string what)
@@ -29,6 +30,7 @@ namespace Blobcheg
 
             _buffer = buffer;
             _debugOffset = 0;
+            _domainKey = 0;
 
             ref var header = ref UnsafeUtility.AsRef<BlobchegHeader>(buffer.Ptr);
             var contentHash = BlobchegHash.Of(
@@ -41,7 +43,17 @@ namespace Blobcheg
                 BlobchegDebugSection.ValidateProlog(*(uint*)(buffer.Ptr + header.DebugOffset));
                 _debugOffset = header.DebugOffset;
             }
+
+            // Личность домена уже проверена выше, значит и ключ реестра — она же. Регистрируемся
+            // здесь, а не в патче: базу поднимают и без Entities, а вопрос «в слоте адрес или ещё
+            // оффсет» задают все одинаково.
+            _domainKey = header.NameHash;
+            BlobchegDomainNames.Remember(_domainKey, what);
+            BlobchegBases.Register(_domainKey, buffer.Ptr, buffer.Length, _debugOffset);
         }
+
+        /// <summary>Ключ домена в <see cref="BlobchegBases"/> — личность файла из header'а.</summary>
+        public ulong DomainKey => _domainKey;
 
         public bool IsCreated => _buffer.IsCreated;
 
@@ -63,6 +75,12 @@ namespace Blobcheg
 
         public void Dispose()
         {
+            if (_domainKey != 0)
+            {
+                BlobchegBases.Unregister(_domainKey, _buffer.Ptr);
+                _domainKey = 0;
+            }
+
             _buffer.Dispose();
             _debugOffset = 0;
         }

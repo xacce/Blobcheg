@@ -1,0 +1,31 @@
+{
+    "name": "Blobcheg.Entities.Patch",
+    "rootNamespace": "Blobcheg",
+    "references": [
+        "Blobcheg.Core",
+        "Blobcheg.Runtime",
+        "Blobcheg.Entities",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics",
+        "Unity.Entities"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_ENTITIES",
+        "BLOBCHEG_ENTITIES_PATCH"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.entities",
+            "expression": "",
+            "define": "UNITY_ENTITIES"
+        }
+    ],
+    "noEngineReferences": false
+}
