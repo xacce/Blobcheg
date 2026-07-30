@@ -204,14 +204,36 @@ namespace Blobcheg.AdvancedTests
             var db = Combat();
             try
             {
+                const int reads = 100_000;
+
+                // Прогрев: первое чтение платит за JIT метода, и на сотне тысяч витков эта плата
+                // размазалась бы по замеру.
+                for (var i = 0; i < 1024; i++)
+                {
+                    if (db.Read<AdvGun>(offset).Rpm != 4242)
+                        Assert.Fail("прогрев прочитал не то, что записано");
+                }
+
                 var wrong = 0;
-                for (var i = 0; i < 100_000; i++)
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                for (var i = 0; i < reads; i++)
                 {
                     if (db.Read<AdvGun>(offset).Rpm != 4242)
                         wrong++;
                 }
 
+                watch.Stop();
+
                 Assert.That(wrong, Is.Zero, "чтение — чистая реинтерпретация; состояния между вызовами у неё нет");
+
+                // Не порог, а хронометраж: сколько стоит чтение в редакторе через сгенерированный
+                // фасад, на файле настоящей пересборки. Снят до того, как в CheckRead ляжет
+                // AtomicSafetyHandle, — чтобы потом было видно, чья цена. Разложение по слоям —
+                // в Tests/BlobchegReadCostTests.
+                UnityEngine.Debug.Log(
+                    $"Blobcheg: {reads} чтений через фасад за {watch.Elapsed.TotalMilliseconds:F2} мс — " +
+                    $"{watch.Elapsed.TotalMilliseconds * 1e6 / reads:F2} нс на чтение " +
+                    $"(редактор, отладочный контур {(db.HasDebug ? "есть" : "нет")})");
             }
             finally
             {
