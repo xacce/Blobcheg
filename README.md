@@ -60,6 +60,10 @@ Blobcheg — те же блобы минус сабсцена. Данные пе
 - **разные типы записей** внутри одной базы — любые `unmanaged`-структуры её домена, а не один
   тип на файл.
 
+Вместе это даёт главный приём: данные одной сущности разносятся по базам по характеру доступа —
+горячие поля отдельно от иконок и описаний, — а связывает их общий индекс в роутере;
+см. [пример](#как-это-выглядит).
+
 Если привычнее реляционный словарь: роутер — база данных, база-домен — таблица, запись — строка.
 Дальше README зовёт их родными именами.
 
@@ -94,16 +98,23 @@ Blobcheg — те же блобы минус сабсцена. Данные пе
 типов:
 
 ```
-GameRouter — бой
-├─ CombatDb        IHotPathCombatData   GunData, ProjectileData, ArmorData, MovementData   ← горячий путь
-├─ ProgressionDb   IProgressionData     LevelCurveData, UpgradeCostData, TalentData
-└─ PresentationDb  IPresentationData    VfxSetData, AudioSetData, UnitCardData
+GameRouter — бой: сущность разнесена по базам по характеру доступа
+├─ CombatDb        IHotPathCombatData   WeaponHotData, UnitHotData, ProjectileHotData        ← горячий путь
+├─ ProgressionDb   IProgressionData     WeaponProgressionData, UnitProgressionData, TalentData
+└─ PresentationDb  IPresentationData    WeaponPresentationData, UnitPresentationData, ProjectileVfxData
 
-MetaRouter — экономика и повествование
+MetaRouter — экономика и повествование: тематические таблицы
 ├─ EconomyDb       IEconomyData         ItemData, RecipeData, LootTableData, VendorData
 ├─ QuestDb         IQuestData           QuestData, QuestStageData, RewardData
 └─ DialogueDb      IDialogueData        SpeakerData, DialogueLineData, ChoiceData
 ```
+
+`GameRouter` показывает главный приём: данные одной сущности **разнесены по базам, а индекс у них
+общий**. Оружие — это `WeaponHotData` в горячей базе, `WeaponProgressionData` и
+`WeaponPresentationData` в остальных; все три — записи одной ноды, связанные одним `BlobchegId`.
+Боевая джоба поднимает в кеш только горячую базу и не платит за строки диалогов и иконки, UI
+читает презентацию, а строку роутера они делят одну. `MetaRouter` — другой полюс того же
+механизма: базы нарезаны тематически, и нода квеста пишет только в `QuestDb`.
 
 Объявление — атрибут на партиале, тело допишет генератор:
 
@@ -120,27 +131,43 @@ MetaRouter — экономика и повествование
 [BlobchegRouter] public partial struct MetaRouter { }
 ```
 
-Разные типы в одной базе появляются сами: нода юнита кладёт в `CombatDb` запись `GunData`, нода
-снаряда — `ProjectileData`. Файл один, типы разные, и `Read<T>` не даст их перепутать.
-
-Чтение через роутер — строка с оффсетами ноды во всех её базах:
+Нода оружия раскладывает свою сущность по базам за один `Write` — по записи в каждый объявленный
+домен:
 
 ```csharp
-var row = gameRouter.Get(unit.id);
-ref readonly var gun   = ref combatDb.Read<GunData>(row.combatData);
-ref readonly var curve = ref progressionDb.Read<LevelCurveData>(row.progression);
+public override Type[] OutTypes => new[]
+    { typeof(IHotPathCombatData), typeof(IProgressionData), typeof(IPresentationData) };
 
-if (row.HasPresentation)   // снаряд в PresentationDb не писал — это факт, а не ошибка
+public override void Write(ref BlobchegNodeWriter w)
 {
-    ref readonly var vfx = ref presentationDb.Read<VfxSetData>(row.presentation);
+    w.Add(new WeaponHotData { rpm = rpm, damage = damage });
+    w.Add(new WeaponProgressionData { upgradeCurve = upgradeCurve });
+    w.Add(new WeaponPresentationData { muzzleVfx = muzzleVfx, icon = icon });
+}
+```
+
+Разные типы в одной базе появляются сами: рядом с `WeaponHotData` в `CombatDb` лежат
+`UnitHotData` юнитов и `ProjectileHotData` снарядов. Файл один, типы разные, и `Read<T>` не даст
+их перепутать.
+
+Чтение через роутер — один id разворачивается в строку с оффсетами сущности во всех её базах:
+
+```csharp
+var row = gameRouter.Get(weapon.id);   // один id — все аспекты оружия
+ref readonly var hot      = ref combatDb.Read<WeaponHotData>(row.combatData);
+ref readonly var progress = ref progressionDb.Read<WeaponProgressionData>(row.progression);
+
+if (row.HasPresentation)   // не каждая нода пишет во все базы: талант живёт только в ProgressionDb
+{
+    ref readonly var look = ref presentationDb.Read<WeaponPresentationData>(row.presentation);
 }
 ```
 
 И третий адрес — для сейва:
 
 ```csharp
-save.unit = gameHashes.HashOf(unit.id);              // в сейв — хеш: переживёт пересборку
-if (gameHashes.TryGetId(save.unit, out var id)) ...  // на загрузке — обратно в id
+save.weapon = gameHashes.HashOf(weapon.id);            // в сейв — хеш: переживёт пересборку
+if (gameHashes.TryGetId(save.weapon, out var id)) ...  // на загрузке — обратно в id
 ```
 
 ---
