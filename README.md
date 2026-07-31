@@ -144,18 +144,31 @@ public sealed class WeaponNodeSo : BlobchegNodeSo
     public float upgradeStep = 1.15f;
     public uint muzzleVfx;
     public uint icon;
+    public BlobchegNodeSo projectile;   // нода снаряда: в запись уедет её id
 
     public override Type[] OutTypes => new[]
         { typeof(IHotPathCombatData), typeof(IProgressionData), typeof(IPresentationData) };
 
     public override void Write(ref BlobchegNodeWriter w)
     {
-        w.Add(new WeaponHotData { rpm = rpm, damage = damage });
+        w.Add(new WeaponHotData
+        {
+            rpm        = rpm,
+            damage     = damage,
+            id         = w.Id,                    // свой BlobchegId
+            projectile = w.IdOf(projectile),      // ссылка запись → запись: id соседней ноды
+            saveKey    = this.HashIn<GameRouter>(),   // свой хеш имени
+        });
         w.Add(new WeaponProgressionData { upgradeStep = upgradeStep });
         w.Add(new WeaponPresentationData { muzzleVfx = muzzleVfx, icon = icon });
     }
 }
 ```
+
+Id и хеш нода знает **до** записи — `OutTypes` читается раньше `Write`, а хеш — чистая функция от
+имени, — поэтому оба кладутся в запись за один проход, и потребитель получает их как обычные поля.
+`HashIn` живёт в `Blobcheg.Hashes.Authoring`; полный набор — `Id`, `IdIn<TRouter>`, `IdOf` — в
+[таблице писателя](#что-умеет-blobchegnodewriter).
 
 Ассет создаётся через `Assets → Create → Game/Weapon`, пересборка баз запускается сама на импорте.
 
@@ -213,12 +226,18 @@ if (row.HasPresentation)   // не каждая нода пишет во все 
 {
     ref readonly var look = ref presentationDb.Read<WeaponPresentationData>(row.presentation);
 }
+
+// id, который Write положил в саму запись, разворачивается так же — записи ссылаются друг
+// на друга без единого managed-объекта:
+var projRow = gameRouter.Get(hot.projectile);
+ref readonly var proj = ref combatDb.Read<ProjectileHotData>(projRow.combatData);
 ```
 
 **Хеш имени.** Адрес для сейва:
 
 ```csharp
-save.weapon = gameHashes.HashOf(weapon.id);            // в сейв — хеш: переживёт пересборку
+save.weapon = hot.saveKey;                             // хеш уже в записи — его положил Write
+save.other  = gameHashes.HashOf(other.id);             // или таблицей, из любого id
 if (gameHashes.TryGetId(save.weapon, out var id)) ...  // на загрузке — обратно в id
 ```
 
