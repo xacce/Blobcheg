@@ -155,9 +155,11 @@ public sealed class WeaponNodeSo : BlobchegNodeSo
         {
             rpm        = rpm,
             damage     = damage,
-            id         = w.Id,                    // свой BlobchegId
-            projectile = w.IdOf(projectile),      // ссылка запись → запись: id соседней ноды
+
+            // всё ниже — опционально: кладётся, только если записи это нужно
+            id         = w.Id,                        // свой BlobchegId
             saveKey    = this.HashIn<GameRouter>(),   // свой хеш имени
+            projectile = w.IdOf(projectile),          // id чужой ноды — ссылка запись → запись
         });
         w.Add(new WeaponProgressionData { upgradeStep = upgradeStep });
         w.Add(new WeaponPresentationData { muzzleVfx = muzzleVfx, icon = icon });
@@ -165,12 +167,10 @@ public sealed class WeaponNodeSo : BlobchegNodeSo
 }
 ```
 
-Id и хеш нода знает **до** записи — `OutTypes` читается раньше `Write`, а хеш — чистая функция от
-имени, — поэтому оба кладутся в запись за один проход, и потребитель получает их как обычные поля.
-`HashIn` живёт в `Blobcheg.Hashes.Authoring`; полный набор — `Id`, `IdIn<TRouter>`, `IdOf` — в
-[таблице писателя](#что-умеет-blobchegnodewriter).
-
-Ассет создаётся через `Assets → Create → Game/Weapon`, пересборка баз запускается сама на импорте.
+Свои id и хеш нода знает **до** записи — id раздаются по `OutTypes` раньше `Write`, а хеш — чистая
+функция от имени, — поэтому и свои, и чужие (`IdOf`) кладутся в запись за один проход, и
+потребитель получает их как обычные поля. `HashIn` живёт в `Blobcheg.Hashes.Authoring`; полный
+набор — `Id`, `IdIn<TRouter>`, `IdOf` — в [таблице писателя](#что-умеет-blobchegnodewriter).
 
 Разные типы в одной базе появляются сами: рядом с `WeaponHotData` в `CombatDb` лежат
 `UnitHotData` юнитов и `ProjectileHotData` снарядов. Файл один, типы разные, и `Read<T>` не даст
