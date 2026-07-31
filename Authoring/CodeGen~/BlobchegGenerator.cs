@@ -17,6 +17,7 @@ namespace Blobcheg.CodeGen
     {
         const string DbAttributeName = "Blobcheg.BlobchegAttribute";
         const string RouterAttributeName = "Blobcheg.BlobchegRouterAttribute";
+        const string HashesAttributeName = "Blobcheg.BlobchegHashesAttribute";
         const string EntitiesAssembly = "Blobcheg.Entities";
         const string ComponentData = "Unity.Entities.IComponentData";
         const string DisableAutoCreation = "Unity.Entities.DisableAutoCreationAttribute";
@@ -63,6 +64,16 @@ namespace Blobcheg.CodeGen
             "референсит Blobcheg.Entities. Добавь ссылку или убери IComponentData",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
+        static readonly DiagnosticDescriptor HashesNotPartial = new DiagnosticDescriptor(
+            "BCHG009", "Таблица хешей обязана быть partial и не вложенной",
+            "Структура '{0}' помечена [BlobchegHashes], но не объявлена partial или вложена в другой тип",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
+        static readonly DiagnosticDescriptor HashesNoRouter = new DiagnosticDescriptor(
+            "BCHG010", "Таблица хешей ссылается не на роутер",
+            "В [BlobchegHashes] у структуры '{0}' передан '{1}': {2}",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
         public void Initialize(IncrementalGeneratorInitializationContext context)
         {
             var model = context.CompilationProvider.Select(static (compilation, _) => Model.Build(compilation));
@@ -77,8 +88,14 @@ namespace Blobcheg.CodeGen
                 static (node, _) => node is StructDeclarationSyntax,
                 static (ctx, _) => ctx);
 
+            var hashes = context.SyntaxProvider.ForAttributeWithMetadataName(
+                HashesAttributeName,
+                static (node, _) => node is StructDeclarationSyntax,
+                static (ctx, _) => ctx);
+
             context.RegisterSourceOutput(databases.Combine(model), static (source, pair) => EmitDatabase(source, pair.Left, pair.Right));
             context.RegisterSourceOutput(routers.Combine(model), static (source, pair) => EmitRouter(source, pair.Left, pair.Right));
+            context.RegisterSourceOutput(hashes.Combine(model), static (source, pair) => EmitHashes(source, pair.Left, pair.Right));
         }
 
         // ---------------------------------------------------------------- модель
@@ -506,6 +523,151 @@ namespace Blobcheg.CodeGen
             source.AddSource(symbol.Name + ".blobcheg.router.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
         }
 
+        // ---------------------------------------------------------------- таблица хешей
+
+        /// <summary>
+        /// Партиал таблицы хешей. Она объявляется отдельно от роутера и знает о нём ровно три
+        /// константы: имя, число баз и хеш нумерации бит. Номера бит здесь те же, что у роутера, —
+        /// оба считаются из одного отсортированного списка баз.
+        /// </summary>
+        static void EmitHashes(SourceProductionContext source, GeneratorAttributeSyntaxContext ctx, Model model)
+        {
+            var symbol = (INamedTypeSymbol)ctx.TargetSymbol;
+            var declaration = (StructDeclarationSyntax)ctx.TargetNode;
+
+            if (!declaration.Modifiers.Any(m => m.ValueText == "partial") || symbol.ContainingType != null)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(HashesNotPartial, declaration.Identifier.GetLocation(), symbol.Name));
+                return;
+            }
+
+            var attribute = ctx.Attributes[0];
+            if (attribute.ConstructorArguments.Length < 1
+                || !(attribute.ConstructorArguments[0].Value is INamedTypeSymbol routerSymbol))
+                return;
+
+            if (!model.Routers.TryGetValue(routerSymbol.Name, out var router))
+            {
+                source.ReportDiagnostic(Diagnostic.Create(HashesNoRouter, declaration.Identifier.GetLocation(),
+                    symbol.Name, routerSymbol.Name,
+                    "он не помечен [BlobchegRouter] в этой сборке. Роутер, его базы и его таблица " +
+                    "обязаны лежать в одной сборке: генератор видит только свою компиляцию"));
+                return;
+            }
+
+            if (router.Dbs.Count == 0)
+            {
+                source.ReportDiagnostic(Diagnostic.Create(HashesNoRouter, declaration.Identifier.GetLocation(),
+                    symbol.Name, routerSymbol.Name, "в него не вступила ни одна база — маршрутизировать нечего"));
+                return;
+            }
+
+            var maskWidth = MaskWidthFor(router.Dbs.Count);
+            var layoutHash = LayoutHash(router.Dbs, maskWidth);
+            var boot = Boot(source, symbol, declaration, model, out var autoCreate);
+
+            var text = new StringBuilder();
+            Open(text, symbol, out var space);
+
+            var access = Access(symbol);
+
+            text.Append("    ").Append(access).Append(" partial struct ").Append(symbol.Name)
+                .AppendLine(" : global::System.IDisposable");
+            text.AppendLine("    {");
+            text.Append("        public const string RouterName = \"").Append(router.Name).AppendLine("\";");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Личность файла таблицы: имя роутера плюс суффикс.</summary>");
+            text.Append("        public const string FileIdentity = \"").Append(router.Name).AppendLine("Hashes\";");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Хеш нумерации бит роутера: таблица и роутер обязаны быть одной сборки.</summary>");
+            text.Append("        public const ulong LayoutHash = 0x").Append(layoutHash.ToString("X16")).AppendLine("UL;");
+            text.AppendLine();
+            text.Append("        public const int DomainCount = ").Append(router.Dbs.Count).AppendLine(";");
+            text.AppendLine();
+            text.AppendLine("        global::Blobcheg.BlobchegHashesBlob __hashes;");
+            text.AppendLine();
+            text.Append("        public ").Append(symbol.Name).AppendLine("(global::Blobcheg.BlobchegBuffer buffer)");
+            text.AppendLine("        {");
+            text.AppendLine("            __hashes = new global::Blobcheg.BlobchegHashesBlob(");
+            text.AppendLine("                buffer, FileIdentity, RouterName, DomainCount, LayoutHash);");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Имя файла таблицы — его же спрашивает транспорт.</summary>");
+            text.AppendLine("        public static string FileName => global::Blobcheg.BlobchegNaming.FileName(FileIdentity);");
+            text.AppendLine();
+            text.AppendLine("        public bool IsCreated => __hashes.IsCreated;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Строк, то есть нод роутера, включая дырки от удалённых.</summary>");
+            text.AppendLine("        public int Count => __hashes.Count;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Тег роутера — старший байт id, которые отдаёт эта таблица.</summary>");
+            text.AppendLine("        public byte Tag => __hashes.Tag;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Id ноды по хешу её имени. Неизвестный хеш — бросает.</summary>");
+            text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+            text.AppendLine("        public global::Blobcheg.BlobchegId GetId(ulong hash)");
+            text.AppendLine("            => global::Blobcheg.BlobchegId.Make(__hashes.Tag, __hashes.GetRow(hash));");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>То же без исключений: ноды с таким именем больше нет — false.</summary>");
+            text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+            text.AppendLine("        public bool TryGetId(ulong hash, out global::Blobcheg.BlobchegId id)");
+            text.AppendLine("        {");
+            text.AppendLine("            if (!__hashes.TryGetRow(hash, out var row))");
+            text.AppendLine("            {");
+            text.AppendLine("                id = default;");
+            text.AppendLine("                return false;");
+            text.AppendLine("            }");
+            text.AppendLine();
+            text.AppendLine("            id = global::Blobcheg.BlobchegId.Make(__hashes.Tag, row);");
+            text.AppendLine("            return true;");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>Хеш имени ноды по её id. Дырка от удалённой — ноль.</summary>");
+            text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
+            text.AppendLine("        public ulong HashOf(global::Blobcheg.BlobchegId id)");
+            text.AppendLine("        {");
+            text.AppendLine("            if (id.Tag != __hashes.Tag)");
+            text.AppendLine("                throw new global::System.InvalidOperationException(");
+            text.AppendLine("                    \"Blobcheg.Hashes: этот id выдан другим роутером — здесь он не значит ничего\");");
+            text.AppendLine();
+            text.AppendLine("            return __hashes.HashOfRow(id.Index);");
+            text.AppendLine("        }");
+
+            for (var i = 0; i < router.Dbs.Count; i++)
+            {
+                var db = router.Dbs[i];
+                var pascal = Pascal(db.Member);
+
+                text.AppendLine();
+                text.Append("        /// <summary>Хеш по адресу записи в базе ").Append(db.DbName)
+                    .AppendLine(". Записи по этому адресу нет — бросает.</summary>");
+                text.Append("        public ulong HashOf").Append(pascal).AppendLine("(uint offset)");
+                text.AppendLine("        {");
+                text.Append("            if (!__hashes.TryHashOfOffset(").Append(i).AppendLine(", offset, out var hash))");
+                text.AppendLine("                throw new global::System.InvalidOperationException(");
+                text.AppendLine("                    \"Blobcheg.Hashes: по этому адресу в этой базе записи нет\");");
+                text.AppendLine();
+                text.AppendLine("            return hash;");
+                text.AppendLine("        }");
+                text.AppendLine();
+                text.AppendLine("        /// <summary>То же без исключений: не бросает никогда.</summary>");
+                text.Append("        public bool TryHashOf").Append(pascal).AppendLine("(uint offset, out ulong hash)");
+                text.Append("            => __hashes.TryHashOfOffset(").Append(i).AppendLine(", offset, out hash);");
+            }
+
+            text.AppendLine();
+            text.AppendLine("        public void Dispose() => __hashes.Dispose();");
+            text.AppendLine("    }");
+
+            // Без BlobchegSweep: в буфер таблицы никто из сущностей не указывает, переселять нечего.
+            if (boot)
+                EmitBootSystem(text, symbol.Name, access, autoCreate, false);
+
+            Close(text, space);
+
+            source.AddSource(symbol.Name + ".blobcheg.hashes.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
+        }
+
         // ---------------------------------------------------------------- бут
 
         /// <summary>
@@ -540,7 +702,8 @@ namespace Blobcheg.CodeGen
         /// файла: пересборка переписала базу — перечитать и переселить слоты. В плеере всё как было,
         /// один подъём и выключение.
         /// </summary>
-        static void EmitBootSystem(StringBuilder text, string typeName, string access, bool autoCreate)
+        static void EmitBootSystem(StringBuilder text, string typeName, string access, bool autoCreate,
+            bool sweep = true)
         {
             text.AppendLine();
             text.Append("    /// <summary>Подъём '").Append(typeName).AppendLine("' в синглтон. Выпущен кодогеном.</summary>");
@@ -587,10 +750,14 @@ namespace Blobcheg.CodeGen
             text.AppendLine("#if UNITY_EDITOR");
             text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
                 .AppendLine(".FileName);");
-            text.AppendLine();
-            text.AppendLine("            // Сущности, приехавшие раньше базы, ждут ровно этого прохода: их слоты остались");
-            text.AppendLine("            // оффсетами, и теперь есть куда их переводить.");
-            text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
+            if (sweep)
+            {
+                text.AppendLine();
+                text.AppendLine("            // Сущности, приехавшие раньше базы, ждут ровно этого прохода: их слоты остались");
+                text.AppendLine("            // оффсетами, и теперь есть куда их переводить.");
+                text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
+            }
+
             text.AppendLine("#else");
             text.AppendLine("            state.Enabled = false;");
             text.AppendLine("#endif");
@@ -630,7 +797,10 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            stale.Dispose();");
             text.AppendLine();
             text.AppendLine("            __query.SetSingleton(fresh);");
-            text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
+
+            if (sweep)
+                text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
+
             text.AppendLine("        }");
             text.AppendLine("#endif");
             text.AppendLine();

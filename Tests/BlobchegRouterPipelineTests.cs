@@ -437,7 +437,7 @@ namespace Blobcheg.Tests
                 BlobchegBuild.ManifestFolder + "/TestGameRouter.asset");
 
             Assert.That(manifest, Is.Not.Null);
-            Assert.That(manifest.isRouter, Is.True,
+            Assert.That(manifest.IsRouter, Is.True,
                 $"отчёт: {report}; путь: {AssetDatabase.GetAssetPath(manifest)}; id: {manifest.GetInstanceID()}; " +
                 $"domainName: '{manifest.domainName}'; recordCount: {manifest.recordCount}; " +
                 $"hash: {manifest.ContentHash:X16}; nodes: {manifest.nodes?.Length}");

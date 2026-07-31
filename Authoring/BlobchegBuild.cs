@@ -18,11 +18,16 @@ namespace Blobcheg.Authoring
         public int ChangedRefs;
         public int RemovedRefs;
 
-        public bool Changed => ChangedFiles > 0 || ChangedRefs > 0 || RemovedRefs > 0 || ChangedManifests > 0;
+        /// <summary>Нод, которым пересборка проставила пустое имя. Второй заход обязан дать ноль.</summary>
+        public int NamedNodes;
+
+        public bool Changed => ChangedFiles > 0 || ChangedRefs > 0 || RemovedRefs > 0
+                               || ChangedManifests > 0 || NamedNodes > 0;
 
         public override string ToString()
             => $"домены {Domains}, роутеры {Routers}, записи {Records}, переписано файлов {ChangedFiles}, " +
-               $"манифестов {ChangedManifests}, обновлено ref'ов {ChangedRefs}, удалено {RemovedRefs}";
+               $"манифестов {ChangedManifests}, обновлено ref'ов {ChangedRefs}, удалено {RemovedRefs}, " +
+               $"названо нод {NamedNodes}";
     }
 
     /// <summary>
@@ -127,6 +132,22 @@ namespace Blobcheg.Authoring
                     entry.Dirty = true;
             }
 
+            // Имя нужно ноде раньше, чем она пишет: запись может положить в себя хеш своего имени.
+            // Пачки StartAssetEditing здесь нет намеренно — она стоит позже и заведена под
+            // AddObjectToAsset, а SetDirty на самой ноде переимпорта не вызывает.
+            using (BlobchegProfile.Section("Имена нод"))
+            {
+                foreach (var entry in entries)
+                {
+                    if (!entry.Node.EnsureName())
+                        continue;
+
+                    entry.Dirty = true;
+                    EditorUtility.SetDirty(entry.Node);
+                    report.NamedNodes++;
+                }
+            }
+
             // Носители читаются один раз на всю пересборку: они и журнал уже выданных адресов, и
             // то, что в конце придётся сверить и переписать.
             BlobchegCarriers carriers;
@@ -187,8 +208,17 @@ namespace Blobcheg.Authoring
 
             // Роутеры собираются ПОСЛЕ Flush: до него оффсетов, из которых состоят строки, не
             // существует вовсе.
+            var offsets = new Dictionary<(BlobchegNodeSo, Type), uint>();
+            foreach (var entry in collector.Entries)
+                offsets[(entry.Node, entry.Domain)] = collector.Writers[entry.Domain].OffsetOf(entry.Ticket);
+
             using (BlobchegProfile.Section("BuildRouters"))
-                BuildRouters(collector, ids, ref report);
+                BuildRouters(offsets, ids, ref report);
+
+            // Производные файлы — таблица хешей и всё, что заведут после неё. Ядро о них не знает:
+            // оно отдаёт готовую раскладку и принимает обратно счётчики отчёта.
+            using (BlobchegProfile.Section("Пост-проходы"))
+                RunPasses(new BlobchegBuildLayout(ids, offsets), ref report);
 
             // Носители пишутся пачкой: поштучный AddObjectToAsset переимпортирует ноду на каждый
             // сабассет, и на большом проекте вся пересборка — это он и есть. Замер на 500 нодах:
@@ -569,14 +599,11 @@ namespace Blobcheg.Authoring
         /// Файл роутера: строка на ноду в порядке id, в строке — оффсеты во всех базах роутера, где
         /// нода есть. Пустая строка допустима: нода могла войти в роутер одной базой из десяти.
         /// </summary>
-        static void BuildRouters(BlobchegCollector collector, BlobchegIdTable ids, ref BlobchegBuildReport report)
+        static void BuildRouters(Dictionary<(BlobchegNodeSo, Type), uint> offsets, BlobchegIdTable ids,
+            ref BlobchegBuildReport report)
         {
             if (BlobchegRouters.All.Length == 0)
                 return;
-
-            var offsets = new Dictionary<(BlobchegNodeSo, Type), uint>();
-            foreach (var entry in collector.Entries)
-                offsets[(entry.Node, entry.Domain)] = collector.Writers[entry.Domain].OffsetOf(entry.Ticket);
 
             foreach (var router in BlobchegRouters.All)
             {
@@ -627,8 +654,28 @@ namespace Blobcheg.Authoring
             IReadOnlyList<BlobchegNodeSo> members, ref BlobchegBuildReport report)
         {
             // Порядок нод в манифесте — порядок id. Это и есть таблица «id → нода» для глаз.
-            SyncManifest(name, true, members.ToArray(), writer.RowCount,
+            SyncManifest(name, BlobchegFileKind.Router, members.ToArray(), writer.RowCount,
                 writer.ContentHash, writer.FileChanged, ref report);
+        }
+
+        /// <summary>
+        /// Чужие проходы по готовой раскладке. Порядок — по полному имени типа: пересборка обязана
+        /// быть детерминированной, а порядок, в котором типы отдаёт <c>TypeCache</c>, ей не обещан.
+        /// </summary>
+        static void RunPasses(BlobchegBuildLayout layout, ref BlobchegBuildReport report)
+        {
+            var passes = TypeCache.GetTypesDerivedFrom<IBlobchegBuildPass>()
+                .Where(type => !type.IsAbstract && !type.IsInterface)
+                .OrderBy(type => type.FullName, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var type in passes)
+            {
+                var pass = (IBlobchegBuildPass)Activator.CreateInstance(type);
+
+                using (BlobchegProfile.Section("  " + type.Name))
+                    pass.Run(layout, ref report);
+            }
         }
 
         /// <summary>Носители id: по одному sub-ассету на пару (нода × роутер).</summary>
@@ -736,8 +783,8 @@ namespace Blobcheg.Authoring
             {
                 var domainName = BlobchegDomains.NameOf(pair.Key);
 
-                SyncManifest(domainName, false, members[pair.Key].ToArray(), pair.Value.RecordCount,
-                    pair.Value.ContentHash, pair.Value.FileChanged, ref report);
+                SyncManifest(domainName, BlobchegFileKind.Database, members[pair.Key].ToArray(),
+                    pair.Value.RecordCount, pair.Value.ContentHash, pair.Value.FileChanged, ref report);
             }
         }
 
@@ -747,15 +794,15 @@ namespace Blobcheg.Authoring
         /// диске пустой заготовкой: <c>CreateAsset</c> пишет его до заполнения полей, а
         /// <c>SaveAssets</c> в таком заходе не зовётся вовсе.
         /// </summary>
-        static void SyncManifest(string name, bool isRouter, BlobchegNodeSo[] members, int recordCount,
-            ulong contentHash, bool fileChanged, ref BlobchegBuildReport report)
+        internal static void SyncManifest(string name, BlobchegFileKind kind, BlobchegNodeSo[] members,
+            int recordCount, ulong contentHash, bool fileChanged, ref BlobchegBuildReport report)
         {
             var fileName = BlobchegNaming.FileName(name);
             var manifest = LoadOrCreateManifest(name, out var created);
 
             var same = !created
                        && !fileChanged
-                       && manifest.isRouter == isRouter
+                       && manifest.kind == kind
                        && manifest.domainName == name
                        && manifest.fileName == fileName
                        && manifest.recordCount == recordCount
@@ -765,7 +812,7 @@ namespace Blobcheg.Authoring
             if (same)
                 return;
 
-            manifest.isRouter = isRouter;
+            manifest.kind = kind;
             manifest.domainName = name;
             manifest.fileName = fileName;
             manifest.recordCount = recordCount;

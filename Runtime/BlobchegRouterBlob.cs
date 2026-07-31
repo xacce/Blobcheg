@@ -88,7 +88,7 @@ namespace Blobcheg
             var contentHash = BlobchegHash.Of(
                 buffer.Ptr + BlobchegFormat.HeaderSize, buffer.Length - BlobchegFormat.HeaderSize);
 
-            header.Validate(what, buffer.Length, contentHash, true);
+            header.Validate(what, buffer.Length, contentHash, BlobchegFileKind.Router);
 
             if (buffer.Length < BlobchegRouterFormat.PrologOffset + BlobchegRouterFormat.PrologSize)
                 throw new InvalidOperationException($"Blobcheg: роутер '{what}' короче пролога");

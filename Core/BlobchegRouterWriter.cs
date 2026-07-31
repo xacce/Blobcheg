@@ -147,7 +147,8 @@ namespace Blobcheg
             if (debugSection != null)
                 Buffer.BlockCopy(debugSection, 0, file, debugOffset, debugSection.Length);
 
-            var flags = (ushort)(BlobchegFormat.FlagRouter | (withDebug ? BlobchegFormat.FlagHasDebug : 0));
+            var flags = (ushort)(BlobchegFormat.FlagsOf(BlobchegFileKind.Router)
+                                 | (withDebug ? BlobchegFormat.FlagHasDebug : 0));
             ContentHash = BlobchegBytes.Seal(file, flags, (uint)debugOffset, BlobchegNaming.NameHash(RouterName));
 
             _flushed = true;

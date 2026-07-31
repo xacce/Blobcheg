@@ -9,8 +9,14 @@ namespace Blobcheg.Authoring
     /// </summary>
     public sealed class BlobchegDomainSo : ScriptableObject
     {
-        /// <summary>Манифест роутера, а не домена: тогда <c>nodes</c> идут в порядке id.</summary>
-        public bool isRouter;
+        /// <summary>
+        /// Какой файл описан. У роутера и у таблицы хешей <c>nodes</c> идут в порядке id, у базы —
+        /// в порядке обхода проекта.
+        /// </summary>
+        public BlobchegFileKind kind;
+
+        /// <summary>Манифест роутера, а не базы. Осталось для глаз и для тестов.</summary>
+        public bool IsRouter => kind == BlobchegFileKind.Router;
 
         public string domainName;
         public string fileName;

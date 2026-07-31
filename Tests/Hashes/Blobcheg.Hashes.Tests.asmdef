@@ -1,16 +1,15 @@
 {
-    "name": "Blobcheg.Entities.Tests",
-    "rootNamespace": "Blobcheg.Tests",
+    "name": "Blobcheg.Hashes.Tests",
+    "rootNamespace": "Blobcheg.HashTests",
     "references": [
         "Blobcheg.Core",
         "Blobcheg.Runtime",
         "Blobcheg.Authoring",
-        "Blobcheg.Entities",
         "Blobcheg.Hashes",
+        "Blobcheg.Hashes.Authoring",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics",
-        "Unity.Entities",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
@@ -25,15 +24,8 @@
     ],
     "autoReferenced": false,
     "defineConstraints": [
-        "UNITY_INCLUDE_TESTS",
-        "UNITY_ENTITIES"
+        "UNITY_INCLUDE_TESTS"
     ],
-    "versionDefines": [
-        {
-            "name": "com.unity.entities",
-            "expression": "",
-            "define": "UNITY_ENTITIES"
-        }
-    ],
+    "versionDefines": [],
     "noEngineReferences": false
 }
