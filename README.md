@@ -131,26 +131,78 @@ MetaRouter — экономика и повествование: тематич�
 [BlobchegRouter] public partial struct MetaRouter { }
 ```
 
-Нода оружия раскладывает свою сущность по базам за один `Write` — по записи в каждый объявленный
-домен:
+Данные заполняются нодами — `ScriptableObject`-ассетами. Нода оружия раскладывает свою сущность
+по базам за один `Write` — по записи в каждый объявленный домен (класс ноды живёт в Editor-only
+сборке, потому что `BlobchegNodeSo` лежит в `Blobcheg.Authoring`):
 
 ```csharp
-public override Type[] OutTypes => new[]
-    { typeof(IHotPathCombatData), typeof(IProgressionData), typeof(IPresentationData) };
-
-public override void Write(ref BlobchegNodeWriter w)
+[CreateAssetMenu(menuName = "Game/Weapon")]
+public sealed class WeaponNodeSo : BlobchegNodeSo
 {
-    w.Add(new WeaponHotData { rpm = rpm, damage = damage });
-    w.Add(new WeaponProgressionData { upgradeCurve = upgradeCurve });
-    w.Add(new WeaponPresentationData { muzzleVfx = muzzleVfx, icon = icon });
+    public int rpm = 600;
+    public float damage = 12f;
+    public float upgradeStep = 1.15f;
+    public uint muzzleVfx;
+    public uint icon;
+
+    public override Type[] OutTypes => new[]
+        { typeof(IHotPathCombatData), typeof(IProgressionData), typeof(IPresentationData) };
+
+    public override void Write(ref BlobchegNodeWriter w)
+    {
+        w.Add(new WeaponHotData { rpm = rpm, damage = damage });
+        w.Add(new WeaponProgressionData { upgradeStep = upgradeStep });
+        w.Add(new WeaponPresentationData { muzzleVfx = muzzleVfx, icon = icon });
+    }
 }
 ```
+
+Ассет создаётся через `Assets → Create → Game/Weapon`, пересборка баз запускается сама на импорте.
 
 Разные типы в одной базе появляются сами: рядом с `WeaponHotData` в `CombatDb` лежат
 `UnitHotData` юнитов и `ProjectileHotData` снарядов. Файл один, типы разные, и `Read<T>` не даст
 их перепутать.
 
-Чтение через роутер — один id разворачивается в строку с оффсетами сущности во всех её базах:
+Дальше — все способы добраться до записи, по нарастающей.
+
+**Оффсет без патча.** Запись выбирается в инспекторе типизированным полем, бейкер кладёт в
+компонент голый `uint`, чтение — синглтон базы плюс одно сложение:
+
+```csharp
+public sealed class TurretAuthoring : MonoBehaviour
+{
+    public BlobchegRef<WeaponHotData> weapon;   // пикер покажет только записи WeaponHotData
+
+    sealed class Baker : Baker<TurretAuthoring>
+    {
+        public override void Bake(TurretAuthoring a)
+        {
+            DependsOn(a.weapon.Asset);
+            AddComponent(GetEntity(TransformUsageFlags.None),
+                new TurretWeapon { weapon = a.weapon.Offset });
+        }
+    }
+}
+```
+
+```csharp
+ref readonly var hot = ref combatDb.Read<WeaponHotData>(turret.weapon);
+```
+
+**Оффсет с патчем.** Тот же слот объявляется `BlobchegReference<T>`, бейкер кладёт
+`a.weapon.ToReference()`, а на импорте субсцены оффсет ремапится в адрес — ровно как у
+`BlobAssetReference`. Чтение — без базы и без сложения:
+
+```csharp
+public struct TurretWeapon : IComponentData
+{
+    public BlobchegReference<WeaponHotData> weapon;
+}
+
+ref readonly var hot = ref turret.weapon.Value;
+```
+
+**BlobchegId.** Один id разворачивается роутером в строку с оффсетами сущности во всех её базах:
 
 ```csharp
 var row = gameRouter.Get(weapon.id);   // один id — все аспекты оружия
@@ -163,7 +215,7 @@ if (row.HasPresentation)   // не каждая нода пишет во все 
 }
 ```
 
-И третий адрес — для сейва:
+**Хеш имени.** Адрес для сейва:
 
 ```csharp
 save.weapon = gameHashes.HashOf(weapon.id);            // в сейв — хеш: переживёт пересборку
