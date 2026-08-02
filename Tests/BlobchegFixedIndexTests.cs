@@ -1,11 +1,13 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Blobcheg.Authoring;
 using NUnit.Framework;
 using Unity.Collections;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Blobcheg.Tests
 {
@@ -201,6 +203,27 @@ namespace Blobcheg.Tests
 
             Assert.That(IdOf(node), Is.EqualTo(before),
                 "носитель производный: журнал снесли, а номер объявлен нодой");
+        }
+
+        [Test]
+        public void Носитель_не_спрашивается_а_переезд_считается_и_логируется()
+        {
+            var node = Node("Moved", 4);
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            // Носитель подменён вручную: так выглядит роутер, раздавший номера до включения флага.
+            var carrier = BlobchegBuild.IdsOf(node).Single(c => c.RouterName == TestFixedRouter.RouterName);
+            carrier.id = BlobchegId.In(TestFixedRouter.RouterName, 100).Value;
+            EditorUtility.SetDirty(carrier);
+            AssetDatabase.SaveAssets();
+
+            LogAssert.Expect(LogType.Log, new Regex("Moved.*100.*4"));
+
+            var report = BlobchegBuild.RebuildFull();
+
+            Assert.That(IdOf(node).Index, Is.EqualTo(4u), "объявление сильнее журнала");
+            Assert.That(report.MovedIds, Is.EqualTo(1), "переезд обязан быть посчитан, а не молча случиться");
         }
 
         [Test]

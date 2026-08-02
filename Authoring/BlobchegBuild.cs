@@ -18,11 +18,15 @@ namespace Blobcheg.Authoring
         public int ChangedRefs;
         public int RemovedRefs;
 
+        /// <summary>Сколько id переехало на объявленную нодой строку. Не ошибка — миграция.</summary>
+        public int MovedIds;
+
         public bool Changed => ChangedFiles > 0 || ChangedRefs > 0 || RemovedRefs > 0 || ChangedManifests > 0;
 
         public override string ToString()
             => $"домены {Domains}, роутеры {Routers}, записи {Records}, переписано файлов {ChangedFiles}, " +
-               $"манифестов {ChangedManifests}, обновлено ref'ов {ChangedRefs}, удалено {RemovedRefs}";
+               $"манифестов {ChangedManifests}, обновлено ref'ов {ChangedRefs}, удалено {RemovedRefs}, " +
+               $"переехало id {MovedIds}";
     }
 
     /// <summary>
@@ -641,11 +645,12 @@ namespace Blobcheg.Authoring
             {
                 var name = BlobchegRouters.NameOf(router);
                 var members = ids.NodesOf(router);
+                var declared = BlobchegRouters.IsFixed(router);
 
                 foreach (var node in members)
                 {
                     if (node != null)
-                        wanted.Add(UpsertId(node, name, ids.Of(node, router), carriers, ref report));
+                        wanted.Add(UpsertId(node, name, ids.Of(node, router), carriers, declared, ref report));
                 }
             }
 
@@ -664,11 +669,22 @@ namespace Blobcheg.Authoring
         }
 
         static BlobchegIdSo UpsertId(BlobchegNodeSo node, string routerName, BlobchegId id,
-            BlobchegCarriers carriers, ref BlobchegBuildReport report)
+            BlobchegCarriers carriers, bool declared, ref BlobchegBuildReport report)
         {
             var wantedName = node.name + "_" + routerName;
 
             var carrier = carriers.Id(node, routerName);
+
+            // Флаг включили на роутере, который уже раздавал номера, — поедут все, кто объявил не
+            // то, что лежит в журнале. Запрещать нельзя: на первой пересборке после переключения
+            // едут все, и ошибка заблокировала бы саму миграцию. Поэтому переезд не молчит.
+            if (declared && carrier != null && carrier.id != id.Value && new BlobchegId(carrier.id).IsValid)
+            {
+                Debug.Log($"Blobcheg: нода '{node.name}' в роутере '{routerName}' переехала: " +
+                          $"{new BlobchegId(carrier.id)} → {id}");
+
+                report.MovedIds++;
+            }
 
             if (carrier == null)
             {
