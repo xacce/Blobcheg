@@ -27,9 +27,9 @@ namespace Blobcheg.Tests
 
     /// <summary>
     /// Объявление базы. Всё тело дописывает генератор — если он не отработал, тест не соберётся.
-    /// Имя члена вступает в роутер: роутер в сборке один, поэтому называть его не нужно.
+    /// Имя члена вступает в роутер, а сам роутер назван: в сборке тестов их два.
     /// </summary>
-    [Blobcheg(typeof(ITestCombatData), "combat")]
+    [Blobcheg(typeof(ITestCombatData), "combat", Router = typeof(TestGameRouter))]
     public partial struct TestCombatDb
     {
     }

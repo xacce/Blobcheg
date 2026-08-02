@@ -26,6 +26,7 @@ namespace Blobcheg.Authoring
         static Type[] _all;
         static Dictionary<Type, Membership> _byDomain;
         static Dictionary<Type, Type[]> _domains;
+        static HashSet<Type> _fixed;
 
         /// <summary>Все роутеры проекта, по имени. Пусто — v1: базы живут сами по себе.</summary>
         public static Type[] All
@@ -42,9 +43,20 @@ namespace Blobcheg.Authoring
             _all = null;
             _byDomain = null;
             _domains = null;
+            _fixed = null;
         }
 
         public static string NameOf(Type router) => router.Name;
+
+        /// <summary>
+        /// Роутер, чьи номера строк объявляют ноды. Пересборка их не раздаёт и носители под них не
+        /// читает — ни на обычном заходе, ни на компакте.
+        /// </summary>
+        public static bool IsFixed(Type router)
+        {
+            Build();
+            return _fixed.Contains(router);
+        }
 
         /// <summary>Базы роутера в порядке бит: домены по FullName ordinal.</summary>
         public static Type[] DomainsOf(Type router)
@@ -141,6 +153,19 @@ namespace Blobcheg.Authoring
             var routers = TypeCache.GetTypesWithAttribute<BlobchegRouterAttribute>()
                 .OrderBy(type => type.Name, StringComparer.Ordinal)
                 .ToArray();
+
+            // Флаг спрашивается один раз на сборку реестра: Assign зовут на каждую пересборку, а
+            // GetCustomAttributes — рефлексия на каждый спрос.
+            var fixedIndex = new HashSet<Type>();
+            foreach (var router in routers)
+            {
+                var attribute = (BlobchegRouterAttribute)router
+                    .GetCustomAttributes(typeof(BlobchegRouterAttribute), false)
+                    .FirstOrDefault();
+
+                if (attribute != null && attribute.FixedIndex)
+                    fixedIndex.Add(router);
+            }
 
             var byDomain = new Dictionary<Type, Membership>();
             var domains = routers.ToDictionary(router => router, _ => new List<Type>());
@@ -244,6 +269,7 @@ namespace Blobcheg.Authoring
 
             _byDomain = byDomain;
             _domains = ordered;
+            _fixed = fixedIndex;
             _all = routers;
         }
     }

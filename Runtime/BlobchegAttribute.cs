@@ -45,5 +45,11 @@ namespace Blobcheg
     [AttributeUsage(AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
     public sealed class BlobchegRouterAttribute : Attribute
     {
+        /// <summary>
+        /// Номера строк этого роутера объявляют ноды, пересборка их не раздаёт. Каждая нода роутера
+        /// обязана реализовать <c>IBlobchegIndexed</c>, а носитель id перестаёт быть источником
+        /// правды и становится производным: снеси все носители, пересобери — id вернутся те же.
+        /// </summary>
+        public bool FixedIndex { get; set; }
     }
 }

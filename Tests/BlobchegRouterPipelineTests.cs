@@ -22,13 +22,14 @@ namespace Blobcheg.Tests
         public int Tier;
     }
 
-    [Blobcheg(typeof(ITestColdData), "cold")]
+    [Blobcheg(typeof(ITestColdData), "cold", Router = typeof(TestGameRouter))]
     public partial struct TestColdDb
     {
     }
 
     /// <summary>
-    /// Роутер теста. Роутер в сборке один, поэтому базы вступают в него, не называя его.
+    /// Обычный роутер теста: номера строк раздаёт он сам. Базы называют его явно — рядом живёт
+    /// второй, детерминированный (<c>TestFixedRouter</c>), и выбирать за них некому.
     /// </summary>
     [BlobchegRouter]
     public partial struct TestGameRouter
@@ -66,6 +67,7 @@ namespace Blobcheg.Tests
         static readonly string[] Names =
         {
             "ITestCombatData", "ITestColdData", "ITestBootData", "TestGameRouter",
+            "ITestGridData", "TestFixedRouter",
         };
 
         public static void Wipe()
