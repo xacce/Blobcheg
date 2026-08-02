@@ -202,5 +202,51 @@ namespace Blobcheg.Tests
             Assert.That(IdOf(node), Is.EqualTo(before),
                 "носитель производный: журнал снесли, а номер объявлен нодой");
         }
+
+        [Test]
+        public void Две_ноды_на_одном_номере_бросают()
+        {
+            var first = Node("Alpha", 5);
+            var second = Node("Beta", 5);
+            AssetDatabase.SaveAssets();
+
+            var error = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
+            Assert.That(error.Message, Does.Contain("Alpha").And.Contain("Beta").And.Contain("5"),
+                "в тексте обязаны быть оба имени и номер — чинить придётся в одной из нод");
+
+            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(second));
+            Assert.DoesNotThrow(() => BlobchegBuild.RebuildAll(), "конфликт снят — пересборка снова идёт");
+            Assert.That(IdOf(first).Index, Is.EqualTo(5u));
+        }
+
+        [Test]
+        public void Нода_без_интерфейса_бросает()
+        {
+            var blind = ScriptableObject.CreateInstance<TestBlindNodeSo>();
+            AssetDatabase.CreateAsset(blind, _folder + "/Blind.asset");
+            AssetDatabase.SaveAssets();
+
+            var error = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
+            Assert.That(error.Message, Does.Contain("Blind").And.Contain(TestFixedRouter.RouterName)
+                .And.Contain("IBlobchegIndexed"));
+
+            AssetDatabase.DeleteAsset(_folder + "/Blind.asset");
+            Assert.DoesNotThrow(() => BlobchegBuild.RebuildAll());
+        }
+
+        [Test]
+        public void Номер_за_потолком_бросает()
+        {
+            var node = Node("Beyond", BlobchegId.MaxIndex + 1);
+            AssetDatabase.SaveAssets();
+
+            var error = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
+            Assert.That(error.Message, Does.Contain("Beyond").And.Contain(BlobchegId.MaxIndex.ToString()));
+
+            node.index = 1;
+            EditorUtility.SetDirty(node);
+            AssetDatabase.SaveAssets();
+            Assert.DoesNotThrow(() => BlobchegBuild.RebuildAll());
+        }
     }
 }
