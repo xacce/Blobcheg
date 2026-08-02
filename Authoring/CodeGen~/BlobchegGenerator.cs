@@ -720,6 +720,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        bool __created;");
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("        int __seen;");
+            text.AppendLine("        bool __broken;");
             text.AppendLine("#endif");
             text.AppendLine();
             text.AppendLine("        public void OnCreate(ref global::Unity.Entities.SystemState state)");
@@ -739,13 +740,51 @@ namespace Blobcheg.CodeGen
             text.AppendLine("                __Reraise(ref state);");
             text.AppendLine("                return;");
             text.AppendLine("            }");
+            text.AppendLine();
+            text.AppendLine("            // Подъём уже срывался — файл битый. Ждём, пока пересборка перепишет его: без этого");
+            text.AppendLine("            // тот же отказ повторялся бы каждый кадр, а починенный файл не доехал бы до мира.");
+            text.AppendLine("            if (__broken)");
+            text.AppendLine("            {");
+            text.Append("                if (!global::Blobcheg.BlobchegFileVersions.Changed(").Append(typeName)
+                .AppendLine(".FileName, ref __seen))");
+            text.AppendLine("                    return;");
+            text.AppendLine();
+            text.Append("                __load = global::Blobcheg.BlobchegTransport.Default.Read(").Append(typeName)
+                .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
+            text.AppendLine("                __broken = false;");
+            text.AppendLine("            }");
             text.AppendLine("#endif");
             text.AppendLine();
-            text.AppendLine("            if (!__load.Poll())");
+            text.AppendLine("            bool __ready;");
+            text.AppendLine("            try");
+            text.AppendLine("            {");
+            text.AppendLine("                __ready = __load.Poll();");
+            text.AppendLine("            }");
+            text.AppendLine("            catch");
+            text.AppendLine("            {");
+            text.AppendLine("                __Broke(ref state);");
+            text.AppendLine("                throw;");
+            text.AppendLine("            }");
+            text.AppendLine();
+            text.AppendLine("            if (!__ready)");
             text.AppendLine("                return;");
             text.AppendLine();
-            text.Append("            state.EntityManager.CreateSingleton(new ").Append(typeName)
-                .AppendLine("(__load.Acquire()));");
+            text.AppendLine("            // Владение буфером ушло из чтения: отобьёт файл конструктор — освободить буфер");
+            text.AppendLine("            // больше некому, и каждая попытка подъёма утекала бы целой базой.");
+            text.AppendLine("            var __buffer = __load.Acquire();");
+            text.Append("            ").Append(typeName).AppendLine(" __value;");
+            text.AppendLine("            try");
+            text.AppendLine("            {");
+            text.Append("                __value = new ").Append(typeName).AppendLine("(__buffer);");
+            text.AppendLine("            }");
+            text.AppendLine("            catch");
+            text.AppendLine("            {");
+            text.AppendLine("                __buffer.Dispose();");
+            text.AppendLine("                __Broke(ref state);");
+            text.AppendLine("                throw;");
+            text.AppendLine("            }");
+            text.AppendLine();
+            text.AppendLine("            state.EntityManager.CreateSingleton(__value);");
             text.AppendLine("            __created = true;");
             text.AppendLine("#if UNITY_EDITOR");
             text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
@@ -758,6 +797,24 @@ namespace Blobcheg.CodeGen
                 text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
             }
 
+            text.AppendLine("#else");
+            text.AppendLine("            state.Enabled = false;");
+            text.AppendLine("#endif");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>");
+            text.AppendLine("        /// Подъём сорвался. Настоящий отказ уезжает наверх один раз, а чтение здесь и");
+            text.AppendLine("        /// кончается: повторять его каждым кадром — это тонуть в пересказе последствий.");
+            text.AppendLine("        /// В плеере файл больше не починится, поэтому система гаснет; в редакторе она ждёт");
+            text.AppendLine("        /// пересборки, которая перепишет файл.");
+            text.AppendLine("        /// </summary>");
+            text.AppendLine("        void __Broke(ref global::Unity.Entities.SystemState state)");
+            text.AppendLine("        {");
+            text.AppendLine("            __load.Dispose();");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("            __broken = true;");
+            text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
+                .AppendLine(".FileName);");
             text.AppendLine("#else");
             text.AppendLine("            state.Enabled = false;");
             text.AppendLine("#endif");
@@ -788,7 +845,19 @@ namespace Blobcheg.CodeGen
             text.AppendLine("                throw;");
             text.AppendLine("            }");
             text.AppendLine();
-            text.Append("            var fresh = new ").Append(typeName).AppendLine("(reload.Acquire());");
+            text.AppendLine("            var buffer = reload.Acquire();");
+            text.Append("            ").Append(typeName).AppendLine(" fresh;");
+            text.AppendLine("            try");
+            text.AppendLine("            {");
+            text.Append("                fresh = new ").Append(typeName).AppendLine("(buffer);");
+            text.AppendLine("            }");
+            text.AppendLine("            catch");
+            text.AppendLine("            {");
+            text.AppendLine("                // Владение уже ушло из чтения: не освободить буфер здесь — значит утечь базой,");
+            text.AppendLine("                // а прежняя в синглтоне пока цела, и мир едет на ней дальше.");
+            text.AppendLine("                buffer.Dispose();");
+            text.AppendLine("                throw;");
+            text.AppendLine("            }");
             text.AppendLine();
             text.AppendLine("            // Джобы, читающие прежний буфер, обязаны закончить до того, как он освободится.");
             text.AppendLine("            state.EntityManager.CompleteAllTrackedJobs();");

@@ -1,7 +1,11 @@
 using System.Diagnostics;
+using System.IO;
+using System.Text.RegularExpressions;
 using Blobcheg.Authoring;
 using NUnit.Framework;
 using Unity.Entities;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Blobcheg.Tests
 {
@@ -78,6 +82,62 @@ namespace Blobcheg.Tests
             }
             finally
             {
+                world.Dispose();
+            }
+        }
+
+        [Test]
+        public void Битый_файл_отбивается_один_раз_и_чинится_пересборкой()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var path = Path.Combine(
+                Application.streamingAssetsPath, BlobchegNaming.DefaultFolder, TestBootDb.FileName);
+            var sane = File.ReadAllBytes(path);
+
+            var world = new World("blobcheg-boot-broken-tests");
+            try
+            {
+                // Версия формата лежит в header'е сразу за magic. Тройка — прошлый формат пакета:
+                // ровно такой файл и отбил читатель, когда обновлённый пакет встретил старые .bcheg.
+                var broken = (byte[])sane.Clone();
+                broken[4] = 3;
+                File.WriteAllBytes(path, broken);
+
+                LogAssert.Expect(LogType.Exception, new Regex("версия формата 3"));
+
+                var system = world.CreateSystem<TestBootDbBootSystem>();
+                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
+
+                // Дальше кадры идут, а отказ обязан остаться один. Иначе настоящую причину топит
+                // пересказ её последствий: чтение забрано, и каждый следующий Poll бьётся об это.
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < 2000)
+                {
+                    system.Update(world.Unmanaged);
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                LogAssert.NoUnexpectedReceived();
+
+                // Пересборка переписала файл — вот теперь подъём обязан поехать заново, без
+                // перезагрузки домена: иначе сорвавшийся мир не чинится вообще ничем.
+                File.WriteAllBytes(path, sane);
+                BlobchegFileVersions.Bump(TestBootDb.FileName);
+
+                clock.Restart();
+                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                {
+                    system.Update(world.Unmanaged);
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
+                    "починенный файл обязан доехать до синглтона");
+            }
+            finally
+            {
+                File.WriteAllBytes(path, sane);
                 world.Dispose();
             }
         }
