@@ -111,6 +111,9 @@ namespace Blobcheg.Tests
             return new TestFixedRouter(BlobchegBuffer.From(File.ReadAllBytes(path), Allocator.Persistent));
         }
 
+        static uint OffsetOf(BlobchegNodeSo node)
+            => BlobchegBuild.RefsOf(node).Single(r => r.DomainName == "ITestGridData").offset;
+
         static TestGridDb LoadGrid()
             => new TestGridDb(BlobchegBuffer.From(
                 File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestGridDb.FileName)),
@@ -224,6 +227,49 @@ namespace Blobcheg.Tests
 
             Assert.That(IdOf(node).Index, Is.EqualTo(4u), "объявление сильнее журнала");
             Assert.That(report.MovedIds, Is.EqualTo(1), "переезд обязан быть посчитан, а не молча случиться");
+        }
+
+        [Test]
+        public void Компакт_не_двигает_объявленные_строки_но_пережимает_оффсеты()
+        {
+            var head = Node("Head", 0);
+            var tail = Node("Tail", 9);
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(IdOf(tail).Index, Is.EqualTo(9u));
+
+            // Дырку в базе оставляет только запись, лежащая раньше соседа, а порядок записей решает
+            // BuildOrder — поэтому кого удалить, решает замер, а не порядок создания в тесте.
+            var earlier = OffsetOf(head) < OffsetOf(tail);
+            var victim = earlier ? (BlobchegNodeSo)head : tail;
+            var survivor = earlier ? (BlobchegNodeSo)tail : head;
+            var keep = IdOf(survivor);
+
+            AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
+            BlobchegBuild.RebuildAll();
+
+            var offsetBefore = OffsetOf(survivor);
+            Assert.That(offsetBefore, Is.GreaterThan(0u), "впереди осталась дырка от удалённой записи");
+
+            BlobchegBuild.Compact();
+
+            Assert.That(IdOf(survivor), Is.EqualTo(keep),
+                "компакт не спрашивает носителей этого роутера — и двигать ему нечего");
+
+            var router = LoadRouter();
+            try
+            {
+                Assert.That(router.Count, Is.EqualTo(keep.Index + 1),
+                    "строки объявлены, и дырки в них — тоже объявление");
+            }
+            finally
+            {
+                router.Dispose();
+            }
+
+            Assert.That(OffsetOf(survivor), Is.LessThan(offsetBefore),
+                "а оффсеты компакт пережал, как и всегда");
         }
 
         [Test]
