@@ -122,5 +122,85 @@ namespace Blobcheg.Tests
             Assert.DoesNotThrow(() => BlobchegRouters.RequireCodeGenAgrees(typeof(TestFixedRouter)),
                 "кодоген аргументов [BlobchegRouter] не читает — LayoutHash от флага не зависит");
         }
+
+        [Test]
+        public void Объявленный_номер_становится_строкой_id()
+        {
+            var third = Node("Third", 3);
+            var seventh = Node("Seventh", 7);
+            AssetDatabase.SaveAssets();
+
+            BlobchegBuild.RebuildAll();
+
+            var tag = BlobchegNaming.TagOf(TestFixedRouter.RouterName);
+
+            Assert.That(IdOf(third).Index, Is.EqualTo(3u));
+            Assert.That(IdOf(seventh).Index, Is.EqualTo(7u));
+            Assert.That(IdOf(third).Tag, Is.EqualTo(tag), "тег остаётся роутерным — его никто не объявляет");
+
+            var router = LoadRouter();
+            var grid = LoadGrid();
+            try
+            {
+                Assert.That(router.Count, Is.EqualTo(8u), "строк ровно по последний объявленный номер");
+                Assert.That(grid.Read<TestGridInfo>(router.Get(IdOf(seventh)).grid).SelfId,
+                    Is.EqualTo(IdOf(seventh).Value), "нода положила объявленный id в запись");
+            }
+            finally
+            {
+                router.Dispose();
+                grid.Dispose();
+            }
+        }
+
+        [Test]
+        public void Разрежённые_номера_дают_пустые_строки()
+        {
+            Node("Zero", 0);
+            Node("Far", 1000);
+            AssetDatabase.SaveAssets();
+
+            BlobchegBuild.RebuildAll();
+
+            var router = LoadRouter();
+            try
+            {
+                Assert.That(router.Count, Is.EqualTo(1001u), "дырка между семьями — это пустые строки");
+
+                var hole = BlobchegId.In(TestFixedRouter.RouterName, 500);
+                Assert.That(router.Get(hole).HasGrid, Is.False, "строка есть, но пустая");
+                Assert.That(router.TryGetGrid(hole, out _), Is.False);
+            }
+            finally
+            {
+                router.Dispose();
+            }
+        }
+
+        [Test]
+        public void Снос_носителей_возвращает_те_же_id()
+        {
+            var node = Node("Stable", 12);
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            var before = IdOf(node);
+            Assert.That(before.Index, Is.EqualTo(12u),
+                "номер объявлен: раздача посадила бы единственную ноду в строку ноль");
+
+            foreach (var carrier in BlobchegBuild.IdsOf(node).ToList())
+            {
+                AssetDatabase.RemoveObjectFromAsset(carrier);
+                UnityEngine.Object.DestroyImmediate(carrier, true);
+            }
+
+            EditorUtility.SetDirty(node);
+            AssetDatabase.SaveAssets();
+
+            BlobchegBuild.RebuildFull();
+
+            Assert.That(IdOf(node), Is.EqualTo(before),
+                "носитель производный: журнал снесли, а номер объявлен нодой");
+        }
     }
 }
