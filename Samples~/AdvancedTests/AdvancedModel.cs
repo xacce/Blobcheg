@@ -26,7 +26,7 @@ namespace Blobcheg.AdvancedTests
     {
     }
 
-    /// <summary>База ЧУЖОГО роутера AdvOtherRouter.</summary>
+    /// <summary>База ЧУЖОГО роутера AdvAlienRouter.</summary>
     public interface IAdvOther
     {
     }
@@ -144,7 +144,7 @@ namespace Blobcheg.AdvancedTests
     {
     }
 
-    [Blobcheg(typeof(IAdvOther), "other", Router = typeof(AdvOtherRouter))]
+    [Blobcheg(typeof(IAdvOther), "other", Router = typeof(AdvAlienRouter))]
     public partial struct AdvOtherDb
     {
     }
@@ -169,7 +169,7 @@ namespace Blobcheg.AdvancedTests
     }
 
     [BlobchegRouter]
-    public partial struct AdvOtherRouter
+    public partial struct AdvAlienRouter
     {
     }
 
@@ -315,7 +315,7 @@ namespace Blobcheg.AdvancedTests
             }
 
             LastMain = w.IdIn<AdvRouter>().Value;
-            LastOther = w.IdIn<AdvOtherRouter>().Value;
+            LastOther = w.IdIn<AdvAlienRouter>().Value;
 
             w.Add(new AdvGun { Ammo = 1f, Rpm = 1 });
             w.Add(new AdvOtherInfo { V = 2 });
@@ -482,6 +482,157 @@ namespace Blobcheg.AdvancedTests
 
             bytes[bytes.Length - 1] = 0xFE;
             w.AddBytes<IAdvLoose>(bytes);
+        }
+    }
+
+    // ------------------------------------------------------------------ массивы в записи
+
+    /// <summary>Запись с массивом переменной длины.</summary>
+    public struct AdvWeights : IAdvLoose
+    {
+        public int Rolls;
+        public BlobchegArray<float> Weights;
+    }
+
+    /// <summary>Массив спрятан на второй ступени вложенности — литерал обязан отбиваться и так.</summary>
+    public struct AdvDeepArrayHolder
+    {
+        public BlobchegArray<int> Cells;
+    }
+
+    public struct AdvDeepArrayRecord : IAdvLoose
+    {
+        public long Head;
+        public AdvDeepArrayHolder Inner;
+    }
+
+    /// <summary>Элемент дерева: несёт массив элементов СВОЕГО ЖЕ типа. Рекурсия по постановке.</summary>
+    public struct AdvTreeNode
+    {
+        public int Value;
+        public BlobchegArray<AdvTreeNode> Children;
+    }
+
+    public struct AdvTree : IAdvLoose
+    {
+        public BlobchegArray<AdvTreeNode> Roots;
+    }
+
+    /// <summary>Запись, у которой из массива в холодный домен нет ничего, кроме массива.</summary>
+    public struct AdvColdCells : IAdvCold
+    {
+        public BlobchegArray<int> Cells;
+    }
+
+    /// <summary>Массив задаваемой длины — ручка для правок длины и объёма.</summary>
+    public sealed class AdvWeightsNodeSo : BlobchegNodeSo
+    {
+        public int count = 3;
+
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+        {
+            var b = w.Begin<AdvWeights>();
+            b.Root.Rolls = count;
+
+            var weights = b.Allocate(ref b.Root.Weights, count);
+            for (var i = 0; i < weights.Length; i++)
+                weights[i] = i * 0.5f;
+
+            b.End();
+        }
+    }
+
+    /// <summary>Запись с массивом структ-литералом. Обязана отбиваться, даже с пустым массивом.</summary>
+    public sealed class AdvArrayLiteralNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+            => w.Add(new AdvDeepArrayRecord { Head = 1 });
+    }
+
+    /// <summary>Пишет в окно массива ПОСЛЕ End — по опыту других билдеров это «ещё можно».</summary>
+    public sealed class AdvLateWindowNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+        {
+            var b = w.Begin<AdvWeights>();
+            var weights = b.Allocate(ref b.Root.Weights, 2);
+            weights[0] = 1f;
+            b.End();
+
+            // Память чанков уже освобождена — эта строка обязана бросить, а не писать в неё.
+            weights[1] = 2f;
+        }
+    }
+
+    /// <summary>Write падает между Begin и End: до базы обязана доехать ЕГО ошибка.</summary>
+    public sealed class AdvThrowingBuilderNodeSo : BlobchegNodeSo
+    {
+        public const string Cry = "нарочно упал посреди массива";
+
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+        {
+            var b = w.Begin<AdvWeights>();
+            b.Allocate(ref b.Root.Weights, 4);
+            throw new InvalidOperationException(Cry);
+        }
+    }
+
+    /// <summary>Поле одного билдера скармливается Allocate другого. Записи-то разные.</summary>
+    public sealed class AdvCrossBuilderNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose), typeof(IAdvCold) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+        {
+            var loose = w.Begin<AdvWeights>();
+            var cold = w.Begin<AdvColdCells>();
+
+            // Поле из ЧУЖОЙ записи: оффсет между двумя разными блоками не значит ничего.
+            cold.Allocate(ref loose.Root.Weights, 1);
+        }
+    }
+
+    /// <summary>Билдер без единого Allocate: забытое поле-массив обязано читаться пустым.</summary>
+    public sealed class AdvForgottenAllocateNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+        {
+            var b = w.Begin<AdvWeights>();
+            b.Root.Rolls = 9;
+            b.End();
+        }
+    }
+
+    /// <summary>Двухуровневое дерево на рекурсивном типе элемента.</summary>
+    public sealed class AdvTreeNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
+
+        public override void Write(ref BlobchegNodeWriter w)
+        {
+            var b = w.Begin<AdvTree>();
+            var roots = b.Allocate(ref b.Root.Roots, 2);
+            roots[0].Value = 1;
+            roots[1].Value = 2;
+
+            var left = b.Allocate(ref roots[0].Children, 2);
+            left[0].Value = 11;
+            left[1].Value = 12;
+
+            var deep = b.Allocate(ref left[1].Children, 1);
+            deep[0].Value = 121;
+
+            b.End();
         }
     }
 }

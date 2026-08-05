@@ -81,7 +81,7 @@ namespace Blobcheg.AdvancedTests
                 Assert.That(mine.HasCombat, Is.True);
                 Assert.That(mine.HasCold, Is.True);
 
-                var alien = otherRouter.Get(IdOf(other, AdvOtherRouter.RouterName));
+                var alien = otherRouter.Get(IdOf(other, AdvAlienRouter.RouterName));
                 Assert.That(alien.HasOther, Is.True);
                 Assert.That(otherDb.Read<AdvOtherInfo>(alien.other).V, Is.EqualTo(4242));
             }

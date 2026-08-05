@@ -27,7 +27,7 @@ namespace Blobcheg.AdvancedTests
         /// <summary>Всё, что пересборка кладёт из-за доменов и роутеров этой сборки.</summary>
         static readonly string[] Artifacts =
         {
-            "IAdvCombat", "IAdvCold", "IAdvLoose", "IAdvOther", "AdvRouter", "AdvOtherRouter",
+            "IAdvCombat", "IAdvCold", "IAdvLoose", "IAdvOther", "AdvRouter", "AdvAlienRouter",
         };
 
         protected string Folder;
@@ -185,6 +185,6 @@ namespace Blobcheg.AdvancedTests
 
         protected static AdvRouter Router() => new AdvRouter(BufferOf(AdvRouter.FileName));
 
-        protected static AdvOtherRouter OtherRouter() => new AdvOtherRouter(BufferOf(AdvOtherRouter.FileName));
+        protected static AdvAlienRouter OtherRouter() => new AdvAlienRouter(BufferOf(AdvAlienRouter.FileName));
     }
 }

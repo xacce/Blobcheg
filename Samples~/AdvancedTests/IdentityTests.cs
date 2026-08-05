@@ -26,7 +26,7 @@ namespace Blobcheg.AdvancedTests
             var other = Node<AdvOtherNodeSo>("Other");
             Rebuild();
 
-            var alien = IdOf(other, AdvOtherRouter.RouterName);
+            var alien = IdOf(other, AdvAlienRouter.RouterName);
 
             var router = Router();
             try
@@ -36,7 +36,7 @@ namespace Blobcheg.AdvancedTests
                     "и она в этом роутере есть, иначе тест поймал бы обычный выход за диапазон");
 
                 Assert.Throws<InvalidOperationException>(() => router.Get(alien),
-                    "этот id выдан роутером AdvOtherRouter — в AdvRouter он не значит ничего");
+                    "этот id выдан роутером AdvAlienRouter — в AdvRouter он не значит ничего");
                 Assert.That(router.TryGet(alien, out _), Is.False);
             }
             finally
@@ -53,7 +53,7 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             var mine = IdOf(combo, AdvRouter.RouterName);
-            var alien = IdOf(other, AdvOtherRouter.RouterName);
+            var alien = IdOf(other, AdvAlienRouter.RouterName);
 
             Assert.That(mine.Tag, Is.Not.Zero, "тег ноль зарезервирован под «id не назначен»");
             Assert.That(mine.Tag, Is.Not.EqualTo(alien.Tag), "два роутера — два разных тега");
@@ -79,7 +79,7 @@ namespace Blobcheg.AdvancedTests
             var other = Node<AdvOtherNodeSo>("Other");
             Rebuild();
 
-            var alienCarrier = BlobchegBuild.IdsOf(other).Single(c => c.RouterName == AdvOtherRouter.RouterName);
+            var alienCarrier = BlobchegBuild.IdsOf(other).Single(c => c.RouterName == AdvAlienRouter.RouterName);
 
             var thrown = Assert.Throws<InvalidOperationException>(
                 () => { _ = new BlobchegIdRef<AdvRouter>(alienCarrier).Id; },
@@ -323,34 +323,23 @@ namespace Blobcheg.AdvancedTests
                 "id считается по GUID ассета — имя на него влиять не имеет права");
         }
 
+        /// <summary>
+        /// ПОСЫЛКА ПЕРЕЕХАЛА вместе с таблицей хешей имён. Раньше личностью ноды был только GUID и
+        /// одинаковые имена были законны; теперь имя ноды — адрес её записи в сейве, и две ноды с
+        /// одним именем в роутере разложили бы один хеш на две строки. Пересборка обязана
+        /// отказаться вслух и назвать обе.
+        /// </summary>
         [Test]
-        public void Ноды_с_одинаковым_именем_различимы()
+        public void Ноды_с_одинаковым_именем_отбиваются_вслух()
         {
             var one = Node<AdvColdOnlyNodeSo>("Same");
             var two = NodeIn<AdvColdOnlyNodeSo>("Nested", "Same");
-            one.tier = 101;
-            two.tier = 202;
             Dirty(one);
             Dirty(two);
 
-            Rebuild();
-
-            var idOne = IdOf(one, AdvRouter.RouterName);
-            var idTwo = IdOf(two, AdvRouter.RouterName);
-            Assert.That(idOne, Is.Not.EqualTo(idTwo), "имя не является личностью ноды — GUID является");
-
-            var router = Router();
-            var cold = Cold();
-            try
-            {
-                Assert.That(cold.Read<AdvColdInfo>(router.GetCold(idOne)).Tier, Is.EqualTo(101));
-                Assert.That(cold.Read<AdvColdInfo>(router.GetCold(idTwo)).Tier, Is.EqualTo(202));
-            }
-            finally
-            {
-                router.Dispose();
-                cold.Dispose();
-            }
+            var thrown = Assert.Throws<InvalidOperationException>(() => Rebuild());
+            StringAssert.Contains("'Same'", thrown.Message);
+            StringAssert.Contains("Nested/Same.asset", thrown.Message, "названы обе ноды-тёзки");
         }
 
         [Test]
@@ -368,7 +357,7 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             var mine = IdOf(node, AdvRouter.RouterName);
-            var alien = IdOf(node, AdvOtherRouter.RouterName);
+            var alien = IdOf(node, AdvAlienRouter.RouterName);
 
             Assert.That(node.LastMain, Is.EqualTo(mine.Value), "IdIn отдал тот же id, что уехал в носитель");
             Assert.That(node.LastOther, Is.EqualTo(alien.Value));

@@ -119,7 +119,7 @@ namespace Blobcheg.Authoring
             {
                 *(int*)fieldAddress = 0;
                 *((int*)fieldAddress + 1) = 0;
-                return new BlobchegBuilderArray<T>(null, 0, _nodeName);
+                return new BlobchegBuilderArray<T>(null, 0, _nodeName, this);
             }
 
             var chunk = new Chunk
@@ -140,7 +140,7 @@ namespace Blobcheg.Authoring
                 Elements = length,
             });
 
-            return new BlobchegBuilderArray<T>((T*)chunk.Ptr, length, _nodeName);
+            return new BlobchegBuilderArray<T>((T*)chunk.Ptr, length, _nodeName, this);
         }
 
         /// <summary>
@@ -278,12 +278,14 @@ namespace Blobcheg.Authoring
         readonly T* _ptr;
         readonly int _length;
         readonly string _nodeName;
+        readonly IBlobchegOpenBuilder _owner;
 
-        internal BlobchegBuilderArray(T* ptr, int length, string nodeName)
+        internal BlobchegBuilderArray(T* ptr, int length, string nodeName, IBlobchegOpenBuilder owner)
         {
             _ptr = ptr;
             _length = length;
             _nodeName = nodeName;
+            _owner = owner;
         }
 
         public int Length => _length;
@@ -292,6 +294,13 @@ namespace Blobcheg.Authoring
         {
             get
             {
+                // Окно, пережившее End, указывает в освобождённую память — писать туда нельзя ни
+                // при каких обстоятельствах, и молчать об этом тоже.
+                if (_owner.Closed)
+                    throw new InvalidOperationException(
+                        $"Blobcheg: нода '{_nodeName}' пишет в окно массива после End — запись уже " +
+                        "собрана, память чанков освобождена. Заполняйте массив до End");
+
                 if ((uint)index >= (uint)_length)
                     throw new IndexOutOfRangeException(
                         $"Blobcheg: нода '{_nodeName}' пишет в элемент {index} массива длины {_length}");
