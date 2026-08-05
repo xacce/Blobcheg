@@ -249,6 +249,100 @@ namespace Blobcheg.Tests
         }
 
         [Test]
+        public void Новая_запись_садится_в_дырку_удалённой()
+        {
+            var before = BlobchegWriter.Open(_dir, "Domain");
+            var a = before.Append(Rec("Gun", "a", 1));
+            var b = before.Append(Rec("Gun", "b", 2));
+            var c = before.Append(Rec("Gun", "c", 3));
+            before.Flush();
+            var keptA = before.OffsetOf(a);
+            var freed = before.OffsetOf(b);
+            var keptC = before.OffsetOf(c);
+            var lengthBefore = new FileInfo(Path.Combine(_dir, "Domain.bcheg")).Length;
+
+            // Нода b удалена, на её место просится новая d того же размера.
+            var after = BlobchegWriter.Open(_dir, "Domain");
+            var a2 = after.Append(Rec("Gun", "a", 1));
+            var c2 = after.Append(Rec("Gun", "c", 3));
+            var d = after.Append(Rec("Gun", "d", 4));
+            after.Claim(a2, keptA);
+            after.Claim(c2, keptC);
+            after.Flush();
+
+            Assert.That(after.OffsetOf(d), Is.EqualTo(freed), "дырка от удалённой записи переиспользуется");
+            Assert.That(new FileInfo(Path.Combine(_dir, "Domain.bcheg")).Length, Is.EqualTo(lengthBefore),
+                "файл не растёт: новая запись легла в дырку, а не в хвост");
+        }
+
+        [Test]
+        public void Десять_правок_длины_не_растят_файл_линейно()
+        {
+            // Запись мечется между 8 и 40 байтами; сосед стоит заявкой сразу за ней. Каждая правка
+            // без переиспользования дырок оставляла бы брошенный кусок, и файл рос бы на сумму всех
+            // промежуточных версий.
+            var writer = BlobchegWriter.Open(_dir, "Domain");
+            var a = writer.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
+            var b = writer.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            writer.Flush();
+            var offsetA = writer.OffsetOf(a);
+            var offsetB = writer.OffsetOf(b);
+
+            var lengths = new long[10];
+            for (var edit = 0; edit < 10; edit++)
+            {
+                var size = edit % 2 == 0 ? 40 : 8;
+                var next = BlobchegWriter.Open(_dir, "Domain");
+                var a2 = next.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, size)));
+                var b2 = next.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+                next.Claim(a2, offsetA);
+                next.Claim(b2, offsetB);
+                next.Flush();
+
+                offsetA = next.OffsetOf(a2);
+                offsetB = next.OffsetOf(b2);
+                lengths[edit] = new FileInfo(Path.Combine(_dir, "Domain.bcheg")).Length;
+            }
+
+            for (var i = 4; i < lengths.Length; i++)
+                Assert.That(lengths[i], Is.EqualTo(lengths[i - 2]),
+                    "раскладка обязана выйти на устойчивый цикл, а не расти с каждой правкой");
+        }
+
+        [Test]
+        public void Порядок_обхода_не_влияет_на_файл_с_дырками()
+        {
+            // Дырка и садящаяся в неё новая запись не должны сломать детерминизм раскладки.
+            var straightBefore = BlobchegWriter.Open(_dir, "Straight");
+            var sa = straightBefore.Append(Rec("Gun", "a", 1));
+            var sb = straightBefore.Append(Rec("Gun", "b", 2));
+            var sc = straightBefore.Append(Rec("Gun", "c", 3));
+            straightBefore.Flush();
+            var keptA = straightBefore.OffsetOf(sa);
+            var keptC = straightBefore.OffsetOf(sc);
+
+            var straight = BlobchegWriter.Open(_dir, "Straight");
+            var s1 = straight.Append(Rec("Gun", "a", 1));
+            var s2 = straight.Append(Rec("Gun", "c", 3));
+            var s3 = straight.Append(Rec("Gun", "d", 4));
+            straight.Claim(s1, keptA);
+            straight.Claim(s2, keptC);
+            straight.Flush();
+
+            var reversed = BlobchegWriter.Open(_dir, "Reversed");
+            var r3 = reversed.Append(Rec("Gun", "d", 4));
+            var r2 = reversed.Append(Rec("Gun", "c", 3));
+            var r1 = reversed.Append(Rec("Gun", "a", 1));
+            reversed.Claim(r1, keptA);
+            reversed.Claim(r2, keptC);
+            reversed.Flush();
+
+            CollectionAssert.AreEqual(
+                Body(Path.Combine(_dir, "Straight.bcheg")),
+                Body(Path.Combine(_dir, "Reversed.bcheg")));
+        }
+
+        [Test]
         public void Без_заявок_дырок_нет()
         {
             // Первая сборка и компакт: заявок нет, записи лежат встык с выравниванием — ровно та

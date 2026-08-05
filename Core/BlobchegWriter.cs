@@ -219,7 +219,9 @@ namespace Blobcheg
         /// них через DependsOn завязаны уже запечённые субсцены.
         ///
         /// Запись, выросшая до чужой заявки, теряет свою и уезжает сама — соседи не двигаются.
-        /// Ужавшаяся остаётся на месте, мёртвый остаток лежит нулями.
+        /// Ужавшаяся остаётся на месте, мёртвый остаток лежит нулями. Неразмещённые записи сперва
+        /// садятся в дырки между заявками и только потом в хвост — это и держит базу от разбухания
+        /// под активной правкой длин.
         ///
         /// Заявок нет вовсе (первая сборка, компакт) — раскладка ровно та же, что была всегда:
         /// группами по типу, сырые в хвост.
@@ -230,6 +232,11 @@ namespace Blobcheg
             var placed = new bool[_records.Count];
 
             var position = BlobchegFormat.HeaderSize;
+
+            // Дырки между размещёнными заявками, по возрастанию адреса. Без них каждая правка
+            // длины оставляла бы за собой брошенный кусок, и база росла бы на сумму всех
+            // промежуточных версий записи.
+            var holes = new List<(int start, int end)>();
 
             if (_claims.Count > 0)
             {
@@ -258,21 +265,52 @@ namespace Blobcheg
                     if (claim + SpanOf(ticket) > BoundaryOf(claimed, claim))
                         continue;
 
+                    if (claim > position)
+                        holes.Add((position, claim));
+
                     offsets[ticket] = (uint)claim;
                     placed[ticket] = true;
                     position = claim + SpanOf(ticket);
                 }
             }
 
+            // Неразмещённая запись берёт первую дырку, куда влезает с выравниванием, и только
+            // потом хвост. Порядок дырок — по возрастанию адреса, порядок записей — прежний
+            // BuildOrder, поэтому раскладка остаётся детерминированной.
             for (var i = 0; i < order.Length; i++)
             {
                 var ticket = order[i];
                 if (placed[ticket])
                     continue;
 
-                position = BlobchegFormat.AlignUp(position);
-                offsets[ticket] = (uint)position;
-                position += SpanOf(ticket);
+                var span = SpanOf(ticket);
+                var at = -1;
+
+                for (var h = 0; h < holes.Count; h++)
+                {
+                    var start = BlobchegFormat.AlignUp(holes[h].start);
+                    if (start + span > holes[h].end)
+                        continue;
+
+                    at = start;
+
+                    // Занятая часть отрезается, остаток остаётся дыркой.
+                    if (start + span < holes[h].end)
+                        holes[h] = (start + span, holes[h].end);
+                    else
+                        holes.RemoveAt(h);
+
+                    break;
+                }
+
+                if (at < 0)
+                {
+                    position = BlobchegFormat.AlignUp(position);
+                    at = position;
+                    position += span;
+                }
+
+                offsets[ticket] = (uint)at;
             }
 
             var debugOffset = 0;
