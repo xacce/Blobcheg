@@ -164,8 +164,12 @@ namespace Blobcheg.Tests
             Assert.That(after.OffsetOf(c2), Is.EqualTo(keptC), "дырка от удалённой записи не подтягивает следующую");
         }
 
+        // Премиса этого теста развернулась вместе с правилом. Раньше выросшая запись оставалась на
+        // месте, а место теряла СОСЕДКА — на базе с массивами один выросший массив выселял бы
+        // десятки чужих нод. Теперь заявку теряет тот, кто перестал влезать до чужого адреса:
+        // двигается ровно та запись, которую правили, и перепекаются только её потребители.
         [Test]
-        public void Наехавшая_заявка_уступает_соседке_и_уезжает_в_хвост()
+        public void Выросшая_заявка_отдаёт_место_соседке_и_уезжает_сама()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
@@ -174,7 +178,7 @@ namespace Blobcheg.Tests
             var keptA = before.OffsetOf(a);
             var keptB = before.OffsetOf(b);
 
-            // Сырая запись выросла и накрыла место соседки: место остаётся за той, что раньше.
+            // Запись выросла до чужого заявленного адреса: место теряет она, а не соседка.
             var after = BlobchegWriter.Open(_dir, "Domain");
             var a2 = after.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
             var b2 = after.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
@@ -182,9 +186,82 @@ namespace Blobcheg.Tests
             after.Claim(b2, keptB);
             after.Flush();
 
+            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB), "соседка не двигается: её никто не правил");
+            Assert.That(after.OffsetOf(a2), Is.GreaterThanOrEqualTo(keptB + 8),
+                "выросшая запись теряет заявку и уезжает — наложения в файле быть не может");
+        }
+
+        [Test]
+        public void Выросшая_заявка_остаётся_если_впереди_есть_место()
+        {
+            var writer = BlobchegWriter.Open(_dir, "Domain");
+            var a = writer.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
+            var b = writer.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            writer.Claim(a, BlobchegFormat.HeaderSize);
+            writer.Claim(b, BlobchegFormat.HeaderSize + 64);
+            writer.Flush();
+
+            Assert.That(writer.OffsetOf(a), Is.EqualTo(BlobchegFormat.HeaderSize),
+                "до чужого адреса 64 байта, запись в 40 влезает — не двигается никто");
+            Assert.That(writer.OffsetOf(b), Is.EqualTo(BlobchegFormat.HeaderSize + 64));
+        }
+
+        [Test]
+        public void Ужавшаяся_заявка_держит_свой_адрес()
+        {
+            var before = BlobchegWriter.Open(_dir, "Domain");
+            var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
+            var b = before.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            before.Flush();
+            var keptA = before.OffsetOf(a);
+            var keptB = before.OffsetOf(b);
+
+            var after = BlobchegWriter.Open(_dir, "Domain");
+            var a2 = after.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
+            var b2 = after.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            after.Claim(a2, keptA);
+            after.Claim(b2, keptB);
+            after.Flush();
+
+            Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA), "ужавшаяся запись остаётся, остаток лежит мёртвыми байтами");
+            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB));
+        }
+
+        [Test]
+        public void Последняя_заявка_растёт_свободно()
+        {
+            var before = BlobchegWriter.Open(_dir, "Domain");
+            var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
+            var b = before.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
+            before.Flush();
+            var keptA = before.OffsetOf(a);
+            var keptB = before.OffsetOf(b);
+
+            var after = BlobchegWriter.Open(_dir, "Domain");
+            var a2 = after.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
+            var b2 = after.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 4096)));
+            after.Claim(a2, keptA);
+            after.Claim(b2, keptB);
+            after.Flush();
+
             Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA));
-            Assert.That(after.OffsetOf(b2), Is.GreaterThanOrEqualTo(keptA + 40),
-                "наложения в файле быть не может: потерявшая место запись уезжает в хвост");
+            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB), "за последней заявкой только хвост — границы нет");
+        }
+
+        [Test]
+        public void Без_заявок_дырок_нет()
+        {
+            // Первая сборка и компакт: заявок нет, записи лежат встык с выравниванием — ровно та
+            // раскладка, что была всегда.
+            var writer = BlobchegWriter.Open(_dir, "Domain");
+            var a = writer.Append(Rec("Gun", "a", 1));
+            var b = writer.Append(Rec("Gun", "b", 2));
+            var c = writer.Append(Rec("Gun", "c", 3));
+            writer.Flush();
+
+            Assert.That(writer.OffsetOf(a), Is.EqualTo(BlobchegFormat.HeaderSize));
+            Assert.That(writer.OffsetOf(b), Is.EqualTo(BlobchegFormat.AlignUp(writer.OffsetOf(a) + 8)));
+            Assert.That(writer.OffsetOf(c), Is.EqualTo(BlobchegFormat.AlignUp(writer.OffsetOf(b) + 8)));
         }
 
         [Test]
