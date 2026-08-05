@@ -55,6 +55,53 @@ namespace Blobcheg.Tests
             => writer.Add(new TestArmor { Hp = hp });
     }
 
+    public struct TestLootTable : ITestCombatData
+    {
+        public int Rolls;
+        public BlobchegArray<float> Weights;
+    }
+
+    public sealed class TestLootNodeSo : BlobchegNodeSo
+    {
+        public int rolls = 2;
+        public float[] weights = { 0.5f, 0.3f, 0.2f };
+
+        public override Type[] OutTypes => new[] { typeof(ITestCombatData) };
+
+        public override void Write(ref BlobchegNodeWriter writer)
+        {
+            var b = writer.Begin<TestLootTable>();
+            b.Root.Rolls = rolls;
+
+            var w = b.Allocate(ref b.Root.Weights, weights.Length);
+            for (var i = 0; i < w.Length; i++)
+                w[i] = weights[i];
+
+            b.End();
+        }
+    }
+
+    /// <summary>Нода-ошибка: запись с массивом структ-литералом. Обязана быть отбита пересборкой.</summary>
+    public sealed class TestLootLiteralNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(ITestCombatData) };
+
+        public override void Write(ref BlobchegNodeWriter writer)
+            => writer.Add(new TestLootTable { Rolls = 1 });
+    }
+
+    /// <summary>Нода-ошибка: открыла билдер и не позвала End.</summary>
+    public sealed class TestLootUnclosedNodeSo : BlobchegNodeSo
+    {
+        public override Type[] OutTypes => new[] { typeof(ITestCombatData) };
+
+        public override void Write(ref BlobchegNodeWriter writer)
+        {
+            var b = writer.Begin<TestLootTable>();
+            b.Root.Rolls = 1;
+        }
+    }
+
     /// <summary>
     /// Сквозной путь: нода в едиторе → пересборка → файл → ref-ассет → чтение по оффсету.
     /// Кнопки Save в этом пути нет, поэтому пересборка зовётся напрямую — так же, как её зовут хуки.
@@ -280,6 +327,79 @@ namespace Blobcheg.Tests
             var empty = new BlobchegRef<TestPistol>(null);
             Assert.That(empty.IsSet, Is.False);
             Assert.Throws<InvalidOperationException>(() => _ = empty.Offset);
+        }
+
+        [Test]
+        public void Нода_с_массивом_пишется_и_читается_через_пересборку()
+        {
+            var loot = Create<TestLootNodeSo>("Loot");
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
+            var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
+            try
+            {
+                ref readonly var table = ref db.Read<TestLootTable>(RefOf(loot).offset);
+                Assert.That(table.Rolls, Is.EqualTo(2));
+                Assert.That(table.Weights.Length, Is.EqualTo(3));
+                Assert.That(table.Weights[0], Is.EqualTo(0.5f));
+                Assert.That(table.Weights[1], Is.EqualTo(0.3f));
+                Assert.That(table.Weights[2], Is.EqualTo(0.2f));
+            }
+            finally
+            {
+                db.Dispose();
+            }
+        }
+
+        [Test]
+        public void Правка_длины_массива_не_двигает_чужие_адреса()
+        {
+            var loot = Create<TestLootNodeSo>("Loot");
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+            var pistolBefore = RefOf(_pistol).offset;
+            var armorBefore = RefOf(_armor).offset;
+
+            loot.weights = new[] { 0.3f, 0.25f, 0.2f, 0.15f, 0.06f, 0.04f };
+            EditorUtility.SetDirty(loot);
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(RefOf(_pistol).offset, Is.EqualTo(pistolBefore), "выросший массив двигает только свою запись");
+            Assert.That(RefOf(_armor).offset, Is.EqualTo(armorBefore));
+
+            var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
+            var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
+            try
+            {
+                Assert.That(db.Read<TestLootTable>(RefOf(loot).offset).Weights.Length, Is.EqualTo(6));
+            }
+            finally
+            {
+                db.Dispose();
+            }
+        }
+
+        [Test]
+        public void Литерал_с_массивом_отбивается()
+        {
+            Create<TestLootLiteralNodeSo>("LootLiteral");
+            AssetDatabase.SaveAssets();
+
+            var thrown = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
+            StringAssert.Contains("Begin", thrown.Message, "ошибка обязана назвать правильную форму записи");
+        }
+
+        [Test]
+        public void Begin_без_End_падает_с_именем_ноды()
+        {
+            Create<TestLootUnclosedNodeSo>("LootUnclosed");
+            AssetDatabase.SaveAssets();
+
+            var thrown = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
+            StringAssert.Contains("LootUnclosed", thrown.Message);
+            StringAssert.Contains("End", thrown.Message);
         }
 
         [Test]

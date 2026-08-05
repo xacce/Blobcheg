@@ -293,7 +293,18 @@ namespace Blobcheg.Authoring
             var start = collector.Entries.Count;
 
             var writer = new BlobchegNodeWriter { Collector = collector, Node = node, Ids = ids };
-            node.Write(ref writer);
+            try
+            {
+                node.Write(ref writer);
+            }
+            catch
+            {
+                // Память чанков освобождается, а ошибка ноды доезжает как была.
+                collector.ReleaseBuilders(node.name, nodeFailed: true);
+                throw;
+            }
+
+            collector.ReleaseBuilders(node.name, nodeFailed: false);
 
             foreach (var domain in BlobchegDomains.DomainsOf(node))
             {

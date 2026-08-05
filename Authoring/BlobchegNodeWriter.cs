@@ -37,6 +37,10 @@ namespace Blobcheg.Authoring
 
         readonly Dictionary<Type, List<BlobchegRecord>> _pending = new Dictionary<Type, List<BlobchegRecord>>();
 
+        // Открытые билдеры пересборки. Владеет ими коллектор: он раздаёт их через Begin и после
+        // Write ноды закрывает брошенные — и на нормальном выходе, и на исключении.
+        readonly List<IBlobchegOpenBuilder> _builders = new List<IBlobchegOpenBuilder>();
+
         struct About
         {
             public string Guid;
@@ -95,6 +99,44 @@ namespace Blobcheg.Authoring
                 Bytes = bytes,
                 TypeHash = typeHash,
             });
+        }
+
+        /// <summary>Билдер записи с массивами. Байты уезжают тем же маршрутом Add — в End.</summary>
+        public BlobchegBuilder<T> Begin<T>(BlobchegNodeSo node) where T : unmanaged
+        {
+            BlobchegRecordTypes.Require(typeof(T));
+
+            var builder = new BlobchegBuilder<T>(AboutOf(node).Name, bytes =>
+                Add(node, BlobchegDomains.DomainOf(typeof(T)), typeof(T).FullName,
+                    unchecked((uint)BurstRuntime.GetHashCode32<T>()), bytes));
+
+            _builders.Add(builder);
+            return builder;
+        }
+
+        /// <summary>
+        /// Закрывает брошенные билдеры после Write ноды. Память освобождается всегда; ошибка про
+        /// незакрытый билдер бросается только на нормальном выходе — упавший Write уже несёт свою,
+        /// и она обязана доехать как была.
+        /// </summary>
+        public void ReleaseBuilders(string nodeName, bool nodeFailed)
+        {
+            string leaked = null;
+            foreach (var builder in _builders)
+            {
+                if (builder.Closed)
+                    continue;
+
+                leaked = leaked ?? builder.RecordTypeName;
+                builder.Abandon();
+            }
+
+            _builders.Clear();
+
+            if (leaked != null && !nodeFailed)
+                throw new InvalidOperationException(
+                    $"Blobcheg: нода '{nodeName}' открыла билдер записи '{leaked}' и не закрыла его — " +
+                    "без End запись не собрана и в базу не попала. Write обязан звать End");
         }
 
         /// <summary>Накопленные записи уезжают писателям. Зовётся один раз, перед Flush.</summary>
@@ -165,10 +207,22 @@ namespace Blobcheg.Authoring
             return Ids.Of(other, typeof(TRouter));
         }
 
+        /// <summary>
+        /// Запись с массивом. Форма обязательная: размер такой записи известен только после всех
+        /// Allocate, а <see cref="Add{T}"/> структ-литералом молча дал бы массивы нулевой длины.
+        /// </summary>
+        public BlobchegBuilder<T> Begin<T>() where T : unmanaged
+            => Collector.Begin<T>(Node);
+
         /// <summary>Типизированная запись. Домен берётся из маркер-интерфейса <typeparamref name="T"/>.</summary>
         public unsafe void Add<T>(in T record) where T : unmanaged
         {
             BlobchegRecordTypes.Require(typeof(T));
+
+            if (BlobchegRecordTypes.RequiresBuilder(typeof(T)))
+                throw new InvalidOperationException(
+                    $"Blobcheg: запись '{typeof(T).FullName}' несёт BlobchegArray и собирается только " +
+                    "билдером — литерал молча дал бы массивы нулевой длины. Пишите через w.Begin<T>()");
 
             var bytes = new byte[UnsafeUtility.SizeOf<T>()];
             var copy = record;
