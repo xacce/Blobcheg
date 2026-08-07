@@ -250,6 +250,40 @@ if (gameHashes.TryGetId(save.weapon, out var id)) ...  // на загрузке 
 переводит уже загруженные сущности на новый буфер. Числа меняются прямо в запущенном PlayMode,
 без перезапуска. Как это устроено — [в разделе про подъём](#в-редакторе-база-перечитывается).
 
+### Как об этом узнаёт потребитель
+
+Перечитывание меняет буфер под синглтоном, но не трогает ничего, что с базы уже сняли: кеш,
+таблицу, чертёж. Такое производное обязано пересобраться само, и спросить об этом можно двумя
+способами.
+
+**Гейт на кадр** — `BlobchegUpdated`: сущность-тег, которую подъём заводит, положив в синглтон новый
+буфер, и которая живёт ровно до следующего прохода бут-группы.
+
+```csharp
+state.RequireForUpdate<BlobchegUpdated>();
+```
+
+**Номер сборки** — `Version` у синглтона базы, роутера и таблицы хешей: номер пересборки того файла,
+из которого прочитан его буфер.
+
+```csharp
+var db = SystemAPI.GetSingleton<CombatDb>();
+if (db.Version != _seen)
+{
+    _seen = db.Version;
+    Restamp(db);
+}
+```
+
+Выбор между ними — не вкус. Гейт живёт кадр, поэтому система в `FixedStepSimulationSystemGroup`
+пропустит его в кадре без фиксированного шага: стоишь в фиксированном шаге или можешь пропустить
+кадр — сверяй `Version`. Гейт к тому же один на мир и говорит «что-то перезапеклось», а не «вот
+это»; какой именно файл поехал, отвечает опять же `Version`.
+
+Гейт зажигается и на первом подъёме: для того, у кого от базы есть производное, приезд базы и её
+пересборка — одно событие. В плеере он поэтому загорается на старте и больше никогда, а `Version`
+там всегда ноль: файлы в плеере никто не переписывает.
+
 ---
 
 ## Бинарь в билде
@@ -611,6 +645,9 @@ public partial struct CombatDbBootSystem : ISystem
 не гасить себя в редакторе и добавить перезаливку:
 
 ```csharp
+    EntityQuery gate;   // спрашивается в OnCreate: запрос, собранный в OnUpdate, стоит варнинга
+    // ... в OnCreate: gate = BlobchegBoot.Gate(ref state);
+
 #if UNITY_EDITOR
     int seen;   // номер файла, который эта система уже читала
 
@@ -630,12 +667,18 @@ public partial struct CombatDbBootSystem : ISystem
         SystemAPI.SetSingleton(fresh);
 
         BlobchegSweep.Run(state.EntityManager);
+        BlobchegBoot.Updated(ref state, gate);          // и сказать наружу, что буфер сменился
     }
 #endif
 ```
 
 Порядок здесь не вкусовой: освободить прежний буфер до того, как новый встал на учёт, — значит
 оставить слоты смотреть в освобождённую память.
+
+`BlobchegBoot.Updated` зовётся и после первого подъёма, не только после перезаливки, и оба раза —
+последней строкой: гейт значит «пакет с этим файлом закончил». Он же единственное, что нужно
+дописать ради [сигнала наружу](#как-об-этом-узнаёт-потребитель) — `Version` синглтон снимает с файла
+сам, в конструкторе.
 
 ### Битый файл отбивается один раз
 
@@ -1041,6 +1084,7 @@ const string DomainName;                  // имя маркер-интерфе�
 static string FileName { get; }           // "{Домен}.bcheg"
 Db(BlobchegBuffer buffer);                // забирает владение буфером, валидирует файл
 bool IsCreated { get; }
+int Version { get; }                      // номер пересборки файла; в плеере всегда 0
 int Length { get; }
 bool HasDebug { get; }
 ref readonly T Read<T>(uint offset) where T : unmanaged, IДомен;
@@ -1056,6 +1100,7 @@ const ulong LayoutHash;
 const int DomainCount;
 static string FileName { get; }
 Router(BlobchegBuffer buffer);
+int Version { get; }                      // номер пересборки файла; в плеере всегда 0
 int Count { get; }                        // строк, они же ноды
 byte Tag { get; }
 BlobchegId IdAt(uint index);
@@ -1079,6 +1124,7 @@ const ulong LayoutHash;                   // тот же, что у роутер
 const int DomainCount;
 static string FileName { get; }
 Hashes(BlobchegBuffer buffer);
+int Version { get; }                      // номер пересборки файла; в плеере всегда 0
 int Count { get; }                        // строк роутера, включая дырки
 byte Tag { get; }
 BlobchegId GetId(ulong hash);             // неизвестный хеш — бросает
@@ -1102,6 +1148,16 @@ BlobchegBuffer buffer = load.Acquire();   // отдаёт владение; до
 load.Dispose();
 ```
 
+### Сигнал о пересборке (Entities)
+
+```csharp
+struct BlobchegUpdated : IComponentData;              // гейт на кадр; тег, полей нет
+state.RequireForUpdate<BlobchegUpdated>();            // так его и спрашивают
+
+EntityQuery BlobchegBoot.Gate(ref SystemState state); // в OnCreate, держится полем
+void BlobchegBoot.Updated(ref SystemState state, EntityQuery gate);   // зажечь; зовёт подъём
+```
+
 ### Пересборка (Editor)
 
 ```csharp
@@ -1123,7 +1179,7 @@ void BlobchegHooks.MarkDirty();    // пометить домены грязны
 |---|---|---|
 | `Blobcheg.Core` | формат файла, транспорт, писатель, хеши | все |
 | `Blobcheg.Runtime` | `[Blobcheg]`, `[BlobchegRouter]`, `BlobchegBlob`, `BlobchegRouterBlob`, `BlobchegId`, поля-ссылки, генератор | все |
-| `Blobcheg.Entities` | `BlobchegBootGroup` | все, только с Entities |
+| `Blobcheg.Entities` | `BlobchegBootGroup`, `BlobchegUpdated` | все, только с Entities |
 | `Blobcheg.Entities.Patch` | патч `BlobchegReference<T>` на импорте | все, с форком Entities и дефайном `BLOBCHEG_ENTITIES_PATCH` |
 | `Blobcheg.Hashes` | `[BlobchegHashes]`, `BlobchegHashKey`, формат и резидентная таблица | все |
 | `Blobcheg.Authoring` | ноды, пересборка, реестры доменов и роутеров, пикеры полей | Editor |

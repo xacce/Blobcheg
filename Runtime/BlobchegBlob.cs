@@ -21,6 +21,7 @@ namespace Blobcheg
         BlobchegBuffer _buffer;
         uint _debugOffset;
         ulong _domainKey;
+        int _version;
 
         /// <summary>Забирает владение буфером, валидирует header и целостность.</summary>
         public BlobchegBlob(BlobchegBuffer buffer, string what)
@@ -31,6 +32,14 @@ namespace Blobcheg
             _buffer = buffer;
             _debugOffset = 0;
             _domainKey = 0;
+
+            // Номер снимается здесь, а не тем, кто поднимает: подъёмов три — кодогенный, рукописный
+            // и тестовый, — и забытый номер выглядит как «база не менялась», то есть врёт молча.
+#if UNITY_EDITOR
+            _version = BlobchegFileVersions.Of(BlobchegNaming.FileName(what));
+#else
+            _version = 0;
+#endif
 
             ref var header = ref UnsafeUtility.AsRef<BlobchegHeader>(buffer.Ptr);
             var contentHash = BlobchegHash.Of(
@@ -54,6 +63,15 @@ namespace Blobcheg
 
         /// <summary>Ключ домена в <see cref="BlobchegBases"/> — личность файла из header'а.</summary>
         public ulong DomainKey => _domainKey;
+
+        /// <summary>
+        /// Номер пересборки файла, из которого прочитан ЭТОТ буфер. Нужен тому, у кого от базы есть
+        /// производное — кеш, таблица, чертёж: он держит свою отметку и сверяет её с этим числом.
+        /// Разошлись — производное собрано по прошлой базе.
+        ///
+        /// В плеере всегда ноль: там файл никто не переписывает, и производное протухнуть не может.
+        /// </summary>
+        public int Version => _version;
 
         public bool IsCreated => _buffer.IsCreated;
 

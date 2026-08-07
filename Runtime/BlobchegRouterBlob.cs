@@ -73,6 +73,7 @@ namespace Blobcheg
         uint _maskWidth;
         uint _debugOffset;
         byte _tag;
+        int _version;
 
         /// <summary>Забирает владение буфером, валидирует header, целостность и пролог.</summary>
         public BlobchegRouterBlob(BlobchegBuffer buffer, string what, int domainCount, ulong layoutHash)
@@ -83,6 +84,14 @@ namespace Blobcheg
             _buffer = buffer;
             _debugOffset = 0;
             _tag = BlobchegNaming.TagOf(what);
+
+            // Номер снимается здесь по той же причине, что и у базы: подъёмов несколько, а забыть
+            // его — значит молча объявить роутер неизменным.
+#if UNITY_EDITOR
+            _version = BlobchegFileVersions.Of(BlobchegNaming.FileName(what));
+#else
+            _version = 0;
+#endif
 
             ref var header = ref UnsafeUtility.AsRef<BlobchegHeader>(buffer.Ptr);
             var contentHash = BlobchegHash.Of(
@@ -113,6 +122,12 @@ namespace Blobcheg
         }
 
         public bool IsCreated => _buffer.IsCreated;
+
+        /// <summary>
+        /// Номер пересборки файла, из которого прочитан ЭТОТ буфер. Сверяется потребителем, у
+        /// которого от роутера есть производное; в плеере всегда ноль.
+        /// </summary>
+        public int Version => _version;
 
         /// <summary>Сколько строк, то есть нод. Он же потолок номера строки в валидном id.</summary>
         public int Count => (int)_count;

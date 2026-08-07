@@ -307,6 +307,9 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __blob.IsCreated;");
             text.AppendLine();
+            text.AppendLine("        /// <summary>Номер пересборки файла, из которого прочитан этот буфер. Держишь производное от базы — сверяй его со своей отметкой.</summary>");
+            text.AppendLine("        public int Version => __blob.Version;");
+            text.AppendLine();
             text.AppendLine("        public int Length => __blob.Length;");
             text.AppendLine();
             text.AppendLine("        /// <summary>Есть ли в файле отладочный контур. В релизном плеере его не бывает.</summary>");
@@ -453,6 +456,9 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __router.IsCreated;");
             text.AppendLine();
+            text.AppendLine("        /// <summary>Номер пересборки файла, из которого прочитан этот буфер. Держишь производное от роутера — сверяй его со своей отметкой.</summary>");
+            text.AppendLine("        public int Version => __router.Version;");
+            text.AppendLine();
             text.AppendLine("        /// <summary>Строк, то есть нод. Он же потолок номера строки в валидном id.</summary>");
             text.AppendLine("        public int Count => __router.Count;");
             text.AppendLine();
@@ -597,6 +603,9 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __hashes.IsCreated;");
             text.AppendLine();
+            text.AppendLine("        /// <summary>Номер пересборки файла, из которого прочитан этот буфер. Держишь производное от таблицы — сверяй его со своей отметкой.</summary>");
+            text.AppendLine("        public int Version => __hashes.Version;");
+            text.AppendLine();
             text.AppendLine("        /// <summary>Строк, то есть нод роутера, включая дырки от удалённых.</summary>");
             text.AppendLine("        public int Count => __hashes.Count;");
             text.AppendLine();
@@ -717,6 +726,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    {");
             text.AppendLine("        global::Blobcheg.BlobchegLoad __load;");
             text.AppendLine("        global::Unity.Entities.EntityQuery __query;");
+            text.AppendLine("        global::Unity.Entities.EntityQuery __gate;");
             text.AppendLine("        bool __created;");
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("        int __seen;");
@@ -730,6 +740,7 @@ namespace Blobcheg.CodeGen
             // Запрос на запись, а не на чтение: перезаливка кладёт им же новый блоб в синглтон.
             text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadWrite<")
                 .Append(typeName).AppendLine(">());");
+            text.AppendLine("            __gate = global::Blobcheg.BlobchegBoot.Gate(ref state);");
             text.AppendLine("        }");
             text.AppendLine();
             text.AppendLine("        public void OnUpdate(ref global::Unity.Entities.SystemState state)");
@@ -786,6 +797,10 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("            state.EntityManager.CreateSingleton(__value);");
             text.AppendLine("            __created = true;");
+            text.AppendLine();
+            text.AppendLine("            // Гейт зажигается и на первом подъёме, не только на перезаливке: для того, у кого");
+            text.AppendLine("            // от базы есть производное, приезд базы и её пересборка — одно и то же событие.");
+            text.AppendLine("            global::Blobcheg.BlobchegBoot.Updated(ref state, __gate);");
             text.AppendLine("#if UNITY_EDITOR");
             text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
                 .AppendLine(".FileName);");
@@ -870,6 +885,9 @@ namespace Blobcheg.CodeGen
             if (sweep)
                 text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
 
+            text.AppendLine();
+            text.AppendLine("            // Последней строкой: гейт значит «пакет с этим файлом закончил», а не «начал».");
+            text.AppendLine("            global::Blobcheg.BlobchegBoot.Updated(ref state, __gate);");
             text.AppendLine("        }");
             text.AppendLine("#endif");
             text.AppendLine();
