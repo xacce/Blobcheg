@@ -25,6 +25,25 @@ namespace Blobcheg
     }
 
     /// <summary>
+    /// Приписка к «ссылка пуста», только для редактора. Пустое поле там, где в файле носителя
+    /// ссылка на месте, — это не про данные: Unity импортировала носителя раньше, чем
+    /// скомпилировала его скрипт, типа не нашла и выбросила значения всех его полей. Так выходит,
+    /// когда мерж приносит новый authoring-скрипт под живым редактором. Без приписки сообщение
+    /// обвиняет данные, и разбор уходит сверять якоря в YAML, с которыми всё в порядке.
+    /// </summary>
+    static class BlobchegRefHint
+    {
+#if UNITY_EDITOR
+        public const string Empty =
+            ". Если в файле носителя ссылка на месте — носителя импортировали без его скрипта " +
+            "(мерж принёс новый .cs под живым редактором), и импорт выбросил значения его полей: " +
+            "нужен Reimport носителя, а вернее перезапуск редактора";
+#else
+        public const string Empty = "";
+#endif
+    }
+
+    /// <summary>
     /// Тип поля у потребителя: <c>public BlobchegRef&lt;GunData&gt; gun;</c>. Присвоить
     /// <c>BlobchegRef&lt;ShieldData&gt;</c> не даст компилятор, положить в пикере чужой ассет — драйвер,
     /// а несовпадение на бейке — ошибка, а не тихий ноль.
@@ -48,7 +67,8 @@ namespace Blobcheg
             {
                 if (asset == null)
                     throw new InvalidOperationException(
-                        $"Blobcheg: пустой BlobchegRef<{typeof(T).Name}> — ассет записи не назначен");
+                        $"Blobcheg: пустой BlobchegRef<{typeof(T).Name}> — ассет записи не назначен"
+                        + BlobchegRefHint.Empty);
 
                 var expected = typeof(T).FullName;
                 if (!string.Equals(asset.recordType, expected, StringComparison.Ordinal))
@@ -87,7 +107,9 @@ namespace Blobcheg
             get
             {
                 if (asset == null)
-                    throw new InvalidOperationException("Blobcheg: пустой BlobchegRawRef — ассет записи не назначен");
+                    throw new InvalidOperationException(
+                        "Blobcheg: пустой BlobchegRawRef — ассет записи не назначен"
+                        + BlobchegRefHint.Empty);
 
                 return asset.offset;
             }
