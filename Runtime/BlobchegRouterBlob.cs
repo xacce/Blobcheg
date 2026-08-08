@@ -66,9 +66,20 @@ namespace Blobcheg
     public unsafe struct BlobchegRouterBlob : IDisposable
     {
         BlobchegBuffer _buffer;
+
+        // Три указателя внутрь того же иммутабельного буфера. Метка стоит здесь, а не у читателя:
+        // роутер попадает в джобу полем, и без неё safety-система рубит шедул за сырой указатель —
+        // причём именем поля пакета, до которого потребителю нет дела. Безопасно by construction:
+        // буфер живёт всю сессию и только читается.
+        [NativeDisableUnsafePtrRestriction]
         byte* _masks;
+
+        [NativeDisableUnsafePtrRestriction]
         uint* _rowStart;
+
+        [NativeDisableUnsafePtrRestriction]
         uint* _offsets;
+
         uint _count;
         uint _maskWidth;
         uint _debugOffset;
