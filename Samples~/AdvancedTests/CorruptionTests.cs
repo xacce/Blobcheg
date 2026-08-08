@@ -39,6 +39,27 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
+        /// <summary>
+        /// Отказ, у которого есть срок годности. Расхождение с длиной из header'а — единственная
+        /// порча, которая на живом диске значит не «сломано», а «ещё пишется»: длину читатель узнаёт
+        /// до тела, и между этими двумя чтениями пересборка успевает подменить файл. Тип отказа
+        /// обязан это различать — на нём стоит вся разница между варнингом и красным в редакторе.
+        /// </summary>
+        static void RefusedAsBaseTransiently(byte[] file, string because)
+        {
+            var buffer = BlobchegBuffer.From(file, Allocator.Persistent);
+            try
+            {
+                Assert.Throws<BlobchegTransientException>(() => { _ = new AdvCombatDb(buffer); }, because);
+            }
+            finally
+            {
+                // Освобождает ровно один раз в обоих исходах: конструктор, который бросил, владения
+                // не забрал, а конструктор, который прошёл, сидит на этой же памяти.
+                buffer.Dispose();
+            }
+        }
+
         static void RefusedAsRouter(byte[] file, string because)
         {
             var buffer = BlobchegBuffer.From(file, Allocator.Persistent);
@@ -61,7 +82,7 @@ namespace Blobcheg.AdvancedTests
             var cut = new byte[file.Length - 1];
             Array.Copy(file, cut, cut.Length);
 
-            RefusedAsBase(cut, "в header'е записана длина файла — обрезание видно сразу");
+            RefusedAsBaseTransiently(cut, "в header'е записана длина файла — обрезание видно сразу");
         }
 
         [Test]
@@ -73,7 +94,7 @@ namespace Blobcheg.AdvancedTests
             var grown = new byte[file.Length + 16];
             Array.Copy(file, grown, file.Length);
 
-            RefusedAsBase(grown, "дописанный хвост — тоже расхождение с длиной из header'а");
+            RefusedAsBaseTransiently(grown, "дописанный хвост — тоже расхождение с длиной из header'а");
         }
 
         [Test]

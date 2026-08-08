@@ -180,8 +180,11 @@ namespace Blobcheg
                     $"(в header'е {NameHash:X16}, у '{what}' {wantedName:X16}). Файлы переставлены местами " +
                     "или пересобраны под другими именами");
 
+            // Переходный: длину читатель узнаёт до тела, и между этими двумя чтениями пересборка
+            // успевает подменить файл — header уже от нового, байты ещё от прежнего. Через кадр то
+            // же чтение проходит, см. BlobchegTransientException.
             if (FileLength != (uint)actualLength)
-                throw new InvalidOperationException(
+                throw new BlobchegTransientException(
                     $"Blobcheg: '{what}' — обрезан или дописан: в header'е {FileLength} Б, прочитано {actualLength} Б");
 
             if (DebugOffset != 0 && (DebugOffset < BlobchegFormat.HeaderSize || DebugOffset >= FileLength))

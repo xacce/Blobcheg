@@ -210,7 +210,7 @@ namespace Blobcheg.AdvancedTests
             var load = BlobchegTransport.Default.Read(AdvCombatDb.FileName, Allocator.Persistent);
             try
             {
-                Assert.Throws<InvalidOperationException>(() => load.Complete(),
+                Assert.Throws<BlobchegTransientException>(() => load.Complete(),
                     "зато подъём обязан упасть явно — иначе рассинхрон манифеста и файла ушёл бы в рантайм");
             }
             finally

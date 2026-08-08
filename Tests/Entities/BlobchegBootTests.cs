@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Blobcheg.Authoring;
 using NUnit.Framework;
@@ -139,6 +141,194 @@ namespace Blobcheg.Tests
             {
                 File.WriteAllBytes(path, sane);
                 world.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Путь до файла базы теста. Сносить и портить его можно: сохранённые байты возвращаются в
+        /// finally, а пересборка всё равно соберёт его заново.
+        /// </summary>
+        static string PathOfDatabase()
+            => Path.Combine(Application.streamingAssetsPath, BlobchegNaming.DefaultFolder, TestBootDb.FileName);
+
+        /// <summary>
+        /// Собирает лог за время прогона. Варнинг здесь — предмет проверки, а <c>LogAssert</c> на
+        /// варнингах доказывает только «пришёл хотя бы раз»; нам нужно ещё и «ровно раз».
+        /// </summary>
+        sealed class LogTrap : System.IDisposable
+        {
+            readonly List<(LogType type, string text)> _messages = new List<(LogType, string)>();
+
+            public LogTrap() => Application.logMessageReceived += Take;
+
+            void Take(string condition, string trace, LogType type) => _messages.Add((type, condition));
+
+            public int Notifications => _messages.Count(m =>
+                m.type == LogType.Warning && m.text.Contains("нотификация, а не проблема"));
+
+            public IEnumerable<string> Loud => _messages
+                .Where(m => m.type == LogType.Error || m.type == LogType.Exception || m.type == LogType.Assert)
+                .Select(m => m.text);
+
+            public void Dispose() => Application.logMessageReceived -= Take;
+        }
+
+        static void Spin(SystemHandle system, World world, int ms, System.Func<bool> until = null)
+        {
+            var clock = Stopwatch.StartNew();
+            while (clock.ElapsedMilliseconds < ms)
+            {
+                system.Update(world.Unmanaged);
+                if (until != null && until())
+                    return;
+
+                System.Threading.Thread.Sleep(1);
+            }
+        }
+
+        /// <summary>
+        /// Файла базы ещё нет — так выглядит домен, приехавший с пуллом раньше своей пересборки.
+        /// Красный error здесь врёт: чинить нечего, и подъём поедет сам.
+        /// </summary>
+        [Test]
+        public void Пропавший_файл_отбивается_варнингом_и_чинится_пересборкой()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var path = PathOfDatabase();
+            var sane = File.ReadAllBytes(path);
+
+            var world = new World("blobcheg-boot-missing-tests");
+            using (var log = new LogTrap())
+            {
+                try
+                {
+                    File.Delete(path);
+
+                    var system = world.CreateSystem<TestBootDbBootSystem>();
+                    var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
+
+                    Spin(system, world, 1000);
+
+                    Assert.That(log.Loud, Is.Empty, "переходный момент — не ошибка, красного в логе быть не должно");
+                    Assert.That(log.Notifications, Is.EqualTo(1),
+                        "варнинг обязан быть, и ровно один: кадры идут, а сказать тут нечего дважды");
+                    Assert.That(query.CalculateEntityCount(), Is.Zero, "поднимать пока нечего");
+
+                    // Пересборка написала файл и подняла его номер — дальше система обязана сама.
+                    File.WriteAllBytes(path, sane);
+                    BlobchegFileVersions.Bump(TestBootDb.FileName);
+
+                    Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
+
+                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
+                        "написанный файл обязан доехать до синглтона без перезагрузки домена");
+                }
+                finally
+                {
+                    File.WriteAllBytes(path, sane);
+                    world.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Файл пойман посреди перезаписи: длину читатель узнал от нового header'а, а байты достались
+        /// от прежнего. Через кадр то же чтение проходит — значит и это нотификация.
+        /// </summary>
+        [Test]
+        public void Файл_посреди_перезаписи_отбивается_варнингом_и_чинится_пересборкой()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var path = PathOfDatabase();
+            var sane = File.ReadAllBytes(path);
+
+            var world = new World("blobcheg-boot-torn-tests");
+            using (var log = new LogTrap())
+            {
+                try
+                {
+                    File.WriteAllBytes(path, sane.Concat(new byte[] { 0 }).ToArray());
+
+                    var system = world.CreateSystem<TestBootDbBootSystem>();
+                    var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
+
+                    Spin(system, world, 1000);
+
+                    Assert.That(log.Loud, Is.Empty, "недописанный файл — это момент, а не поломка");
+                    Assert.That(log.Notifications, Is.EqualTo(1));
+                    Assert.That(query.CalculateEntityCount(), Is.Zero);
+
+                    File.WriteAllBytes(path, sane);
+                    BlobchegFileVersions.Bump(TestBootDb.FileName);
+
+                    Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
+
+                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1));
+                }
+                finally
+                {
+                    File.WriteAllBytes(path, sane);
+                    world.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// То же под живым миром: база уже поднята, а перезаливка попала в середину перезаписи.
+        /// Номер файла при этом обязан остаться неувиденным — иначе перечитывать станет нечего до
+        /// следующей пересборки, и мир молча останется на прежних байтах.
+        /// </summary>
+        [Test]
+        public void Перезаливка_на_недописанном_файле_повторяет_попытку_сама()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var path = PathOfDatabase();
+            var sane = File.ReadAllBytes(path);
+            var key = BlobchegNaming.NameHash(TestBootDb.DomainName);
+
+            var world = new World("blobcheg-boot-torn-reraise-tests");
+            using (var log = new LogTrap())
+            {
+                try
+                {
+                    var system = world.CreateSystem<TestBootDbBootSystem>();
+                    var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
+
+                    Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
+                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "база не поднялась — дальше проверять нечего");
+                    Assert.That(BlobchegBases.TryGet(key, out var before, out _), Is.True);
+
+                    // Пересборка «переписывает» файл: номер поднят, а байты на диске недописаны.
+                    File.WriteAllBytes(path, sane.Concat(new byte[] { 0 }).ToArray());
+                    BlobchegFileVersions.Bump(TestBootDb.FileName);
+
+                    Spin(system, world, 1000);
+
+                    Assert.That(log.Loud, Is.Empty);
+                    Assert.That(log.Notifications, Is.EqualTo(1), "один варнинг на полосу, а не на кадр");
+                    Assert.That(BlobchegBases.TryGet(key, out var held, out _), Is.True);
+                    Assert.That((ulong)held, Is.EqualTo((ulong)before), "мир едет на прежней базе, пока новая недописана");
+
+                    // Файл дописан, а номер БОЛЬШЕ НЕ ПОДНИМАЕТСЯ: та пересборка уже случилась,
+                    // и повторить попытку — забота самой системы.
+                    File.WriteAllBytes(path, sane);
+
+                    Spin(system, world, 5000,
+                        () => BlobchegBases.TryGet(key, out var now, out _) && (ulong)now != (ulong)before);
+
+                    Assert.That(BlobchegBases.TryGet(key, out var after, out _), Is.True);
+                    Assert.That((ulong)after, Is.Not.EqualTo((ulong)before),
+                        "дописанный файл обязан доехать до мира сам — иначе он остался бы на вчерашних байтах молча");
+                    Assert.That(query.GetSingleton<TestBootDb>().IsCreated, Is.True);
+                }
+                finally
+                {
+                    File.WriteAllBytes(path, sane);
+                    world.Dispose();
+                }
             }
         }
 

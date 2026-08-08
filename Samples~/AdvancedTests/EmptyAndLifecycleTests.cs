@@ -92,7 +92,9 @@ namespace Blobcheg.AdvancedTests
             var load = BlobchegTransport.Default.Read(AdvCombatDb.FileName, Allocator.Persistent);
             try
             {
-                Assert.Throws<InvalidOperationException>(() => load.Complete(),
+                // Переходный тип, а не обычный: на живом проекте «файла нет» значит ещё и «пока
+                // нет» — домен приехал с пуллом раньше, чем пересборка написала его файл.
+                Assert.Throws<BlobchegTransientException>(() => load.Complete(),
                     "файла нет — это ошибка подъёма, а не пустая база");
             }
             finally

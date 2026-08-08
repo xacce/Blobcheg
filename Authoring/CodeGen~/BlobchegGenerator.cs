@@ -701,6 +701,10 @@ namespace Blobcheg.CodeGen
         /// всегда. Из-за этого же она в редакторе не гаснет после подъёма, а сторожит номер своего
         /// файла: пересборка переписала базу — перечитать и переселить слоты. В плеере всё как было,
         /// один подъём и выключение.
+        ///
+        /// Переходный отказ (<c>BlobchegTransientException</c>: файла ещё нет, чтение поймало его
+        /// посреди перезаписи) в редакторе не исключение, а варнинг: чинить нечего, пересборка
+        /// допишет файл, и подъём поедет заново сам. В плеере он уезжает наверх, как любой другой.
         /// </summary>
         static void EmitBootSystem(StringBuilder text, string typeName, string access, bool autoCreate,
             bool sweep = true)
@@ -721,6 +725,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("        int __seen;");
             text.AppendLine("        bool __broken;");
+            text.AppendLine("        bool __quiet;");
             text.AppendLine("#endif");
             text.AppendLine();
             text.AppendLine("        public void OnCreate(ref global::Unity.Entities.SystemState state)");
@@ -730,6 +735,13 @@ namespace Blobcheg.CodeGen
             // Запрос на запись, а не на чтение: перезаливка кладёт им же новый блоб в синглтон.
             text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadWrite<")
                 .Append(typeName).AppendLine(">());");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("            // Номер файла берётся в момент СТАРТА чтения, а не в конце: пересборка, попавшая");
+            text.AppendLine("            // в середину чтения, и есть та, из-за которой оно сорвалось, — и её номер обязан");
+            text.AppendLine("            // остаться неувиденным, иначе перечитывать станет нечего и мир замрёт на прежнем.");
+            text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
+                .AppendLine(".FileName);");
+            text.AppendLine("#endif");
             text.AppendLine("        }");
             text.AppendLine();
             text.AppendLine("        public void OnUpdate(ref global::Unity.Entities.SystemState state)");
@@ -760,6 +772,14 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            {");
             text.AppendLine("                __ready = __load.Poll();");
             text.AppendLine("            }");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("            catch (global::Blobcheg.BlobchegTransientException __transient)");
+            text.AppendLine("            {");
+            text.AppendLine("                __Broke(ref state);");
+            text.AppendLine("                __Notify(__transient);");
+            text.AppendLine("                return;");
+            text.AppendLine("            }");
+            text.AppendLine("#endif");
             text.AppendLine("            catch");
             text.AppendLine("            {");
             text.AppendLine("                __Broke(ref state);");
@@ -777,6 +797,15 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            {");
             text.Append("                __value = new ").Append(typeName).AppendLine("(__buffer);");
             text.AppendLine("            }");
+            text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("            catch (global::Blobcheg.BlobchegTransientException __transient)");
+            text.AppendLine("            {");
+            text.AppendLine("                __buffer.Dispose();");
+            text.AppendLine("                __Broke(ref state);");
+            text.AppendLine("                __Notify(__transient);");
+            text.AppendLine("                return;");
+            text.AppendLine("            }");
+            text.AppendLine("#endif");
             text.AppendLine("            catch");
             text.AppendLine("            {");
             text.AppendLine("                __buffer.Dispose();");
@@ -787,8 +816,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            state.EntityManager.CreateSingleton(__value);");
             text.AppendLine("            __created = true;");
             text.AppendLine("#if UNITY_EDITOR");
-            text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
-                .AppendLine(".FileName);");
+            text.AppendLine("            __quiet = false;");
             if (sweep)
             {
                 text.AppendLine();
@@ -812,9 +840,9 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        {");
             text.AppendLine("            __load.Dispose();");
             text.AppendLine("#if UNITY_EDITOR");
+            text.AppendLine("            // Номер файла здесь не трогается: он взят на старте чтения, и пересборка, которая");
+            text.AppendLine("            // это чтение и сорвала, обязана остаться неувиденной — иначе чинить будет нечем.");
             text.AppendLine("            __broken = true;");
-            text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
-                .AppendLine(".FileName);");
             text.AppendLine("#else");
             text.AppendLine("            state.Enabled = false;");
             text.AppendLine("#endif");
@@ -828,6 +856,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        /// </summary>");
             text.AppendLine("        void __Reraise(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");
+            text.AppendLine("            var __was = __seen;");
             text.Append("            if (!global::Blobcheg.BlobchegFileVersions.Changed(").Append(typeName)
                 .AppendLine(".FileName, ref __seen))");
             text.AppendLine("                return;");
@@ -838,6 +867,12 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            {");
             text.AppendLine("                // В редакторе ждать файл можно: это локальный диск, а не StreamingAssets в APK.");
             text.AppendLine("                reload.Complete();");
+            text.AppendLine("            }");
+            text.AppendLine("            catch (global::Blobcheg.BlobchegTransientException __transient)");
+            text.AppendLine("            {");
+            text.AppendLine("                reload.Dispose();");
+            text.AppendLine("                __Retry(__transient, __was);");
+            text.AppendLine("                return;");
             text.AppendLine("            }");
             text.AppendLine("            catch");
             text.AppendLine("            {");
@@ -850,6 +885,12 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            try");
             text.AppendLine("            {");
             text.Append("                fresh = new ").Append(typeName).AppendLine("(buffer);");
+            text.AppendLine("            }");
+            text.AppendLine("            catch (global::Blobcheg.BlobchegTransientException __transient)");
+            text.AppendLine("            {");
+            text.AppendLine("                buffer.Dispose();");
+            text.AppendLine("                __Retry(__transient, __was);");
+            text.AppendLine("                return;");
             text.AppendLine("            }");
             text.AppendLine("            catch");
             text.AppendLine("            {");
@@ -866,10 +907,38 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            stale.Dispose();");
             text.AppendLine();
             text.AppendLine("            __query.SetSingleton(fresh);");
+            text.AppendLine("            __quiet = false;");
 
             if (sweep)
                 text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
 
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>");
+            text.AppendLine("        /// Перезаливка поймала переходный момент. Номер файла возвращается назад — иначе");
+            text.AppendLine("        /// перечитывать было бы нечего до следующей пересборки, и мир молча остался бы на");
+            text.AppendLine("        /// прежней базе. Варнинг при этом один на полосу: файл дописывается кадр-другой, и");
+            text.AppendLine("        /// пересказывать это каждым кадром — тот же поток, от которого спасает «отбить раз».");
+            text.AppendLine("        /// </summary>");
+            text.AppendLine("        void __Retry(global::Blobcheg.BlobchegTransientException __transient, int __was)");
+            text.AppendLine("        {");
+            text.AppendLine("            __seen = __was;");
+            text.AppendLine("            if (__quiet)");
+            text.AppendLine("                return;");
+            text.AppendLine();
+            text.AppendLine("            __quiet = true;");
+            text.AppendLine("            __Notify(__transient);");
+            text.AppendLine("        }");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>");
+            text.AppendLine("        /// Переходный отказ в редакторе — нотификация, а не проблема: чинить нечего, файл");
+            text.AppendLine("        /// допишет пересборка. Красный error здесь врёт про поломку, которой нет.");
+            text.AppendLine("        /// </summary>");
+            text.AppendLine("        static void __Notify(global::Blobcheg.BlobchegTransientException __transient)");
+            text.AppendLine("        {");
+            text.AppendLine("            global::UnityEngine.Debug.LogWarning(__transient.Message +");
+            text.AppendLine("                \" — это нотификация, а не проблема: в редакторе момент переходный, база\" +");
+            text.AppendLine("                \" поднимется сама, как только пересборка перепишет файл.\");");
             text.AppendLine("        }");
             text.AppendLine("#endif");
             text.AppendLine();

@@ -100,13 +100,31 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Обрезанный_файл_ловится_на_подъёме()
+        public void Обрезанный_файл_ловится_на_подъёме_и_отказ_переходный()
         {
             var built = Build();
             var cut = new byte[built.file.Length - BlobchegFormat.RecordAlign];
             Buffer.BlockCopy(built.file, 0, cut, 0, cut.Length);
 
             var buffer = BlobchegBuffer.From(cut, Allocator.Temp);
+
+            // Так же выглядит файл, пойманный посреди перезаписи: длину читатель узнал от нового
+            // header'а, а байты достались от прежнего. Причина во времени, а не в байтах — отсюда
+            // и отдельный тип, по которому редактор отличает нотификацию от поломки.
+            Assert.Throws<BlobchegTransientException>(() => new BlobchegBlob(buffer, "Domain"));
+            buffer.Dispose();
+        }
+
+        [Test]
+        public void Испорченные_байты_переходными_не_считаются()
+        {
+            var built = Build();
+            built.file[built.gun] ^= 0xFF;
+
+            var buffer = BlobchegBuffer.From(built.file, Allocator.Temp);
+
+            // Граница: длина сошлась, значит файл дописан до конца, и целостность не сойдётся уже
+            // никогда. Ждать тут нечего — это ошибка, а не момент.
             Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "Domain"));
             buffer.Dispose();
         }
@@ -254,11 +272,14 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Транспорт_на_отсутствующем_файле_бросает()
+        public void Транспорт_на_отсутствующем_файле_бросает_переходное()
         {
             var transport = new BlobchegFileTransport(_dir);
             var load = transport.Read(BlobchegNaming.FileName("НетТакого"), Allocator.Persistent);
-            Assert.Throws<InvalidOperationException>(() => load.Complete());
+
+            // Файла нет — но в редакторе это ещё и «пока нет»: домен приехал с пуллом раньше, чем
+            // пересборка написала его файл. Тип отказа обязан это различать.
+            Assert.Throws<BlobchegTransientException>(() => load.Complete());
             load.Dispose();
         }
     }

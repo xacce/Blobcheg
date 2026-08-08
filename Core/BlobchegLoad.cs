@@ -118,8 +118,10 @@ namespace Blobcheg
 
         void StartBody()
         {
+            // Переходный: в редакторе так выглядит домен, приехавший с пуллом раньше своей
+            // пересборки. Файл появится, и подъём поедет заново — см. BlobchegTransientException.
             if (Info->FileState != FileState.Exists)
-                throw new InvalidOperationException($"Blobcheg: файла базы '{Path}' нет");
+                throw new BlobchegTransientException($"Blobcheg: файла базы '{Path}' нет");
 
             var size = Info->FileSize;
             if (size < BlobchegFormat.HeaderSize)
