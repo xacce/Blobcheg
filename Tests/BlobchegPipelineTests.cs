@@ -402,6 +402,32 @@ namespace Blobcheg.Tests
             StringAssert.Contains("End", thrown.Message);
         }
 
+        /// <summary>
+        /// То, ради чего в меню есть команда пересборки: файлы теряются мимо ассетов
+        /// (<c>git clean -X</c>, свежая ворктри), грязных нод при этом нет, и сама пересборка не
+        /// случится ни от импорта, ни от PlayMode — их просто нечем позвать.
+        /// </summary>
+        [Test]
+        public void Снесённый_файл_возвращает_пересборка_руками()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
+            var were = File.ReadAllBytes(file);
+            var seen = BlobchegFileVersions.Of(TestCombatDb.FileName);
+
+            File.Delete(file);
+
+            var report = BlobchegBuild.RebuildFull();
+
+            Assert.That(File.Exists(file), Is.True, "команда в меню держится ровно на этом");
+            Assert.That(File.ReadAllBytes(file), Is.EqualTo(were),
+                "байты те же: раскладка детерминирована, потеря файла адресов не двигает");
+            Assert.That(report.ChangedFiles, Is.GreaterThanOrEqualTo(1));
+            Assert.That(BlobchegFileVersions.Of(TestCombatDb.FileName), Is.GreaterThan(seen),
+                "живой мир узнаёт о возвращённом файле по номеру, и никак иначе");
+        }
+
         [Test]
         public void Манифест_домена_держит_тот_же_хеш_что_файл()
         {
