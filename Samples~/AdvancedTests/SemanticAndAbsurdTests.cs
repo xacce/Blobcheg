@@ -9,16 +9,16 @@ using UnityEngine.TestTools;
 namespace Blobcheg.AdvancedTests
 {
     /// <summary>
-    /// Употребление не по назначению и прямой абсурд: два фасада над одним файлом, записи, ссылающиеся
-    /// друг на друга по кругу, нода-ссылка на саму себя, собранный блоб, подсунутый обратно как
-    /// исходник, и запись с сырым указателем внутри.
+    /// Use against the intended purpose and outright absurdity: two facades over one file, records
+    /// referencing each other in a circle, a node referencing itself, an assembled blob slipped back in
+    /// as a source, and a record with a raw pointer inside.
     ///
-    /// Абсурдные сценарии тут не ради смеха: они вскрывают то, что подразумевалось молча.
+    /// The absurd scenarios here are not for laughs: they uncover what was assumed silently.
     /// </summary>
     public sealed class SemanticAndAbsurdTests : AdvancedFixture
     {
         [Test]
-        public void Два_фасада_над_одним_доменом_читают_одно_и_то_же()
+        public void Two_facades_over_one_domain_read_the_same_thing()
         {
             var node = Node<AdvLooseNodeSo>("Loose");
             node.a = 111;
@@ -27,7 +27,7 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             Assert.That(AdvLooseTwinDb.FileName, Is.EqualTo(AdvLooseDb.FileName),
-                "две базы над одним доменом — это один и тот же файл");
+                "two bases over one domain are one and the same file");
 
             var offset = OffsetOf(node, "IAdvLoose");
             var first = Loose();
@@ -36,7 +36,7 @@ namespace Blobcheg.AdvancedTests
             {
                 Assert.That(first.Read<AdvLooseBlock>(offset).A, Is.EqualTo(111));
                 Assert.That(second.Read<AdvLooseBlock>(offset).A, Is.EqualTo(111),
-                    "либо второй фасад запрещён, либо он обязан читать ровно то же");
+                    "either the second facade is forbidden or it is obliged to read exactly the same");
                 Assert.That(second.Read<AdvLooseBlock>(offset).B, Is.EqualTo(222));
             }
             finally
@@ -47,21 +47,21 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Домен_вне_роутера_живёт_без_id()
+        public void A_domain_outside_a_router_lives_without_ids()
         {
             var loose = Node<AdvLooseNodeSo>("Loose");
             var combo = Node<AdvComboNodeSo>("Combo");
             Rebuild();
 
             Assert.That(BlobchegBuild.IdsOf(loose).Count(), Is.Zero,
-                "база не вступала ни в один роутер — id у её нод не бывает вовсе");
-            Assert.That(BlobchegBuild.RefsOf(loose).Count(), Is.EqualTo(1), "а оффсет есть — он единственный адрес");
+                "the base joined no router — its nodes never have an id at all");
+            Assert.That(BlobchegBuild.RefsOf(loose).Count(), Is.EqualTo(1), "while the offset is there — it is the only address");
 
-            Assert.That(BlobchegBuild.IdsOf(combo).Count(), Is.EqualTo(1), "нода роутера носит ровно один id");
+            Assert.That(BlobchegBuild.IdsOf(combo).Count(), Is.EqualTo(1), "a node of a router carries exactly one id");
         }
 
         [Test]
-        public void Два_роутера_рядом_не_путают_биты()
+        public void Two_routers_side_by_side_do_not_confuse_the_bits()
         {
             var combo = Node<AdvComboNodeSo>("Combo");
             var other = Node<AdvOtherNodeSo>("Other");
@@ -74,7 +74,7 @@ namespace Blobcheg.AdvancedTests
             var otherDb = Other();
             try
             {
-                Assert.That(mainRouter.Count, Is.EqualTo(1), "в главный роутер вошла только своя нода");
+                Assert.That(mainRouter.Count, Is.EqualTo(1), "only its own node joined the main router");
                 Assert.That(otherRouter.Count, Is.EqualTo(1));
 
                 var mine = mainRouter.Get(IdOf(combo, AdvRouter.RouterName));
@@ -94,15 +94,15 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Собранный_блоб_подсунутый_как_исходник_не_ломает_пересборку()
+        public void An_assembled_blob_slipped_in_as_a_source_does_not_break_the_rebuild()
         {
             Node<AdvComboNodeSo>("Combo");
             Rebuild();
 
-            // Абсурд: берём выход пайплайна и кладём его на вход, притворившись ассетом.
-            // Импорт двоичного мусора под видом .asset — законный повод для ошибки в консоли: она
-            // тут ожидаема, и глушится она в самом тесте, потому что фреймворк сбрасывает флаг
-            // после SetUp.
+            // Absurd: we take the output of the pipeline and put it on the input, pretending it is an
+            // asset. Importing binary garbage disguised as an .asset is a lawful reason for a console
+            // error: it is expected here, and it is silenced in the test itself because the framework
+            // resets the flag after SetUp.
             LogAssert.ignoreFailingMessages = true;
 
             var built = Bytes("IAdvCombat");
@@ -110,12 +110,12 @@ namespace Blobcheg.AdvancedTests
             AssetDatabase.Refresh();
 
             Assert.DoesNotThrow(() => Rebuild(),
-                "чужой .asset в проекте не имеет права ни ломать пересборку, ни быть принятым за ноду");
+                "a foreign .asset in the project has no right either to break the rebuild or to be taken for a node");
 
             var db = Combat();
             try
             {
-                Assert.That(db.IsCreated, Is.True, "и база после этого обязана остаться рабочей");
+                Assert.That(db.IsCreated, Is.True, "and the base is obliged to stay working afterwards");
             }
             finally
             {
@@ -124,7 +124,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Записи_ссылаются_друг_на_друга_по_кругу()
+        public void Records_reference_each_other_in_a_circle()
         {
             var a = Node<AdvComboNodeSo>("CycleA");
             var b = Node<AdvComboNodeSo>("CycleB");
@@ -142,17 +142,17 @@ namespace Blobcheg.AdvancedTests
             var cold = Cold();
             try
             {
-                // Идём по кругу вручную, с капом: пакет цикл не запрещает и запрещать не обязан,
-                // но пройти по нему должно быть можно, и он обязан замкнуться.
+                // We walk the circle by hand, with a cap: the package neither forbids a cycle nor is
+                // obliged to, but it must be possible to walk it, and it is obliged to close.
                 var at = idA;
                 for (var hop = 0; hop < 4; hop++)
                 {
                     var link = cold.Read<AdvColdInfo>(router.GetCold(at)).LinkId;
-                    Assert.That(link, Is.Not.EqualTo(BlobchegId.NoneValue), $"шаг {hop} потерял ссылку");
+                    Assert.That(link, Is.Not.EqualTo(BlobchegId.NoneValue), $"step {hop} lost the reference");
                     at = new BlobchegId(link);
                 }
 
-                Assert.That(at, Is.EqualTo(idA), "чётное число шагов по кругу из двух обязано вернуть на старт");
+                Assert.That(at, Is.EqualTo(idA), "an even number of steps around a circle of two is obliged to return to the start");
                 Assert.That(cold.Read<AdvColdInfo>(router.GetCold(idA)).LinkId, Is.EqualTo(idB.Value));
                 Assert.That(cold.Read<AdvColdInfo>(router.GetCold(idB)).LinkId, Is.EqualTo(idA.Value));
             }
@@ -164,7 +164,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Нода_ссылающаяся_сама_на_себя_собирается()
+        public void A_node_referencing_itself_gets_assembled()
         {
             var node = Node<AdvComboNodeSo>("Ouroboros");
             node.link = node;
@@ -181,7 +181,7 @@ namespace Blobcheg.AdvancedTests
                 ref readonly var record = ref cold.Read<AdvColdInfo>(router.GetCold(id));
                 Assert.That(record.SelfId, Is.EqualTo(id.Value));
                 Assert.That(record.LinkId, Is.EqualTo(id.Value),
-                    "ссылка на саму себя — это тот же id, а не рекурсия и не отказ");
+                    "a reference to itself is the same id and neither recursion nor a refusal");
             }
             finally
             {
@@ -191,7 +191,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Свой_id_в_записи_остаётся_верным_после_перестановки()
+        public void An_own_id_in_a_record_stays_correct_after_a_reshuffle()
         {
             var created = new[]
             {
@@ -214,7 +214,7 @@ namespace Blobcheg.AdvancedTests
                 {
                     var id = IdOf(node, AdvRouter.RouterName);
                     Assert.That(cold.Read<AdvColdInfo>(router.GetCold(id)).SelfId, Is.EqualTo(id.Value),
-                        $"нода '{node.name}' положила в запись свой id — после перестановки он обязан сойтись");
+                        $"node '{node.name}' put its own id into the record — after the reshuffle it is obliged to agree");
                 }
             }
             finally
@@ -225,39 +225,39 @@ namespace Blobcheg.AdvancedTests
         }
 
         /// <summary>
-        /// Констрейнт <c>where T : unmanaged</c> отвечает только за «нет managed-ссылок»: структуру
-        /// с полем <c>byte*</c> или <c>IntPtr</c> он пропускает, потому что она формально unmanaged.
-        /// Отбивает её отдельная проверка пайплайна — и отбивать обязан именно пайплайн: адрес
-        /// переживает запись, но не перезапуск процесса, и при чтении отдаёт мусор, неотличимый от
-        /// значения.
+        /// The <c>where T : unmanaged</c> constraint only answers for "there are no managed references":
+        /// it lets a struct with a <c>byte*</c> or <c>IntPtr</c> field through because that struct is
+        /// formally unmanaged. It is rejected by a separate check in the pipeline — and it is the
+        /// pipeline that is obliged to reject it: an address outlives the write but not a restart of the
+        /// process, and on a read it hands out garbage indistinguishable from a value.
         /// </summary>
         [Test]
-        public void Запись_с_сырым_указателем_отбивается()
+        public void A_record_with_a_raw_pointer_is_rejected()
         {
             var node = Node<AdvPointerNodeSo>("Pointer");
 
             var thrown = Assert.Throws<InvalidOperationException>(() => Rebuild(),
-                "указатель в файле — это не данные; такую запись обязан отбить пайплайн, а не потребитель");
+                "a pointer in a file is not data; such a record is obliged to be rejected by the pipeline and not by the consumer");
             StringAssert.Contains("Ptr", thrown.Message,
-                "и назвать поле: искать его глазами в толстой структуре — работа не человека");
+                "and to name the field: hunting for it by eye in a fat struct is not a human's job");
 
             Kill(node);
         }
 
         [Test]
-        public void Указатель_в_глубине_записи_тоже_отбивается()
+        public void A_pointer_deep_inside_a_record_is_rejected_too()
         {
             var node = Node<AdvNestedPointerNodeSo>("Nested");
 
             var thrown = Assert.Throws<InvalidOperationException>(() => Rebuild(),
-                "указатель, спрятанный в поле-структуре, ничем не лучше указателя на виду");
+                "a pointer hidden in a struct field is no better than a pointer in plain sight");
             StringAssert.Contains(nameof(AdvPointerHolder.Handle), thrown.Message);
 
             Kill(node);
         }
 
         [Test]
-        public void Запись_без_единого_поля_адресуема()
+        public void A_record_without_a_single_field_is_addressable()
         {
             var one = Node<AdvEmptyRecordNodeSo>("EmptyA");
             var two = Node<AdvEmptyRecordNodeSo>("EmptyB");
@@ -267,7 +267,7 @@ namespace Blobcheg.AdvancedTests
             var second = OffsetOf(two, "IAdvLoose");
 
             Assert.That(first, Is.Not.EqualTo(second),
-                "у записи без полей всё равно есть размер, и два адреса совпасть не могут");
+                "a record without fields still has a size, and two addresses cannot coincide");
 
             var db = Loose();
             try

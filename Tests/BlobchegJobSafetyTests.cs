@@ -5,16 +5,18 @@ using Unity.Jobs;
 namespace Blobcheg.Tests
 {
     /// <summary>
-    /// Джоба с полем-блобчегом обязана шедулиться без единой метки у потребителя. Пакет носит
-    /// указатели, пакет за них и отвечает: <c>[NativeDisableUnsafePtrRestriction]</c> стоит на самих
-    /// полях базы и роутера.
+    /// A job with a blobcheg field is obliged to schedule without a single attribute on the consumer's
+    /// side. The package carries the pointers, the package answers for them:
+    /// <c>[NativeDisableUnsafePtrRestriction]</c> stands on the fields of the base and the router
+    /// themselves.
     ///
-    /// Стоило это уже один раз: без метки на роутере safety-система рубит шедул именем СВОЕГО поля
-    /// (<c>_masks</c>), система падает каждый тик, и снаружи это выглядит как «бак стоит на нуле».
-    /// Компилятор такое пропускает — держит только этот тест.
+    /// This has already cost once: without the attribute on the router the safety system kills the
+    /// schedule naming ITS OWN field (<c>_masks</c>), the system fails every tick, and from the outside
+    /// that looks like "the tank is stuck at zero". The compiler lets it through — only this test holds
+    /// it.
     ///
-    /// Указатели здесь нулевые намеренно: проверка сырых указателей идёт по типу джобы на шедуле,
-    /// до первого чтения, поэтому поднимать настоящие файлы незачем.
+    /// The pointers here are null on purpose: the raw-pointer check runs on the job type at schedule
+    /// time, before the first read, so there is no reason to load real files.
     /// </summary>
     public sealed class BlobchegJobSafetyTests
     {
@@ -46,15 +48,15 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Джоба_с_типизированным_роутером_шедулится_без_метки_у_потребителя()
+        public void A_job_with_a_typed_router_schedules_without_a_consumer_attribute()
             => Schedules(touched => new RouterFieldJob { Router = default, Touched = touched });
 
         [Test]
-        public void Джоба_с_голым_роутером_шедулится_без_метки_у_потребителя()
+        public void A_job_with_a_bare_router_schedules_without_a_consumer_attribute()
             => Schedules(touched => new RouterBlobFieldJob { Router = default, Touched = touched });
 
         [Test]
-        public void Джоба_с_базой_шедулится_без_метки_у_потребителя()
+        public void A_job_with_a_base_schedules_without_a_consumer_attribute()
             => Schedules(touched => new DatabaseFieldJob { Cold = default, Touched = touched });
 
         static void Schedules<T>(System.Func<NativeArray<int>, T> make) where T : struct, IJobParallelFor
@@ -64,9 +66,9 @@ namespace Blobcheg.Tests
             try
             {
                 Assert.DoesNotThrow(() => make(touched).Schedule(touched.Length, 1).Complete(),
-                    "поле-блобчег в джобе — обычное дело; метку за него платит пакет");
+                    "a blobcheg field in a job is an ordinary thing; the package pays the attribute for it");
 
-                Assert.That(touched[3], Is.EqualTo(3), "джоба обязана была отработать, а не молча не встать");
+                Assert.That(touched[3], Is.EqualTo(3), "the job was obliged to run, not to quietly fail to start");
             }
             finally
             {

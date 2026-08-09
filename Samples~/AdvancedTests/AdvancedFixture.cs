@@ -11,20 +11,22 @@ using UnityEngine.TestTools;
 namespace Blobcheg.AdvancedTests
 {
     /// <summary>
-    /// Общий стенд деструктивного набора. Держит две дороги в бинарник и обе — сквозные:
+    /// The shared rig of the destructive set. It holds two roads into the binary and both are
+    /// end-to-end:
     ///
-    /// 1. ЕДИТОРНЫЙ ЦИКЛ: ассеты нод → <see cref="BlobchegBuild.RebuildAll"/> → файлы в
-    ///    StreamingAssets → ref/id-ассеты → чтение реинтерпретацией. Так живёт потребитель.
-    /// 2. ФАЙЛОВЫЙ ЦИКЛ: <see cref="BlobchegWriter"/>/<see cref="BlobchegRouterWriter"/> → байты на
-    ///    диске → <see cref="BlobchegBlob"/>/<see cref="BlobchegRouterBlob"/>. Тем же входом и
-    ///    выходом, но без ассетов — иначе объёмные и граничные случаи (64 базы, 100k строк) стоили бы
-    ///    десятков тысяч ассетов.
+    /// 1. THE EDITOR CYCLE: node assets → <see cref="BlobchegBuild.RebuildAll"/> → files in
+    ///    StreamingAssets → ref/id assets → a read by reinterpretation. That is how a consumer lives.
+    /// 2. THE FILE CYCLE: <see cref="BlobchegWriter"/>/<see cref="BlobchegRouterWriter"/> → bytes on
+    ///    disk → <see cref="BlobchegBlob"/>/<see cref="BlobchegRouterBlob"/>. With the same input and
+    ///    output but without assets — otherwise the volume and boundary cases (64 bases, 100k rows)
+    ///    would cost tens of thousands of assets.
     ///
-    /// Внутрь записей и внутрь раскладки набор не лезет: он смотрит только на то, что видно снаружи.
+    /// The set does not climb inside records or inside the layout: it looks only at what is visible from
+    /// the outside.
     /// </summary>
     public abstract class AdvancedFixture
     {
-        /// <summary>Всё, что пересборка кладёт из-за доменов и роутеров этой сборки.</summary>
+        /// <summary>Everything the rebuild lays down because of the domains and routers of this assembly.</summary>
         static readonly string[] Artifacts =
         {
             "IAdvCombat", "IAdvCold", "IAdvLoose", "IAdvOther", "AdvRouter", "AdvAlienRouter",
@@ -36,8 +38,8 @@ namespace Blobcheg.AdvancedTests
         [SetUp]
         public void AdvancedSetUp()
         {
-            // Папка своя на каждый тест: удаление ассетов отложенное, и переиспользованное имя
-            // съедает ассет, созданный в ещё не удалённой папке.
+            // A folder of its own per test: asset deletion is deferred, and a reused name swallows an
+            // asset created in a folder that has not been deleted yet.
             var name = "BlobchegAdvanced_" + Guid.NewGuid().ToString("N");
             Folder = "Assets/" + name;
             AssetDatabase.CreateFolder("Assets", name);
@@ -47,9 +49,9 @@ namespace Blobcheg.AdvancedTests
 
             AdvReentrantNodeSo.Forget();
 
-            // Набор нарочно ломает пересборку, а хук импорта зовёт её сам, отложенным вызовом — то
-            // есть между тестами. Прилетевшая оттуда ошибка не должна валить СОСЕДНИЙ тест: что
-            // именно упало, каждый тест проверяет сам, своим Assert.Throws.
+            // The set breaks the rebuild on purpose, and the import hook calls it itself with a deferred
+            // call — that is, between tests. An error arriving from there must not fail the NEIGHBOURING
+            // test: what exactly failed is checked by every test itself, with its own Assert.Throws.
             LogAssert.ignoreFailingMessages = true;
         }
 
@@ -76,13 +78,13 @@ namespace Blobcheg.AdvancedTests
             }
             catch (IOException)
             {
-                // Мусор во временной папке ОС тест не роняет.
+                // Rubbish in the OS temp folder does not fail the test.
             }
 
             LogAssert.ignoreFailingMessages = false;
         }
 
-        // ------------------------------------------------------------- ассеты
+        // ------------------------------------------------------------- assets
 
         protected T Node<T>(string name) where T : BlobchegNodeSo
         {
@@ -90,11 +92,11 @@ namespace Blobcheg.AdvancedTests
             AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<T>(), path);
 
             var asset = AssetDatabase.LoadAssetAtPath<T>(path);
-            Assert.That(asset, Is.Not.Null, $"ассет '{path}' не создался — дальше проверять нечего");
+            Assert.That(asset, Is.Not.Null, $"asset '{path}' was not created — there is nothing further to check");
             return asset;
         }
 
-        /// <summary>Нода в подпапке — чтобы можно было завести две ноды с ОДИНАКОВЫМ именем.</summary>
+        /// <summary>A node in a subfolder — so that two nodes with the SAME name can be created.</summary>
         protected T NodeIn<T>(string subFolder, string name) where T : BlobchegNodeSo
         {
             if (!AssetDatabase.IsValidFolder(Folder + "/" + subFolder))
@@ -104,7 +106,7 @@ namespace Blobcheg.AdvancedTests
             AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<T>(), path);
 
             var asset = AssetDatabase.LoadAssetAtPath<T>(path);
-            Assert.That(asset, Is.Not.Null, $"ассет '{path}' не создался — дальше проверять нечего");
+            Assert.That(asset, Is.Not.Null, $"asset '{path}' was not created — there is nothing further to check");
             return asset;
         }
 
@@ -123,18 +125,19 @@ namespace Blobcheg.AdvancedTests
         protected static BlobchegBuildReport Rebuild() => BlobchegBuild.RebuildAll();
 
         /// <summary>
-        /// Снимает копию с <c>ref readonly</c>-возврата. Нужен там, где у записи нет ни одного поля,
-        /// которое можно было бы тронуть выражением, — иначе вызов <c>Read</c> нечем «использовать».
+        /// Takes a copy of a <c>ref readonly</c> return. Needed where a record has not a single field
+        /// that could be touched by an expression — otherwise there is nothing to "use" a <c>Read</c>
+        /// call with.
         /// </summary>
         protected static T Copy<T>(in T value) where T : unmanaged => value;
 
-        // ------------------------------------------------------------- адреса
+        // ------------------------------------------------------------- addresses
 
-        /// <summary>Оффсет записи ноды в домене — тем же путём, каким его берёт бейкер потребителя.</summary>
+        /// <summary>The offset of a node's record in a domain — by the same path a consumer's baker takes it.</summary>
         protected static uint OffsetOf(BlobchegNodeSo node, string domainName)
         {
             var reference = BlobchegBuild.RefsOf(node).SingleOrDefault(r => r.DomainName == domainName);
-            Assert.That(reference, Is.Not.Null, $"у ноды '{node.name}' нет ref-ассета домена '{domainName}'");
+            Assert.That(reference, Is.Not.Null, $"node '{node.name}' has no ref asset for domain '{domainName}'");
             return reference.offset;
         }
 
@@ -144,11 +147,11 @@ namespace Blobcheg.AdvancedTests
         protected static BlobchegId IdOf(BlobchegNodeSo node, string routerName)
         {
             var carrier = BlobchegBuild.IdsOf(node).SingleOrDefault(c => c.RouterName == routerName);
-            Assert.That(carrier, Is.Not.Null, $"у ноды '{node.name}' нет носителя id роутера '{routerName}'");
+            Assert.That(carrier, Is.Not.Null, $"node '{node.name}' has no id carrier for router '{routerName}'");
             return new BlobchegId(carrier.id);
         }
 
-        // ------------------------------------------------------------- файлы
+        // ------------------------------------------------------------- files
 
         protected static string FileOf(string domainOrRouter)
             => Path.Combine(BlobchegBuild.OutputDirectory, BlobchegNaming.FileName(domainOrRouter));
@@ -159,9 +162,9 @@ namespace Blobcheg.AdvancedTests
             => File.WriteAllBytes(FileOf(domainOrRouter), file);
 
         /// <summary>
-        /// Перепечатывает header поверх изменённого тела. Нужен там, где ломают СМЫСЛ файла
-        /// (пролог, флаги, длину), а не его целостность: без перепечатки первым сработал бы хеш, и
-        /// тест проверил бы не то, что задумал.
+        /// Re-stamps the header over a changed body. Needed where the MEANING of the file is broken (the
+        /// prolog, the flags, the length) rather than its integrity: without the re-stamp the hash would
+        /// fire first and the test would check something other than what it meant to.
         /// </summary>
         protected static void Reseal(byte[] file)
         {

@@ -4,8 +4,8 @@ using Unity.Collections;
 namespace Blobcheg
 {
     /// <summary>
-    /// Хеш содержимого — не адресация. Им меряется целостность файла и ревизия ноды; искать по
-    /// нему нечего, поэтому в v1 больше никаких хешей нет.
+    /// A content hash is not addressing. It measures the integrity of a file and the revision of a
+    /// node; there is nothing to look up by it, which is why v1 carries no other hashes.
     /// </summary>
     public static class BlobchegHash
     {
@@ -18,9 +18,10 @@ namespace Blobcheg
 
         public static unsafe ulong Of(byte[] data, int start, int length)
         {
-            // Пустое тело — не «ноль», а честный хеш пустоты: иначе писатель и читатель расходятся
-            // ровно на пустом файле, и база, из которой удалили последнюю ноду, перестаёт
-            // подниматься. Указатель на конец массива брать нельзя, поэтому считаем от заглушки.
+            // An empty body is not "zero" but an honest hash of emptiness: otherwise writer and
+            // reader diverge on exactly the empty file, and a base whose last node was deleted stops
+            // coming up. Taking a pointer past the end of the array is not allowed, so the hash is
+            // computed off a stub.
             if (length == 0)
             {
                 byte empty = 0;

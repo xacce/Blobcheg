@@ -4,48 +4,50 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Меню пакета. Обе команды человек зовёт сам, и обе есть ровно потому, что сама пересборка их
-    /// позвать не может: компакт она не имеет права сделать без спроса, а полную пересборку ей
-    /// нечем запустить, когда ассеты не менялись.
+    /// The package menu. A human calls both commands themselves, and both exist for exactly one
+    /// reason: the rebuild cannot call them itself — it has no right to compact without asking, and it
+    /// has nothing to start a full rebuild with when the assets have not changed.
     /// </summary>
     static class BlobchegMenu
     {
         /// <summary>
-        /// Пересборка руками. Сама она приезжает на импорт ноды, на вход в PlayMode и на пре-билд —
-        /// то есть на изменение ассетов, и только на него. Потерять файлы можно мимо ассетов:
-        /// снесённые артефакты при тёплой Library (<c>git clean -X</c>, свежая ворктри) не делают
-        /// грязной ни одну ноду, пересобирать ей нечего, и редактор стоит сломанным до первой правки.
+        /// A rebuild by hand. On its own the rebuild arrives on a node import, on entering PlayMode and
+        /// on a pre-build — that is, on a change of assets and on nothing else. Files can be lost past
+        /// the assets: artifacts wiped while the Library is warm (<c>git clean -X</c>, a fresh worktree)
+        /// leave not a single node dirty, so there is nothing to rebuild, and the editor stands broken
+        /// until the first edit.
         ///
-        /// Полная, а не инкрементальная: зовут её ровно тогда, когда собранному из памяти не верят.
-        /// Адреса и id при этом на месте — их двигает только компакт.
+        /// Full and not incremental: it is called exactly when what was assembled from memory is not
+        /// trusted. The addresses and the ids stay in place — only a compaction moves them.
         /// </summary>
-        [MenuItem("Tools/Blobcheg/Пересобрать базы", priority = 0)]
+        [MenuItem("Tools/Blobcheg/Rebuild bases", priority = 0)]
         static void Rebuild()
         {
             var report = BlobchegBuild.RebuildFull();
-            Debug.Log($"Blobcheg: пересобрано — {report}");
+            Debug.Log($"Blobcheg: rebuilt — {report}");
         }
 
         /// <summary>
-        /// Команда компакта. Она есть ровно потому, что компакт — это то, чего пересборка не имеет
-        /// права сделать сама: он двигает все адреса и все id, а их уже запомнили запечённые
-        /// субсцены и чужие сейвы. Человек зовёт её, когда готов перепечь.
+        /// The compaction command. It exists for exactly one reason: a compaction is what a rebuild has
+        /// no right to do on its own — it moves every address and every id, and baked subscenes and
+        /// other people's saves already remember them. A human calls it when they are ready to rebake.
         /// </summary>
-        [MenuItem("Tools/Blobcheg/Сжать базы (компакт)", priority = 20)]
+        [MenuItem("Tools/Blobcheg/Compact bases", priority = 20)]
         static void Compact()
         {
             var ok = EditorUtility.DisplayDialog(
-                "Blobcheg: компакт",
-                "Дырки от удалённых нод исчезнут, но адреса и id будут выданы заново — все. " +
-                "Всё, что их запомнило (запечённые субсцены, сохранения), после этого указывает не туда.\n\n" +
-                "Перепечь субсцены придётся вручную.",
-                "Сжать", "Отмена");
+                "Blobcheg: compaction",
+                "The holes left by deleted nodes will disappear, but the addresses and the ids will be " +
+                "handed out anew — all of them. Everything that remembered them (baked subscenes, saves) " +
+                "will point at the wrong place afterwards.\n\n" +
+                "The subscenes will have to be rebaked by hand.",
+                "Compact", "Cancel");
 
             if (!ok)
                 return;
 
             var report = BlobchegBuild.Compact();
-            Debug.Log($"Blobcheg: компакт — {report}");
+            Debug.Log($"Blobcheg: compaction — {report}");
         }
     }
 }

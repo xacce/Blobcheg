@@ -1,209 +1,218 @@
-# План деструктивного набора: патч ссылок на импорте сцены
+# The plan of the destructive set: the reference patch on scene import
 
-Написан **вслепую**: до единой строчки `BlobchegReference.cs`, `BlobchegBases.cs`,
-`EntitiesPatch/*` и правок в `SerializeUtility.cs`. Читались только README пакета, `Core/*`,
-`Tests/*` и `Samples~/AdvancedTests` — ради устройства формата и стиля, не ради ожиданий.
+Written **blind**: before a single line of `BlobchegReference.cs`, `BlobchegBases.cs`,
+`EntitiesPatch/*` and the edits in `SerializeUtility.cs`. Only the package README, `Core/*`,
+`Tests/*` and `Samples~/AdvancedTests` were read — for the shape of the format and the style, not for
+the expectations.
 
-Ожидания сформулированы платформенно-нейтрально: «явная ошибка», «детерминированный результат».
-Конкретный тип исключения — деталь адаптации фазы 3, а не часть ожидания.
+The expectations are worded platform-neutrally: "an explicit error", "a deterministic result". The
+concrete exception type is a detail of the phase-3 adaptation, not a part of the expectation.
 
-Никогда не приемлемо: молчаливый no-op, молчаливая порча, зависание, мусор в поле,
-недетерминированность. Отдельно: **ни один тест не имеет права уронить редактор** — чтение
-освобождённой памяти и разыменование дикого указателя не выполняются, а обставляются так, чтобы их
-наличие было видно (спрашиваем реестр, а не разыменовываем).
+Never acceptable: a silent no-op, silent corruption, a hang, garbage in a field, non-determinism. And
+separately: **no test has the right to bring the editor down** — reading freed memory and dereferencing
+a wild pointer are not executed, they are staged so that their presence is visible (we ask the registry
+instead of dereferencing).
 
-## Что именно ломаем
+## What exactly is being broken
 
-Шесть обещаний фичи. Каждое закрыто минимум двумя тестами, и оба пытаются его СЛОМАТЬ.
+Six promises of the feature. Each is covered by at least two tests, and both of them try to BREAK it.
 
-| # | Обещание | Тесты |
+| # | The promise | Tests |
 |---|---|---|
-| 1 | Патч идемпотентен | 13, 14, 16, 51 |
-| 2 | Домен не поднят — явная ошибка | 12, 18, 37 |
-| 3 | Пересборка переводит розданные указатели | 23, 24, 25, 38, 39, 51 |
-| 4 | На диск едет оффсет, а не адрес процесса | 34, 35, 36, 37, 50 |
-| 5 | Буферы поэлементно, вложенный слот находится | 26, 27, 28, 29, 30, 31, 32 |
-| 6 | Вне доменов и в двух доменах — ошибка | 20, 21, 49 |
+| 1 | The patch is idempotent | 13, 14, 16, 51 |
+| 2 | The domain is not loaded — an explicit error | 12, 18, 37 |
+| 3 | A rebuild translates the pointers already handed out | 23, 24, 25, 38, 39, 51 |
+| 4 | What travels to disk is an offset and not a process address | 34, 35, 36, 37, 50 |
+| 5 | Buffers element by element, a nested slot is found | 26, 27, 28, 29, 30, 31, 32 |
+| 6 | Outside any domain and in two domains — an error | 20, 21, 49 |
 
-## Категории
+## The categories
 
-Взято семь из таблицы скилла (нужно ≥3): пустое/нулевое, границы, неверный порядок,
-злоупотребление личностью, порча состояния, объём, семантическое злоупотребление,
-человеческий фактор, абсурд.
+Seven were taken from the skill's table (at least 3 are required): empty/zero, boundaries, wrong order,
+abuse of identity, state corruption, volume, semantic abuse, human factor, absurd.
 
-## Стенд
+## The bench
 
-Файлы домена собираются **писателем, а не ассетами**: `BlobchegWriter.Open(temp, "IPatchHot")` →
-`Flush` → байты → `BlobchegBuffer.From` → `new PatchHotDb(buffer)`. Так тест управляет раскладкой
-до байта (нужно для «оффсет ровно на последней записи», «поколение сдвинуло запись») и не платит
-за пересборку ассетов. Второй путь — `BlobchegBuild.RebuildAll()` — берётся только там, где тест
-про едиторный цикл (тест 44).
+The files of a domain are assembled **by the writer, not by assets**:
+`BlobchegWriter.Open(temp, "IPatchHot")` → `Flush` → bytes → `BlobchegBuffer.From` →
+`new PatchHotDb(buffer)`. That way the test controls the layout down to the byte (needed for "an offset
+exactly on the last record", "a generation moved the record") and does not pay for an asset rebuild. The
+second road — `BlobchegBuild.RebuildAll()` — is taken only where the test is about the editor cycle
+(test 44).
 
-Мир — свой (`new World(...)`), не дефолтный: доказывать надо патч, а не порядок создания систем
-редактора.
+The world is its own (`new World(...)`), not the default one: what has to be proven is the patch, not
+the order in which the editor creates its systems.
 
-Ключевые операции стенда, имена — предварительные, уточняются в фазе 3:
+The key operations of the bench, the names are preliminary and get pinned down in phase 3:
 
-- `Resolve(world)` — прямой патч (то, что делает загрузка секции сабсцены);
-- `Unresolve(world)` — обратный проход (то, что делает запись мира);
-- `SaveLoad(world)` — сериализация мира в память и обратно в новый мир.
+- `Resolve(world)` — the forward patch (what the loading of a subscene section does);
+- `Unresolve(world)` — the reverse pass (what the writing of a world does);
+- `SaveLoad(world)` — serialising the world into memory and back into a new world.
 
-## Модель
+## The model
 
-Домены: `IPatchHot`, `IPatchCold`, `IPatchGhost` (объявлен базой, но никогда не поднимается).
+Domains: `IPatchHot`, `IPatchCold`, `IPatchGhost` (declared with a base, but never loaded).
 
-Записи: `PatchGun : IPatchHot`, `PatchArmor : IPatchHot`, `PatchNote : IPatchCold`,
-`PatchLoose` (без маркера вообще), `PatchBoth : IPatchHot, IPatchCold`,
-`PatchRefRecord : IPatchHot` — запись, ВНУТРИ которой лежит `BlobchegReference<PatchGun>`.
+Records: `PatchGun : IPatchHot`, `PatchArmor : IPatchHot`, `PatchNote : IPatchCold`,
+`PatchLoose` (without a marker at all), `PatchBoth : IPatchHot, IPatchCold`,
+`PatchRefRecord : IPatchHot` — a record with a `BlobchegReference<PatchGun>` INSIDE it.
 
-Компоненты: одиночный слот; слот вторым полем при `Pack = 1`; слот на второй и на третьей ступени
-вложенности; пара слотов разных типов; элемент буфера; тот же слот в общем компоненте.
-
----
-
-## 1. Пустое и нулевое
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 1 | `Ноль_в_слоте_это_не_запись_по_нулевому_адресу` | компонент с `default(BlobchegReference<PatchGun>)`, патчим мир | слот остался ровно `default`; `IsSet == false`; `IsResolved == false`; `Value` бросает. НЕ адрес `база+0`, то есть не начало header'а |
-| 2 | `Патч_мира_без_единой_ссылки_не_бросает_и_ничего_не_трогает` | мир из сущностей без слотов, патчим | тихо и без ошибки; компоненты байт-в-байт те же |
-| 3 | `Буфер_нулевой_длины_патчится_без_единого_касания` | сущность с `DynamicBuffer<PatchRefElement>` длины 0; патч и обратный проход | не бросает, длина по-прежнему 0 |
-| 4 | `Ссылка_в_поднятую_но_пустую_базу_обязана_отбиться` | домен из нуля записей (файл = один header), ссылка с оффсетом `HeaderSize` | явная ошибка: за концом файла. НЕ указатель на первый байт после header'а |
-| 5 | `Нулевой_слот_переживает_патч_и_обратный_проход_нулём` | `default` → патч → обратный проход | ровно `default`. Ловит вычитание адреса базы из нуля (уход в `ulong.MaxValue`) |
-
-## 2. Границы
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 6 | `Оффсет_за_концом_файла_обязан_отбиться_на_патче` | оффсет = длина файла + 16 | явная ошибка, в сообщении домен и оффсет |
-| 7 | `Оффсет_uint_MaxValue_не_превращается_в_дикий_адрес` | оффсет = `uint.MaxValue` | явная ошибка. НЕ `база + 4 ГБ` |
-| 8 | `Оффсет_внутрь_header_а_обязан_отбиться` | оффсет = 8 | явная ошибка: записи начинаются с `HeaderSize` |
-| 9 | `Оффсет_ровно_на_последней_записи_обязан_пройти` | оффсет последней записи файла | патчится, `Value` равен записанному. Граница, которая обязана НЕ отбиться |
-| 10 | `Оффсет_мимо_выравнивания_обязан_отбиться` | оффсет последней записи + 1 | явная ошибка: старт записи выровнен на 16 |
-| 11 | `Оффсет_равный_длине_файла_ровно_обязан_отбиться` | оффсет = `Length` | явная ошибка. Off-by-one с другой стороны от теста 9 |
-
-## 3. Неверный порядок и жизненный цикл
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 12 | `Патч_без_поднятой_базы_называет_домен_в_сообщении` | домен `IPatchGhost` не регистрировался, патчим ссылку в него | явная ошибка, и в тексте — имя домена. Не нули в поле, не «ничего не произошло» |
-| 13 | `Двойной_патч_не_складывает_адрес_дважды` | патч, запомнили адрес, патч ещё раз | адрес и `Value` те же. Второй проход по патченному полю — no-op, а не `база+база+оффсет` |
-| 14 | `Тройной_патч_и_обратный_проход_возвращают_исходный_оффсет` | патч ×3 → обратный проход | тот самый оффсет, с которого начинали |
-| 15 | `Обратный_проход_по_непатченному_миру_не_уводит_оффсет_в_минус` | мир, который НИКОГДА не патчили → обратный проход | оффсеты не изменились. Ловит слепое вычитание адреса базы (переполнение вниз) |
-| 16 | `Двойной_обратный_проход_не_вычитает_базу_дважды` | патч → обратный проход → обратный проход | оффсет один и тот же оба раза |
-| 17 | `Снятие_базы_с_учёта_при_живых_указателях_обязано_быть_видно` | зарегистрировали, пропатчили, сняли с учёта и освободили буфер | реестр больше НЕ признаёт этот адрес своим; обратный проход по такой ссылке отказывается явно (домен по адресу уже не назвать). `Value` не трогаем — это чтение освобождённой памяти |
-| 18 | `Патч_после_Dispose_буфера_обязан_отбиться` | буфер освободили, с учёта НЕ сняли (типичная ошибка), патчим | явная ошибка. Если пакет этого не может — тест либо `// BUG:`, либо принятый предел с объяснением |
-
-## 4. Личность и домен
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 19 | `Оффсет_чужой_базы_в_ссылке_своего_домена` | оффсет, валидный только в `IPatchCold`, кладём в `BlobchegReference<PatchGun>` | вне границ — ошибка; в границах — отбой по типу записи (отладочный контур). Никогда — молчаливое чтение чужих байт |
-| 20 | `Запись_вне_доменов_обязана_быть_ошибкой_а_не_догадкой` | `BlobchegReference<PatchLoose>`, `PatchLoose` не реализует ни одного маркера | явная ошибка с именем типа. Компиляция или сборка таблицы патча — оба варианта годятся, молчание — нет |
-| 21 | `Запись_сразу_в_двух_доменах_обязана_быть_ошибкой` | `BlobchegReference<PatchBoth>`, тип в `IPatchHot` и `IPatchCold` | явная ошибка, в сообщении оба домена |
-| 22 | `Один_оффсет_в_двух_компонентах_даёт_один_адрес_и_один_оффсет_обратно` | тот же оффсет в двух РАЗНЫХ типах компонентов на двух сущностях | оба указывают в один адрес; обратный проход возвращает обоим один и тот же исходный оффсет |
-| 23 | `Повторная_регистрация_домена_либо_бросает_либо_переводит_все_ссылки` | `Register(hash, A)` → патч → `Register(hash, B)` | ЛИБО вторая регистрация бросает явно, ЛИБО уже розданные указатели переехали в B. Недопустима середина: реестр показывает B, а указатели смотрят в A |
-| 24 | `Пересборка_дважды_подряд_доводит_указатели_до_третьего_поколения` | gen1 → патч → gen2 → gen3, содержимое записи в каждом поколении своё | `Value` читает gen3. Ни gen1, ни gen2, ни мусор |
-| 25 | `Поколение_сдвинувшее_запись_не_имеет_права_отдать_соседнюю_молча` | gen2 разложен так, что запись уехала (перед ней появился новый тип) | ЛИБО ссылка едет за записью, ЛИБО явная ошибка. Молча отданный сосед — порча |
-
-## 5. Раскладка компонента и буферы
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 26 | `Слот_вторым_полем_после_невыровненного_байта` | `[StructLayout(Sequential, Pack = 1)]`, `byte Head` затем слот (байтовый оффсет 1) | слот найден и пропатчен; `Head` не тронут; обратный проход возвращает оффсет |
-| 27 | `Слот_на_второй_ступени_вложенности` | компонент `{ int, Inner }`, `Inner { int, слот }` | найден |
-| 28 | `Слот_на_третьей_ступени_вложенности` | ещё уровень вложенности | найден. Обход обязан быть рекурсивным, а не «поля первого уровня» |
-| 29 | `Два_слота_разных_типов_записи_в_одном_компоненте` | `{ BlobchegReference<PatchGun>, BlobchegReference<PatchArmor> }` | оба пропатчены, каждый на СВОЮ запись; перепутать местами нельзя |
-| 30 | `Буфер_из_трёх_элементов_патчится_поэлементно` | `DynamicBuffer<PatchRefElement>` с тремя разными оффсетами | все три разрешены, каждый в свою запись |
-| 31 | `Битый_элемент_в_середине_буфера_не_оставляет_соседей_наполовину_патченными` | буфер `[хороший, за концом файла, хороший]` | явная ошибка И состояние согласовано: после неё обратный проход возвращает нетронутым элементам их исходные оффсеты. Ни один элемент не остался сырым указателем, который уедет на диск адресом |
-| 32 | `Буфер_на_сто_тысяч_элементов_патчится_целиком` | объём | первый, средний и последний разрешены верно |
-| 33 | `Десять_тысяч_сущностей_со_слотом_за_один_проход` | объём | все разрешены; выборочная сверка значений |
-
-## 6. Сериализация мира
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 34 | `Сохранённый_мир_содержит_оффсет_а_не_адрес_процесса` | патч → сериализация в память → **сканируем сырые байты потока** | ни одного 8-байтового слова, равного разрешённому указателю. И: чтение в новый мир, где база стоит по ДРУГОМУ адресу, даёт верное значение |
-| 35 | `После_сохранения_живой_мир_остаётся_патченным` | патч → сериализация → читаем `Value` в исходном мире | по-прежнему разрешён. Обратный проход обязан восстановить, а не оставить мир разобранным |
-| 36 | `Мир_который_никогда_не_патчили_сохраняется_и_читается_верно` | без патча → сериализация → загрузка → патч → чтение | верное значение. Обратный проход по сырым оффсетам — no-op |
-| 37 | `Сохранение_после_снятия_домена_с_учёта_обязано_отбиться` | патч → сняли домен с учёта → сериализация | явная ошибка. Никогда — адрес процесса в файле |
-| 38 | `Мир_сохранённый_в_одном_поколении_читается_в_другом` | патч gen1 → сериализация → gen1 освобождён, поднят gen2 по другому адресу → загрузка | разрешается в gen2 |
-
-## 7. Человеческий фактор
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 39 | `Ссылка_скопированная_в_обычное_поле_не_переезжает_с_пересборкой` | разработчик кладёт разрешённую ссылку в статическое поле «чтобы не искать каждый кадр», потом пересборка переводит базу | протухшая копия обязана быть ОПОЗНАВАЕМА: реестр не признаёт её адрес, `IsResolved` не врёт «да». Обещание 3 накрывает слоты в компонентах, но не копии — значит копия обязана быть видна как мёртвая, а не читаться молча |
-| 40 | `IsSet_не_обещает_что_Value_можно_читать` | `IsSet == true` до патча, разработчик зовёт `Value` | явная ошибка «не разрешена». Путаница двух похожих свойств — самая массовая ошибка на этом API |
-| 41 | `Копипаста_баблика_оставила_оффсет_чужого_домена` | скопировали строку бейкера, поменяли только тип: `new BlobchegReference<PatchGun>(coldOffset)` | отбой (границы либо тип). Никогда — молчаливое чтение |
-| 42 | `Привычка_из_BlobAssetReference_читать_Value_сразу_после_AddComponent` | в Unity `BlobAssetReference.Value` работает сразу после бейка; здесь до патча | явная ошибка, а не нули. Разработчик приносит привычку из соседнего API |
-| 43 | `Две_ссылки_на_одну_запись_сравниваются_одинаково_до_и_после_патча` | `a == b` на двух ссылках из одного оффсета | детерминированно и одинаково в обоих состояниях. Разные ответы до и после патча — ловушка: `if (a == b)` в игровом коде начнёт врать после загрузки сцены |
-| 44 | `Неназначенное_поле_редактора_не_становится_записью_по_нулю` | `default(BlobchegRef<PatchGun>).ToReference()` | равно `default(BlobchegReference<PatchGun>)`, `IsSet == false`. Два способа сделать одно и то же обязаны сойтись; ноль обязан значить «не назначено», а не «первая запись» |
-
-## 8. Абсурд
-
-| # | Тест | Что делаем | Чего ждём |
-|---|---|---|---|
-| 46 | `Запись_внутри_которой_лежит_ссылка_не_имеет_права_быть_пропатченной` | в ФАЙЛЕ лежит `PatchRefRecord { BlobchegReference<PatchGun> Inner; }`; на неё есть ссылка из компонента; патчим мир | байты файла до и после патча идентичны. Патч ходит по памяти компонентов, а не по содержимому базы; иначе он портит саму базу — и портит её у всех, кто читает старым путём `db.Read<T>` |
-| 47 | `База_зарегистрированная_по_адресу_чужой_записи` | берём разрешённый указатель на запись и регистрируем ПО ЭТОМУ адресу второй домен | регистрация отказывает (адрес внутри чужого зарегистрированного буфера), ЛИБО реестр отвечает про оба адреса детерминированно. Недопустимо: обратный проход выбирает не тот домен и пишет в файл мусорный оффсет |
-| 48 | `Слот_в_общем_компоненте_а_не_в_данных` | тот же слот, но в `ISharedComponentData` | ЛИБО явный отказ при установке/патче, ЛИБО патчится как всё остальное. Молча пропущен и затем сериализован адресом процесса — порча: общие компоненты тоже едут в файл |
-| 49 | `Ссылка_на_саму_базу_как_на_запись` | `BlobchegReference<PatchHotDb>` — база формально `unmanaged` и маркеров не реализует | явная ошибка обещания 6. Две фичи, которые никогда не проектировали вместе |
-| 50 | `Склонированная_сущность_несёт_разрешённый_указатель_мимо_патча` | патч → `Instantiate` сто копий (клоны получают уже сырой указатель, через патч не проходили) → сериализация | у клонов в файле тоже оффсет. Если обратный проход ходит только по тем, кого патчил сам, — указатели утекут в файл |
-| 51 | `Один_чанк_с_двумя_поколениями_сразу` | пропатчили A по gen1 → перевели базу на gen2 → добавили B с сырым оффсетом в тот же архетип → патчим ещё раз | и A, и B читают gen2. Смешанный чанк (часть патчена, часть нет) — ровно то, что даёт живой путь с чейнджсетом |
+Components: a lone slot; a slot as the second field under `Pack = 1`; a slot at the second and at the
+third level of nesting; a pair of slots of different types; a buffer element; the same slot in a shared
+component.
 
 ---
 
-## Что заранее считаю спорным
+## 1. Empty and zero
 
-- **Тест 23 против обещания 3.** Пересборка под живым редактором — это и есть повторная
-  регистрация домена. Значит либо `Register` и есть путь перевода, и тогда «две базы над одним
-  доменом» проходят молча, либо перевод — отдельный вызов, и тогда голый повторный `Register`
-  обязан бросать. Обе развилки допустимы; недопустима середина.
-- **Тесты 20, 21, 49** могут оказаться ошибкой компиляции, а не рантайма. Тогда типы-нарушители
-  нельзя держать в сборке живыми: они отравят таблицу патча всем остальным тестам. Проверка
-  переедет на рефлексию или на отдельную сборку, а если и это невозможно — `// API DESIGN:`.
-- **Тест 18** (Dispose без снятия с учёта) может быть принципиально неразрешим: у value-структуры
-  базы нет ячейки, переживающей освобождение памяти — тот же принятый предел, что закреплён в
-  `Samples~/AdvancedTests`. Тогда это не BUG, а предел, и тест закрепляет его с объяснением.
-- **Тест 34** — сканирование сырого потока — единственная честная проверка обещания 4. Косвенная
-  (загрузили в другой мир, значение верное) проходит и на файле с адресом внутри, если новый мир
-  случайно поднял базу по тому же адресу.
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 1 | `Zero_in_a_slot_is_not_a_record_at_address_zero` | a component with `default(BlobchegReference<PatchGun>)`, we patch the world | the slot stays exactly `default`; `IsSet == false`; `IsResolved == false`; `Value` throws. NOT the address `base+0`, that is, not the start of the header |
+| 2 | `Patching_a_world_without_a_single_reference_neither_throws_nor_touches_anything` | a world of entities without slots, we patch | quietly and without an error; the components are the same byte for byte |
+| 3 | `A_buffer_of_zero_length_is_patched_without_a_single_touch` | an entity with a `DynamicBuffer<PatchRefElement>` of length 0; the patch and the reverse pass | it does not throw, the length is still 0 |
+| 4 | `A_reference_into_a_loaded_but_empty_base_is_obliged_to_be_rejected` | a domain of zero records (the file is a lone header), a reference with the offset `HeaderSize` | an explicit error: past the end of the file. NOT a pointer at the first byte after the header |
+| 5 | `A_zero_slot_outlives_the_patch_and_the_reverse_pass_as_zero` | `default` → the patch → the reverse pass | exactly `default`. Catches the subtraction of the base address from zero (a trip into `ulong.MaxValue`) |
+
+## 2. Boundaries
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 6 | `An_offset_past_the_end_of_the_file_is_obliged_to_be_rejected_by_the_patch` | offset = the file length + 16 | an explicit error, with the domain and the offset in the message |
+| 7 | `An_offset_of_uint_MaxValue_does_not_turn_into_a_wild_address` | offset = `uint.MaxValue` | an explicit error. NOT `base + 4 GB` |
+| 8 | `An_offset_into_the_header_is_obliged_to_be_rejected` | offset = 8 | an explicit error: the records begin at `HeaderSize` |
+| 9 | `An_offset_exactly_on_the_last_record_is_obliged_to_pass` | the offset of the last record of the file | it patches, `Value` equals what was written. The boundary that is obliged NOT to be rejected |
+| 10 | `An_offset_off_the_alignment_is_obliged_to_be_rejected` | the offset of the last record + 1 | an explicit error: the start of a record is aligned to 16 |
+| 11 | `An_offset_exactly_equal_to_the_file_length_is_obliged_to_be_rejected` | offset = `Length` | an explicit error. The off-by-one on the other side of test 9 |
+
+## 3. Wrong order and the life cycle
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 12 | `A_patch_without_a_loaded_base_names_the_domain_in_the_message` | the domain `IPatchGhost` was never registered, we patch a reference into it | an explicit error, and the name of the domain in its text. Not zeroes in the field, not "nothing happened" |
+| 13 | `A_double_patch_does_not_add_the_address_twice` | patch, remember the address, patch once more | the address and `Value` are the same. A second pass over a patched field is a no-op and not `base+base+offset` |
+| 14 | `A_triple_patch_and_the_reverse_pass_return_the_original_offset` | patch ×3 → the reverse pass | the very offset we started from |
+| 15 | `The_reverse_pass_over_an_unpatched_world_does_not_send_the_offset_negative` | a world that was NEVER patched → the reverse pass | the offsets did not change. Catches a blind subtraction of the base address (an underflow) |
+| 16 | `A_double_reverse_pass_does_not_subtract_the_base_twice` | patch → the reverse pass → the reverse pass | one and the same offset both times |
+| 17 | `Taking_a_base_off_the_register_while_pointers_are_live_is_obliged_to_be_visible` | registered, patched, took it off the register and freed the buffer | the registry no longer recognises that address as its own; the reverse pass over such a reference refuses explicitly (the domain can no longer be named from the address). We do not touch `Value` — that is a read of freed memory |
+| 18 | `The_registry_cannot_tell_a_freed_but_unregistered_buffer_an_accepted_limit` | the buffer was freed, it was NOT taken off the register (the typical mistake), we patch | an explicit error. If the package cannot do it — the test is either a `// BUG:` or an accepted limit with an explanation |
+
+## 4. Identity and the domain
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 19 | `An_offset_of_a_foreign_base_outside_its_own_is_obliged_to_be_rejected` | an offset valid only in `IPatchCold`, put into a `BlobchegReference<PatchGun>` | out of bounds — an error; in bounds — a rejection by the record type (the debug contour). Never a silent read of someone else's bytes |
+| 20 | `A_record_outside_any_domain_is_obliged_to_be_an_error_and_not_a_guess` | `BlobchegReference<PatchLoose>`, `PatchLoose` implements no marker at all | an explicit error naming the type. Compilation or the assembly of the patch table — both are fine, silence is not |
+| 21 | `A_record_in_two_domains_at_once_is_obliged_to_name_both` | `BlobchegReference<PatchBoth>`, the type is in `IPatchHot` and in `IPatchCold` | an explicit error, with both domains in the message |
+| 22 | `One_offset_in_two_components_gives_one_address_and_one_offset_back` | the same offset in two DIFFERENT component types on two entities | both point at one address; the reverse pass returns one and the same original offset to both |
+| 23 | `Registering_a_domain_again_has_no_right_to_leave_pointers_looking_at_the_old_one` | `Register(hash, A)` → patch → `Register(hash, B)` | EITHER the second registration throws explicitly, OR the pointers already handed out moved into B. The middle is not allowed: the registry shows B while the pointers look into A |
+| 24 | `Two_rebuilds_in_a_row_are_obliged_to_bring_the_pointer_to_the_third_generation` | gen1 → patch → gen2 → gen3, the content of the record is its own in every generation | `Value` reads gen3. Neither gen1, nor gen2, nor garbage |
+| 25 | `A_generation_that_moved_a_record_has_no_right_to_hand_out_the_neighbouring_one` | gen2 is laid out so that the record moved (a new type appeared in front of it) | EITHER the reference travels after the record, OR an explicit error. A neighbour handed out silently is corruption |
+
+## 5. Component layout and buffers
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 26 | `A_slot_as_the_second_field_after_an_unaligned_byte` | `[StructLayout(Sequential, Pack = 1)]`, `byte Head` then the slot (byte offset 1) | the slot is found and patched; `Head` is untouched; the reverse pass returns the offset |
+| 27 | `A_slot_at_the_second_level_of_nesting` | a component `{ int, Inner }`, `Inner { int, slot }` | found |
+| 28 | `A_slot_at_the_third_level_of_nesting` | one more level of nesting | found. The walk is obliged to be recursive and not "the fields of the first level" |
+| 29 | `Two_slots_of_different_record_types_in_one_component_cannot_be_mixed_up` | `{ BlobchegReference<PatchGun>, BlobchegReference<PatchArmor> }` | both are patched, each onto ITS OWN record; swapping them is impossible |
+| 30 | `A_buffer_of_three_elements_is_patched_element_by_element` | a `DynamicBuffer<PatchRefElement>` with three different offsets | all three are resolved, each into its own record |
+| 31 | `A_broken_element_in_the_middle_of_a_buffer_does_not_leave_the_neighbours_half_patched` | a buffer `[good, past the end of the file, good]` | an explicit error AND a consistent state: after it the reverse pass returns their original offsets to the untouched elements. Not a single element was left a raw pointer that would travel to disk as an address |
+| 32 | `A_buffer_of_a_hundred_thousand_elements_is_patched_whole` | volume | the first, the middle and the last one resolve correctly |
+| 33 | `Ten_thousand_entities_with_a_slot_are_patched_in_one_pass` | volume | all resolve; a spot check of the values |
+
+## 6. World serialisation
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 34 | `A_saved_world_contains_an_offset_and_not_a_process_address` | patch → serialisation into memory → **we scan the raw bytes of the stream** | not a single 8-byte word equal to the resolved pointer. And: reading into a new world where the base stands at a DIFFERENT address gives the right value |
+| 35 | `After_a_save_the_live_world_stays_patched` | patch → serialisation → we read `Value` in the original world | still resolved. The reverse pass is obliged to restore and not to leave the world taken apart |
+| 36 | `A_world_that_was_never_patched_is_saved_and_read_correctly` | no patch → serialisation → loading → patch → reading | the right value. The reverse pass over raw offsets is a no-op |
+| 37 | `Saving_after_the_domain_was_taken_off_the_register_is_obliged_to_be_rejected` | patch → took the domain off the register → serialisation | an explicit error. Never a process address in the file |
+| 38 | `A_world_saved_in_one_generation_is_read_in_another` | patch gen1 → serialisation → gen1 freed, gen2 loaded at a different address → loading | it resolves into gen2 |
+
+## 7. The human factor
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 39 | `A_reference_copied_into_an_ordinary_field_does_not_move_with_a_rebuild` | a developer puts a resolved reference into a static field "so as not to look it up every frame", then a rebuild translates the base | the stale copy is obliged to be RECOGNISABLE: the registry does not know its address, `IsResolved` does not lie "yes". Promise 3 covers slots in components but not copies — so a copy is obliged to be visible as dead rather than to read silently |
+| 40 | `IsSet_does_not_promise_that_Value_can_be_read` | `IsSet == true` before the patch, the developer calls `Value` | an explicit error, "is not resolved". Mixing up the two similar properties is the most common mistake on this API |
+| 41 | `A_copy_pasted_baker_with_an_offset_of_a_foreign_domain_is_obliged_to_be_rejected` | a line of the baker was copied and only the type changed: `new BlobchegReference<PatchGun>(coldOffset)` | a rejection (bounds or type). Never a silent read |
+| 42 | `The_BlobAssetReference_habit_of_reading_Value_right_after_AddComponent` | in Unity `BlobAssetReference.Value` works right after baking; here it is before the patch | an explicit error and not zeroes. The developer brings a habit from the neighbouring API |
+| 43 | `Two_references_to_one_record_are_equal_both_before_and_after_the_patch` | `a == b` on two references made from one offset | deterministic and identical in both states. Different answers before and after the patch are a trap: an `if (a == b)` in game code would start lying after a scene load |
+| 44 | `An_unassigned_editor_field_does_not_turn_into_a_record_at_zero` | `default(BlobchegRef<PatchGun>).ToReference()` | equals `default(BlobchegReference<PatchGun>)`, `IsSet == false`. Two ways of doing one and the same thing are obliged to agree; zero is obliged to mean "not assigned" and not "the first record" |
+
+## 8. The absurd
+
+| # | The test | What we do | What we expect |
+|---|---|---|---|
+| 46 | `The_patch_has_no_right_to_touch_a_single_byte_inside_the_base_itself` | the FILE holds `PatchRefRecord { BlobchegReference<PatchGun> Inner; }`; a component holds a reference to it; we patch the world | the bytes of the file are identical before and after the patch. The patch walks the memory of components and not the content of a base; otherwise it corrupts the base itself — and corrupts it for everyone who reads it the old way through `db.Read<T>` |
+| 47 | `A_base_registered_at_the_address_of_a_foreign_record_answers_deterministically` | we take a resolved pointer to a record and register a second domain AT THAT address | the registration refuses (the address is inside another registered buffer), OR the registry answers about both addresses deterministically. Not allowed: the reverse pass picks the wrong domain and writes a garbage offset into the file |
+| 48 | `A_slot_in_a_shared_component_is_either_patched_or_rejected_out_loud` | the same slot, but in an `ISharedComponentData` | EITHER an explicit refusal on setting/patching, OR it is patched like everything else. Skipped silently and then serialised as a process address is corruption: shared components travel into the file too |
+| 49 | `A_reference_to_the_base_itself_as_a_record_is_obliged_to_be_rejected` | `BlobchegReference<PatchHotDb>` — a base is formally `unmanaged` and implements no markers | an explicit error of promise 6. Two features that were never designed together |
+| 50 | `A_cloned_entity_carries_a_resolved_pointer_while_an_offset_travels_to_disk` | patch → `Instantiate` a hundred copies (the clones get an already resolved pointer, they never went through the patch) → serialisation | the clones carry an offset in the file too. If the reverse pass only walks those it patched itself, the pointers will leak into the file |
+| 51 | `One_chunk_with_two_generations_at_once` | patched A over gen1 → moved the base to gen2 → added B with a raw offset into the same archetype → patch once more | both A and B read gen2. A mixed chunk (partly patched, partly not) is exactly what the live path with a change set produces |
 
 ---
 
-# Приложение: что фаза 3 изменила в плане
+## What I consider debatable in advance
 
-Ожидания не подгонялись. Ниже — ровно то, что пришлось переписать, и почему это законно.
+- **Test 23 against promise 3.** A rebuild under a live editor IS registering the domain again. So
+  either `Register` is itself the way to translate, and then "two bases over one domain" pass silently,
+  or the translation is a separate call, and then a bare repeated `Register` is obliged to throw. Both
+  forks are acceptable; the middle is not.
+- **Tests 20, 21, 49** may turn out to be a compilation error rather than a runtime one. Then the
+  offending types cannot be kept alive in the assembly: they would poison the patch table for all the
+  other tests. The check would move onto reflection or into a separate assembly, and if even that is
+  impossible — an `// API DESIGN:`.
+- **Test 18** (a Dispose without unregistering) may be fundamentally unsolvable: the value struct of a
+  base has no cell that outlives the freeing of the memory — the same accepted limit that is pinned
+  down in `Samples~/AdvancedTests`. Then it is not a BUG but a limit, and the test pins it down with an
+  explanation.
+- **Test 34** — scanning the raw stream — is the only honest check of promise 4. The indirect one
+  (loaded into another world, the value is right) passes on a file with an address inside it too, if
+  the new world happened to load the base at the same address.
 
-1. **Тесты 20, 21, 49 переехали на рефлексию.** Опасение из «спорного» подтвердилось буквально:
-   `BlobchegPatchTableBuilder.Build` обходит ВСЕ типы компонентов процесса и на первой же ссылке в
-   запись без домена бросает — то есть живой компонент со ссылкой на `PatchLoose` выключил бы патч
-   всему проекту, а не одному тесту. Публичной точки «проверь один тип» нет. Проверка идёт через
-   приватный `DomainKeyOf`, и над ней стоит `// API DESIGN:` — это не адаптация ожидания, а
-   констатация, что с публичной поверхности ожидание непроверяемо.
+---
 
-2. **Тест 23 переформулирован в дизъюнкцию, а не смягчён.** Реальность дала третий исход, которого
-   план не предусмотрел: указатель остаётся в прошлом поколении, но чтение по нему отказывается
-   явно (`IsKnownAddress` смотрит только текущее поколение). Посылка «недопустима середина: реестр
-   показывает новое, а указатели молча читают старое» при этом держится. Тест проверяет именно её.
+# Appendix: what phase 3 changed in the plan
 
-3. **Тест 18 признан принятым пределом, а не BUG.** У value-структуры базы нет ячейки, переживающей
-   освобождение памяти, — тот же предел, что уже закреплён в `Samples~/AdvancedTests`. Тест остался,
-   но закрепляет ограничение с объяснением.
+The expectations were not fitted. Below is exactly what had to be rewritten, and why that is legitimate.
 
-4. **Тест 43 распался надвое.** Ожидание «сравнение детерминированно» выполняется, а вот способа
-   сравнить без боксинга у типа нет вовсе: ни `==`, ни `IEquatable<>`. Поведенческая половина —
-   обычный тест, вторая — `[Ignore]` с `// API DESIGN:`.
+1. **Tests 20, 21, 49 moved onto reflection.** The worry from "the debatable" was confirmed literally:
+   `BlobchegPatchTableBuilder.Build` walks ALL the component types of the process and throws on the very
+   first reference into a record without a domain — that is, a live component with a reference to
+   `PatchLoose` would switch the patch off for the whole project rather than for one test. There is no
+   public "check one type" entry point. The check goes through the private `DomainKeyOf`, and above it
+   stands an `// API DESIGN:` — this is not an adaptation of the expectation but a statement that from
+   the public surface the expectation cannot be checked.
 
-5. **Тест 44 ждал `default` — получил исключение.** `ToReference()` идёт через `BlobchegRef<T>.Offset`,
-   а тот на пустом ассете бросает. Явная ошибка контракту не противоречит, и тест переписан на неё;
-   ожидание «ноль обязан значить „не назначено“» при этом проверяется в тесте 1 напрямую.
+2. **Test 23 was reformulated into a disjunction, not softened.** Reality gave a third outcome the plan
+   did not foresee: the pointer stays in the previous generation, but a read through it refuses
+   explicitly (`IsKnownAddress` looks only at the current generation). The premise "the middle is not
+   allowed: the registry shows the new one while the pointers silently read the old one" holds all the
+   same. That is exactly what the test checks.
 
-6. **Тест 25 оказался хуже, чем предполагалось.** План допускал «либо едет за записью, либо явная
-   ошибка». Реальность — третье: `TryResolve` переводит поколения арифметикой `start + (value - prev)`
-   и молча отдаёт СОСЕДНЮЮ запись. Это порча, и тест оставлен красным.
+3. **Test 18 was recognised as an accepted limit and not a BUG.** The value struct of a base has no cell
+   that outlives the freeing of the memory — the same limit that is already pinned down in
+   `Samples~/AdvancedTests`. The test stayed, but it pins down the limitation with an explanation.
 
-7. **Добавлено сверх плана** (нашлось при чтении контракта, не при подгонке): порядок
-   «снять старую базу, потом поднять новую» теряет все розданные указатели; запись мира со снятым
-   доменом кладёт в файл адрес процесса и не отменяется; сообщение о неподнятом домене называет
-   ключ FNV-64 вместо имени; шестьдесят пятый домен; снятие с учёта чужим указателем.
+4. **Test 43 split in two.** The expectation "the comparison is deterministic" holds, but the type has no
+   way to compare without boxing at all: neither `==` nor `IEquatable<>`. The behavioural half is an
+   ordinary test, the second one is an `[Ignore]` with an `// API DESIGN:`.
+
+5. **Test 44 expected `default` and got an exception.** `ToReference()` goes through
+   `BlobchegRef<T>.Offset`, and that one throws on an empty asset. An explicit error does not contradict
+   the contract, and the test was rewritten onto it; the expectation "zero is obliged to mean 'not
+   assigned'" is checked directly in test 1 all the same.
+
+6. **Test 25 turned out worse than assumed.** The plan allowed "either it travels after the record or an
+   explicit error". Reality gave a third: `TryResolve` translates generations with the arithmetic
+   `start + (value - prev)` and silently hands out the NEIGHBOURING record. That is corruption, and the
+   test was left red.
+
+7. **Added beyond the plan** (found while reading the contract, not while fitting): the order "take the
+   old base off the register, then load the new one" loses every pointer handed out; writing a world with
+   an unregistered domain puts a process address into the file and is not cancelled; the message about an
+   unloaded domain names the FNV-64 key instead of the name; the sixty-fifth domain; unregistering with a
+   foreign pointer.

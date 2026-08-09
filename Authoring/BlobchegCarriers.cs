@@ -4,13 +4,14 @@ using UnityEditor;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Носители нод, прочитанные один раз на пересборку: ref-ассеты с адресами записей и носители
-    /// id. Это и есть журнал выданных адресов — он лежит на самих нодах, едет в гит вместе с ними и
-    /// переживает чекаут без .bcheg, поэтому отдельного файла-манифеста «нода → адрес» нет: он был
-    /// бы дублем и вечным вопросом, кто из двоих прав.
+    /// The carriers of the nodes, read once per rebuild: the ref assets with record addresses and the
+    /// id carriers. That is the journal of handed-out addresses — it lies on the nodes themselves,
+    /// travels into git with them and outlives a checkout without a .bcheg, which is why there is no
+    /// separate "node → address" manifest file: it would be a duplicate and an eternal question of
+    /// which of the two is right.
     ///
-    /// Читается до раскладки: адрес нужен писателю ДО Flush, а раньше носители доставались уже
-    /// после — по одному <c>LoadAllAssetsAtPath</c> на каждую запись вместо одного на ноду.
+    /// It is read before the layout: the writer needs the address BEFORE Flush, and earlier the carriers
+    /// were fetched after it — one <c>LoadAllAssetsAtPath</c> per record instead of one per node.
     /// </summary>
     sealed class BlobchegCarriers
     {
@@ -31,8 +32,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// То же самое, но носители нетронутых нод берутся из кеша: сабассеты ноды меняет только
-        /// пересборка, и она же кладёт в кеш то, что записала.
+        /// The same thing, but the carriers of untouched nodes are taken from the cache: the sub-assets
+        /// of a node are only changed by the rebuild, and it is the rebuild that puts what it wrote into
+        /// the cache.
         /// </summary>
         public static BlobchegCarriers Read(IReadOnlyList<BlobchegCache.Entry> entries)
         {
@@ -54,9 +56,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Переимпорт мог уничтожить объекты, на которые кеш держит ссылки. Уничтоженный носитель
-        /// сравнится с null, пересборка сочтёт, что носителя нет, и заведёт второй — поэтому такой
-        /// список не годится целиком.
+        /// A reimport may have destroyed the objects the cache holds references to. A destroyed carrier
+        /// compares equal to null, the rebuild decides that there is no carrier and creates a second
+        /// one — which is why such a list is unfit as a whole.
         /// </summary>
         static bool Alive<T>(List<T> carriers) where T : UnityEngine.Object
         {
@@ -126,7 +128,7 @@ namespace Blobcheg.Authoring
             return null;
         }
 
-        /// <summary>Свежесозданный носитель попадает в журнал сразу: его ещё нет в файле ноды.</summary>
+        /// <summary>A freshly created carrier enters the journal at once: it is not in the node file yet.</summary>
         public void Add(BlobchegNodeSo node, BlobchegRefSo reference)
         {
             if (!_refs.TryGetValue(node, out var refs))
@@ -143,7 +145,7 @@ namespace Blobcheg.Authoring
             ids.Add(carrier);
         }
 
-        /// <summary>Носитель уехал с ассета — из журнала он обязан уехать тем же движением.</summary>
+        /// <summary>A carrier left the asset — it is obliged to leave the journal in the same motion.</summary>
         public void Forget(BlobchegNodeSo node, BlobchegRefSo reference)
         {
             if (_refs.TryGetValue(node, out var refs))
@@ -156,7 +158,7 @@ namespace Blobcheg.Authoring
                 ids.Remove(carrier);
         }
 
-        /// <summary>Списки носителей ноды — их же кладёт себе кеш, чтобы не читать ассет заново.</summary>
+        /// <summary>The carrier lists of a node — the cache keeps the same ones so as not to read the asset again.</summary>
         public List<BlobchegRefSo> RefListOf(BlobchegNodeSo node)
             => _refs.TryGetValue(node, out var found) ? found : new List<BlobchegRefSo>();
 

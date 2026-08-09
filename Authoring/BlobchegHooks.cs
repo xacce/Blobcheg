@@ -7,12 +7,12 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Пересборка происходит сама: кнопка «сохранить блоб» дала бы только возможность про неё
-    /// забыть. Ловим импорт нод, вход в PlayMode и пре-билд.
+    /// The rebuild happens by itself: a "save the blob" button would only give a chance to forget about
+    /// it. We catch node imports, entering PlayMode and the pre-build.
     ///
-    /// Команда в меню при этом есть (<see cref="BlobchegMenu"/>) — но она не про «собрать, когда
-    /// вспомню», а про то, чего эти три события не видят: файлы можно потерять мимо ассетов, и
-    /// тогда грязных нод нет, а пересобрать надо.
+    /// There is a menu command as well (<see cref="BlobchegMenu"/>) — but it is not about "build when I
+    /// remember", it is about what those three events do not see: files can be lost past the assets, and
+    /// then there are no dirty nodes while a rebuild is still needed.
     /// </summary>
     public sealed class BlobchegHooks : AssetPostprocessor
     {
@@ -29,8 +29,8 @@ namespace Blobcheg.Authoring
 
         static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
         {
-            // Пересборка пишет носители сама и сама знает, что записала: считать эти импорты
-            // чужой правкой — значит объявлять грязными все ноды, которые только что собрали.
+            // The rebuild writes the carriers itself and knows what it wrote: counting those imports as
+            // someone else's edit would mean declaring every node that was just built dirty.
             if (BlobchegBuild.Building)
                 return;
 
@@ -43,7 +43,7 @@ namespace Blobcheg.Authoring
                 MarkDirty();
         }
 
-        /// <summary>Пометить домены грязными вручную — из тестов и инструментов.</summary>
+        /// <summary>Mark the domains dirty by hand — from tests and tools.</summary>
         public static void MarkDirty()
         {
             _dirty = true;
@@ -69,7 +69,7 @@ namespace Blobcheg.Authoring
                 var report = BlobchegBuild.RebuildAll();
                 _dirty = false;
                 if (report.Changed)
-                    Debug.Log($"Blobcheg: пересобрано — {report}");
+                    Debug.Log($"Blobcheg: rebuilt — {report}");
             }
             finally
             {
@@ -88,7 +88,8 @@ namespace Blobcheg.Authoring
             }
             catch (Exception e)
             {
-                // Ехать в PlayMode с несобранной базой нельзя: она либо поднимется целиком, либо нет.
+                // Entering PlayMode with an unbuilt base is not allowed: it either comes up whole or not
+                // at all.
                 EditorApplication.isPlaying = false;
                 Debug.LogException(e);
                 throw;
@@ -112,8 +113,8 @@ namespace Blobcheg.Authoring
 
         static bool TouchesDeleted(string[] paths)
         {
-            // Удалённый ассет уже не загрузить, тип не спросить. Пересборка идемпотентна, поэтому
-            // лишний заход по любому удалённому .asset дешевле пропущенной ноды.
+            // A deleted asset can no longer be loaded and its type cannot be asked for. The rebuild is
+            // idempotent, so an extra run over any deleted .asset is cheaper than a missed node.
             foreach (var path in paths)
             {
                 if (!IsOutput(path) && path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
@@ -128,45 +129,47 @@ namespace Blobcheg.Authoring
     }
 
     /// <summary>
-    /// Пре-билд: блоб обязан быть собран, сжат и детерминирован до того, как поедет в плеер.
+    /// The pre-build: the blob is obliged to be built, compacted and deterministic before it travels
+    /// into the player.
     ///
-    /// Компакт именно здесь: дырки от удалённых нод — это байты, которые едут в билд ни за чем, а
-    /// пересортировка двигает все адреса, и позволить её можно только там, где следом всё равно
-    /// перепекается всё. В редакторе на неё есть отдельная команда, сама она не случается.
+    /// The compaction happens exactly here: the holes left by deleted nodes are bytes that travel into
+    /// the build for nothing, while a re-sort moves every address, and it can only be allowed where
+    /// everything gets rebaked right afterwards anyway. In the editor there is a separate command for
+    /// it, it never happens by itself.
     ///
-    /// Здесь же снимается отладочный контур — но только с релизного плеера. В development-билде
-    /// стоит <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>, то есть проверка типа записи там работает, и
-    /// снимать то, на чём она стоит, значило бы выключить её ровно в том билде, который и заводят,
-    /// чтобы ловить.
+    /// The debug contour is taken off here too — but only for a release player. A development build has
+    /// <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>, that is, the record type check works there, and taking
+    /// away what it stands on would mean switching it off in exactly the build that is made in order to
+    /// catch things.
     /// </summary>
     public sealed class BlobchegBuildGate : BuildPlayerProcessor
     {
-        // Не IPreprocessBuildWithReport: субсцены Entities печёт в PrepareForBuild
-        // (EntitySceneBuildPlayerProcessor), а эта фаза идёт раньше пре-билд-колбэков. Сжать базу
-        // после бейка — значит увезти в билд субсцены со старыми адресами и не заметить этого.
-        // Отсюда и фаза, и порядок: раньше всех, кто печёт.
+        // Not IPreprocessBuildWithReport: Entities bakes subscenes in PrepareForBuild
+        // (EntitySceneBuildPlayerProcessor), and that phase runs earlier than the pre-build callbacks.
+        // Compacting the base after the bake means carrying subscenes with the old addresses into the
+        // build and never noticing. Hence both the phase and the order: earlier than everyone who bakes.
         public override int callbackOrder => -10000;
 
         public override void PrepareForBuild(BuildPlayerContext context)
         {
             var development = (context.BuildPlayerOptions.options & BuildOptions.Development) != 0;
 
-            Debug.Log($"Blobcheg: пре-билд — компакт до бейка субсцен, отладочный контур " +
-                      $"{(development ? "остаётся (development)" : "снят")}");
+            Debug.Log($"Blobcheg: pre-build — compaction before the subscene bake, the debug contour " +
+                      $"{(development ? "stays (development)" : "is taken off")}");
 
             BlobchegBuild.DebugContour = development;
             BlobchegBuild.Compact();
-            BlobchegBuild.RequireUpToDate("пре-билд");
+            BlobchegBuild.RequireUpToDate("pre-build");
         }
     }
 
     /// <summary>
-    /// После билда редактору возвращают его отладочный контур: файлы в StreamingAssets остались
-    /// собранными под плеер, а в редакторе на контуре стоит проверка типа при чтении.
+    /// After the build the editor gets its debug contour back: the files in StreamingAssets stayed
+    /// assembled for the player, and in the editor the read-time type check stands on the contour.
     ///
-    /// Билд упал — колбэк не позвали, и до следующей перезагрузки домена контура не будет. Это не
-    /// тихая потеря: <see cref="BlobchegBuild.WithDebug"/> статикой не переживает перезагрузку, а
-    /// первая же пересборка после неё вернёт секцию на место.
+    /// If the build failed the callback was not called, and there will be no contour until the next
+    /// domain reload. That is not a silent loss: <see cref="BlobchegBuild.WithDebug"/> is a static and
+    /// does not survive a reload, and the very first rebuild after it puts the section back.
     /// </summary>
     public sealed class BlobchegDebugContourRestore : IPostprocessBuildWithReport
     {
@@ -179,7 +182,7 @@ namespace Blobcheg.Authoring
 
             BlobchegBuild.DebugContour = true;
             BlobchegBuild.RebuildFull();
-            Debug.Log("Blobcheg: отладочный контур возвращён редактору");
+            Debug.Log("Blobcheg: the debug contour has been given back to the editor");
         }
     }
 }

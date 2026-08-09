@@ -9,14 +9,14 @@ using UnityEngine;
 
 namespace Blobcheg.Tests
 {
-    /// <summary>Второй домен теста — нужен, чтобы у роутера было больше одного бита.</summary>
+    /// <summary>The second domain of the test — needed so that the router has more than one bit.</summary>
     public interface ITestColdData
     {
     }
 
     public struct TestColdInfo : ITestColdData
     {
-        /// <summary>Свой id, положенный нодой прямо в запись: доказательство, что он известен до записи.</summary>
+        /// <summary>Its own id, put by the node straight into the record: proof that it is known before the write.</summary>
         public uint SelfId;
 
         public int Tier;
@@ -28,15 +28,16 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Обычный роутер теста: номера строк раздаёт он сам. Базы называют его явно — рядом живёт
-    /// второй, детерминированный (<c>TestFixedRouter</c>), и выбирать за них некому.
+    /// The ordinary router of the test: it hands out the row numbers itself. The bases name it
+    /// explicitly — a second, deterministic one (<c>TestFixedRouter</c>) lives next to it, and there is
+    /// nobody to choose for them.
     /// </summary>
     [BlobchegRouter]
     public partial struct TestGameRouter
     {
     }
 
-    /// <summary>Нода в обеих базах: строка роутера с двумя битами.</summary>
+    /// <summary>A node in both bases: a router row with two bits.</summary>
     public sealed class TestModuleNodeSo : BlobchegNodeSo
     {
         public int tier = 3;
@@ -50,7 +51,7 @@ namespace Blobcheg.Tests
         }
     }
 
-    /// <summary>Нода только в холодной базе: строка с одним битом, дырка на месте второго.</summary>
+    /// <summary>A node only in the cold base: a row with one bit and a hole where the second would be.</summary>
     public sealed class TestColdOnlyNodeSo : BlobchegNodeSo
     {
         public int tier = 9;
@@ -61,7 +62,7 @@ namespace Blobcheg.Tests
             => writer.Add(new TestColdInfo { SelfId = writer.Id.Value, Tier = tier });
     }
 
-    /// <summary>Файлы и манифесты, которые пересборка кладёт из-за тестовых доменов.</summary>
+    /// <summary>The files and manifests the rebuild lays down because of the test domains.</summary>
     static class BlobchegTestArtifacts
     {
         static readonly string[] Names =
@@ -86,8 +87,8 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Сквозной путь роутера: ноды в едиторе → пересборка → файл роутера → носитель id → лукап
-    /// оффсетов во всех базах сразу.
+    /// The end-to-end path of a router: nodes in the editor → the rebuild → the router file → the id
+    /// carrier → a lookup of the offsets in every base at once.
     /// </summary>
     public sealed class BlobchegRouterPipelineTests
     {
@@ -98,8 +99,8 @@ namespace Blobcheg.Tests
         [SetUp]
         public void SetUp()
         {
-            // Папка своя на каждый тест: удаление ассетов отложенное, и переиспользованное имя
-            // съедает ассет, созданный в ещё не удалённой папке.
+            // A folder of its own per test: asset deletion is deferred, and a reused name swallows an
+            // asset created in a folder that has not been deleted yet.
             var name = "BlobchegRouterTemp_" + Guid.NewGuid().ToString("N");
             _folder = "Assets/" + name;
             AssetDatabase.CreateFolder("Assets", name);
@@ -122,7 +123,7 @@ namespace Blobcheg.Tests
             AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<T>(), path);
 
             var asset = AssetDatabase.LoadAssetAtPath<T>(path);
-            Assert.That(asset, Is.Not.Null, $"ассет '{path}' не создался — дальше проверять нечего");
+            Assert.That(asset, Is.Not.Null, $"asset '{path}' was not created — there is nothing further to check");
             return asset;
         }
 
@@ -136,7 +137,7 @@ namespace Blobcheg.Tests
         static TestGameRouter LoadRouter()
         {
             var path = Path.Combine(BlobchegBuild.OutputDirectory, TestGameRouter.FileName);
-            Assert.That(File.Exists(path), Is.True, "файл роутера должен лечь в StreamingAssets");
+            Assert.That(File.Exists(path), Is.True, "the router file must land in StreamingAssets");
             return new TestGameRouter(BlobchegBuffer.From(File.ReadAllBytes(path), Allocator.Persistent));
         }
 
@@ -149,7 +150,7 @@ namespace Blobcheg.Tests
                 File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName)), Allocator.Persistent));
 
         [Test]
-        public void Кодоген_и_реестр_сошлись_на_нумерации_бит()
+        public void The_codegen_and_the_registry_agree_on_the_bit_numbering()
         {
             Assert.That(TestGameRouter.DomainCount, Is.EqualTo(2));
             Assert.That(TestGameRouter.RouterName, Is.EqualTo("TestGameRouter"));
@@ -158,11 +159,11 @@ namespace Blobcheg.Tests
 
             var domains = BlobchegRouters.DomainsOf(typeof(TestGameRouter));
             CollectionAssert.AreEqual(new[] { typeof(ITestColdData), typeof(ITestCombatData) }, domains,
-                "биты нумеруются доменами по FullName ordinal");
+                "the bits are numbered by the domains in ordinal FullName order");
         }
 
         [Test]
-        public void По_одному_id_достаются_записи_обеих_баз()
+        public void One_id_gets_the_records_of_both_bases()
         {
             _module.tier = 42;
             EditorUtility.SetDirty(_module);
@@ -183,12 +184,12 @@ namespace Blobcheg.Tests
 
                 ref readonly var record = ref cold.Read<TestColdInfo>(row.cold);
                 Assert.That(record.Tier, Is.EqualTo(42));
-                Assert.That(record.SelfId, Is.EqualTo(id.Value), "нода положила свой id в запись — он известен до записи");
+                Assert.That(record.SelfId, Is.EqualTo(id.Value), "the node put its own id into the record — it is known before the write");
 
                 ref readonly var pistol = ref combat.Read<TestPistol>(row.combat);
                 Assert.That(pistol.Rpm, Is.EqualTo(111));
 
-                Assert.That(router.GetCold(id), Is.EqualTo(row.cold), "короткий путь и строка дают одно и то же");
+                Assert.That(router.GetCold(id), Is.EqualTo(row.cold), "the short path and the row give the same thing");
                 Assert.That(router.TryGetCombat(id, out var offset), Is.True);
                 Assert.That(offset, Is.EqualTo(row.combat));
             }
@@ -201,7 +202,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Нода_вне_базы_бросает_а_Try_отвечает_false()
+        public void A_node_outside_a_base_throws_while_Try_answers_false()
         {
             BlobchegBuild.RebuildAll();
 
@@ -211,7 +212,7 @@ namespace Blobcheg.Tests
             {
                 var row = router.Get(id);
                 Assert.That(row.HasCold, Is.True);
-                Assert.That(row.HasCombat, Is.False, "эта нода в боевую базу не писала");
+                Assert.That(row.HasCombat, Is.False, "this node never wrote into the combat base");
 
                 Assert.Throws<InvalidOperationException>(() => _ = row.combat);
                 Assert.Throws<InvalidOperationException>(() => router.GetCombat(id));
@@ -227,7 +228,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Неизвестный_id_бросает()
+        public void An_unknown_id_throws()
         {
             BlobchegBuild.RebuildAll();
 
@@ -239,11 +240,11 @@ namespace Blobcheg.Tests
                 Assert.Throws<InvalidOperationException>(() => router.Get(BlobchegId.None));
                 Assert.That(router.TryGet(beyond, out _), Is.False);
 
-                // Тег заведомо не этого роутера: имя чужого роутера могло бы совпасть тегом.
+                // A tag deliberately not of this router: the name of a foreign router could share a tag.
                 var alienTag = (byte)(BlobchegNaming.TagOf(TestGameRouter.RouterName) % 255 + 1);
                 var alien = BlobchegId.Make(alienTag, 0);
                 Assert.Throws<InvalidOperationException>(() => router.Get(alien),
-                    "строка ноль в этом роутере есть, но id выдан не им");
+                    "row zero exists in this router, but the id was not handed out by it");
                 Assert.That(router.TryGet(alien, out _), Is.False);
             }
             finally
@@ -253,7 +254,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Id_не_двигается_от_правки_значения()
+        public void An_id_does_not_move_when_a_value_is_edited()
         {
             BlobchegBuild.RebuildAll();
             var before = IdOf(_module);
@@ -269,7 +270,7 @@ namespace Blobcheg.Tests
             try
             {
                 Assert.That(cold.Read<TestColdInfo>(router.Get(before).cold).Tier, Is.EqualTo(7),
-                    "значение при этом обязано поменяться");
+                    "the value is obliged to change while it does");
             }
             finally
             {
@@ -279,7 +280,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Новая_нода_не_двигает_ни_чужой_id_ни_чужой_оффсет()
+        public void A_new_node_moves_neither_a_foreign_id_nor_a_foreign_offset()
         {
             BlobchegBuild.RebuildAll();
 
@@ -287,24 +288,24 @@ namespace Blobcheg.Tests
             var offset = BlobchegBuild.RefsOf(_module)
                 .Single(r => r.DomainName == "ITestColdData").offset;
 
-            // GUID у новой ноды случаен, поэтому в раскладке по GUID она садится где угодно — в том
-            // числе перед уже существующими.
+            // The GUID of a new node is random, so in a GUID-ordered layout it settles anywhere — before
+            // the existing ones included.
             Create<TestColdOnlyNodeSo>("Newcomer");
             AssetDatabase.SaveAssets();
             BlobchegBuild.RebuildAll();
 
-            Assert.That(IdOf(_module), Is.EqualTo(id), "id соседа обязан пережить появление новой ноды");
+            Assert.That(IdOf(_module), Is.EqualTo(id), "the neighbour's id is obliged to outlive the appearance of a new node");
             Assert.That(BlobchegBuild.RefsOf(_module).Single(r => r.DomainName == "ITestColdData").offset,
-                Is.EqualTo(offset), "оффсет соседа обязан пережить появление новой ноды");
+                Is.EqualTo(offset), "the neighbour's offset is obliged to outlive the appearance of a new node");
         }
 
         [Test]
-        public void Удалённая_нода_оставляет_дырку_а_чужой_id_остаётся()
+        public void A_deleted_node_leaves_a_hole_and_a_foreign_id_stays()
         {
             BlobchegBuild.RebuildAll();
 
-            // Дырку оставляет только тот, у кого id не последний, а раздаются они по GUID —
-            // поэтому кого убить, решает замер, а не порядок создания в тесте.
+            // Only the one whose id is not the last leaves a hole, and they are handed out by GUID —
+            // so which one to kill is decided by a measurement and not by the creation order in the test.
             var first = IdOf(_module).Index < IdOf(_cold).Index;
             var victim = first ? (BlobchegNodeSo)_module : _cold;
             var survivor = first ? (BlobchegNodeSo)_cold : _module;
@@ -318,15 +319,15 @@ namespace Blobcheg.Tests
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
             BlobchegBuild.RebuildAll();
 
-            Assert.That(IdOf(survivor), Is.EqualTo(keep), "чужой id не съезжает следом за удалённым");
+            Assert.That(IdOf(survivor), Is.EqualTo(keep), "a foreign id does not slide down after a deleted one");
             Assert.That(LoadRouterRowCount(), Is.EqualTo(rows),
-                "строка удалённой ноды остаётся дыркой: подтянуть следующую — значит сдвинуть её id");
+                "the row of a deleted node stays a hole: pulling the next one in means shifting its id");
 
             var router = LoadRouter();
             try
             {
-                Assert.That(router.Get(keep).HasCold, Is.True, "оставшаяся нода по своему id читается как читалась");
-                Assert.That(router.Get(killed).HasCold, Is.False, "дырка пуста, а не показывает на соседа");
+                Assert.That(router.Get(keep).HasCold, Is.True, "the surviving node reads by its id the way it always did");
+                Assert.That(router.Get(killed).HasCold, Is.False, "the hole is empty and does not point at a neighbour");
             }
             finally
             {
@@ -348,7 +349,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Компакт_убирает_дырку_и_раздаёт_адреса_заново()
+        public void A_compaction_removes_the_hole_and_hands_out_the_addresses_anew()
         {
             BlobchegBuild.RebuildAll();
 
@@ -360,18 +361,18 @@ namespace Blobcheg.Tests
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
             BlobchegBuild.RebuildAll();
 
-            Assert.That(LoadRouterRowCount(), Is.EqualTo(2), "дырка на месте: обычная пересборка её не трогает");
+            Assert.That(LoadRouterRowCount(), Is.EqualTo(2), "the hole is in place: an ordinary rebuild does not touch it");
             Assert.That(IdOf(survivor), Is.EqualTo(before));
 
             BlobchegBuild.Compact();
 
-            Assert.That(LoadRouterRowCount(), Is.EqualTo(1), "компакт обязан убрать пустую строку");
-            Assert.That(IdOf(survivor).Index, Is.EqualTo(0u), "и раздать id заново подряд");
+            Assert.That(LoadRouterRowCount(), Is.EqualTo(1), "a compaction is obliged to remove the empty row");
+            Assert.That(IdOf(survivor).Index, Is.EqualTo(0u), "and hand the ids out anew, consecutively");
 
             var router = LoadRouter();
             try
             {
-                Assert.That(router.Get(IdOf(survivor)).HasCold, Is.True, "нода по новому id читается");
+                Assert.That(router.Get(IdOf(survivor)).HasCold, Is.True, "the node reads by its new id");
             }
             finally
             {
@@ -379,21 +380,21 @@ namespace Blobcheg.Tests
             }
 
             Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False,
-                "после компакта раскладка обязана сойтись сама с собой");
+                "after a compaction the layout is obliged to agree with itself");
         }
 
         [Test]
-        public void Пересборка_с_роутером_идемпотентна()
+        public void A_rebuild_with_a_router_is_idempotent()
         {
             BlobchegBuild.RebuildAll();
 
             var again = BlobchegBuild.RebuildAll();
             Assert.That(again.Changed, Is.False,
-                "ничего не изменилось — не должен быть тронут ни файл роутера, ни один носитель id");
+                "nothing changed — neither the router file nor a single id carrier must be touched");
         }
 
         [Test]
-        public void Поле_id_отбивает_пустоту_и_чужой_роутер()
+        public void An_id_field_rejects_emptiness_and_a_foreign_router()
         {
             BlobchegBuild.RebuildAll();
 
@@ -404,7 +405,7 @@ namespace Blobcheg.Tests
             var alien = ScriptableObject.CreateInstance<BlobchegIdSo>();
             try
             {
-                alien.name = "Чужой";
+                alien.name = "Alien";
                 alien.id = 0;
                 var thrown = Assert.Throws<InvalidOperationException>(
                     () => _ = new BlobchegIdRef<TestGameRouter>(alien).Id);
@@ -418,7 +419,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пикер_показывает_только_ноды_своего_роутера()
+        public void The_picker_shows_only_the_nodes_of_its_own_router()
         {
             BlobchegBuild.RebuildAll();
 
@@ -426,12 +427,12 @@ namespace Blobcheg.Tests
             CollectionAssert.Contains(mine, BlobchegBuild.IdsOf(_module).Single());
             CollectionAssert.Contains(mine, BlobchegBuild.IdsOf(_cold).Single());
 
-            Assert.That(BlobchegIdCatalog.Candidates("ЧужойРоутер"), Is.Empty);
+            Assert.That(BlobchegIdCatalog.Candidates("ForeignRouter"), Is.Empty);
             Assert.That(BlobchegIdCatalog.RouterNameOf(typeof(TestGameRouter)), Is.EqualTo("TestGameRouter"));
         }
 
         [Test]
-        public void Манифест_роутера_держит_хеш_файла_и_порядок_id()
+        public void The_router_manifest_holds_the_file_hash_and_the_id_order()
         {
             var report = BlobchegBuild.RebuildAll();
 
@@ -440,14 +441,14 @@ namespace Blobcheg.Tests
 
             Assert.That(manifest, Is.Not.Null);
             Assert.That(manifest.IsRouter, Is.True,
-                $"отчёт: {report}; путь: {AssetDatabase.GetAssetPath(manifest)}; id: {manifest.GetInstanceID()}; " +
+                $"report: {report}; path: {AssetDatabase.GetAssetPath(manifest)}; id: {manifest.GetInstanceID()}; " +
                 $"domainName: '{manifest.domainName}'; recordCount: {manifest.recordCount}; " +
                 $"hash: {manifest.ContentHash:X16}; nodes: {manifest.nodes?.Length}");
 
             var file = File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestGameRouter.FileName));
             Assert.That(manifest.ContentHash, Is.EqualTo(BitConverter.ToUInt64(file, 16)));
 
-            // Ноды в манифесте лежат в порядке id — это и есть таблица «id → нода» для глаз.
+            // The nodes lie in the manifest in id order — that is the "id → node" table for the eye.
             for (var i = 0; i < manifest.nodes.Length; i++)
             {
                 var carrier = BlobchegBuild.IdsOf(manifest.nodes[i]).Single();

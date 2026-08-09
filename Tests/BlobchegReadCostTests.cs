@@ -10,34 +10,35 @@ using UnityEngine;
 namespace Blobcheg.Tests
 {
     /// <summary>
-    /// Хронометраж чтения в редакторе. Это не проверка поведения: числа тут не сравниваются ни с
-    /// каким порогом, тесты падают только если чтение вернуло не то, что записано, — то есть если
-    /// измеряли пустой цикл.
+    /// Timing of a read in the editor. This is not a behaviour check: the numbers here are not compared
+    /// against any threshold, the tests fail only if the read returned something other than what was
+    /// written — that is, if an empty loop was measured.
     ///
-    /// Зачем: с тех пор как отладочный контур включили по умолчанию, каждый <c>Read</c> в редакторе
-    /// делает двоичный поиск по debug-секции, а раньше это была реинтерпретация по оффсету. Цена
-    /// этого не была мерена. Замер снят ДО того, как в <c>CheckRead</c> ляжет
-    /// <c>AtomicSafetyHandle</c>: иначе после его появления нельзя будет сказать, чья цена.
+    /// Why: ever since the debug contour was switched on by default, every <c>Read</c> in the editor
+    /// does a binary search over the debug section, while before that it was a reinterpretation at an
+    /// offset. The price of that was never measured. The measurement is taken BEFORE an
+    /// <c>AtomicSafetyHandle</c> lands in <c>CheckRead</c>: otherwise, once it appears, there will be no
+    /// telling whose price is whose.
     ///
-    /// Цифры печатаются в лог; повторить после любой правки <c>CheckRead</c> — тем же прогоном.
+    /// The numbers are printed into the log; repeat after any edit of <c>CheckRead</c> with the same run.
     /// </summary>
     public sealed class BlobchegReadCostTests
     {
         const string DomainName = "CostDomain";
 
-        /// <summary>Замеряемая запись: восемь байт, как обычная запись потребителя.</summary>
+        /// <summary>The record being measured: eight bytes, like an ordinary consumer record.</summary>
         struct CostGun
         {
             public float AmmoMax;
             public int Rpm;
         }
 
-        /// <summary>Значение в каждой записи одно и то же — по сумме видно, что цикл не выкинули.</summary>
+        /// <summary>The value in every record is the same — the sum shows that the loop was not thrown away.</summary>
         const int Rpm = 4242;
 
         string _dir;
 
-        // Полями, а не локальными: замеряемый цикл не должен читать поле замыкания на каждом витке.
+        // Fields and not locals: the measured loop must not read a closure field on every turn.
         BlobchegBuffer _buffer;
         BlobchegBlob _blob;
         uint[] _offsets;
@@ -56,11 +57,11 @@ namespace Blobcheg.Tests
                 Directory.Delete(_dir, true);
         }
 
-        // ------------------------------------------------------------- стенд
+        // ------------------------------------------------------------- the rig
 
         /// <summary>
-        /// Файловый цикл: домен из <paramref name="records"/> записей одного типа. Ассеты не нужны —
-        /// мерить надо цену чтения, а не цену пересборки.
+        /// The file cycle: a domain of <paramref name="records"/> records of one type. No assets are
+        /// needed — what must be measured is the price of a read and not the price of a rebuild.
         /// </summary>
         unsafe byte[] Build(int records, bool withDebug, out uint[] offsets)
         {
@@ -102,11 +103,11 @@ namespace Blobcheg.Tests
             _offsets = null;
         }
 
-        // ------------------------------------------------------------- циклы
+        // ------------------------------------------------------------- the loops
 
         /// <summary>
-        /// Пол стенда: тот же обход массива оффсетов без всякого чтения. Всё остальное надо читать
-        /// как «это плюс столько».
+        /// The floor of the rig: the same walk over the offset array with no read at all. Everything
+        /// else is to be read as "this plus that much".
         /// </summary>
         long PassLoop(int iterations)
         {
@@ -125,7 +126,7 @@ namespace Blobcheg.Tests
             return sum;
         }
 
-        /// <summary>Релизный путь: чистая реинтерпретация по оффсету, никаких проверок.</summary>
+        /// <summary>The release path: a pure reinterpretation at an offset, no checks at all.</summary>
         unsafe long PassRaw(int iterations)
         {
             var ptr = _buffer.Ptr;
@@ -144,7 +145,7 @@ namespace Blobcheg.Tests
             return sum;
         }
 
-        /// <summary>Путь редактора: <c>Read</c> со всем, что стоит за ENABLE_UNITY_COLLECTIONS_CHECKS.</summary>
+        /// <summary>The editor path: <c>Read</c> with everything that stands behind ENABLE_UNITY_COLLECTIONS_CHECKS.</summary>
         long PassRead(int iterations)
         {
             var offsets = _offsets;
@@ -162,9 +163,9 @@ namespace Blobcheg.Tests
             return sum;
         }
 
-        // ------------------------------------------------------------- хронометр
+        // ------------------------------------------------------------- the stopwatch
 
-        /// <summary>Лучшее из трёх после прогрева: минимум устойчив к постороннему шуму машины.</summary>
+        /// <summary>The best of three after a warm-up: the minimum is robust against outside machine noise.</summary>
         static double NsPerRead(Func<int, long> pass, int iterations, long expectedSum)
         {
             pass(Math.Max(1024, iterations / 10));
@@ -176,7 +177,7 @@ namespace Blobcheg.Tests
                 var sum = pass(iterations);
                 watch.Stop();
 
-                Assert.That(sum, Is.EqualTo(expectedSum), "цикл замера прочитал не то, что записано");
+                Assert.That(sum, Is.EqualTo(expectedSum), "the measuring loop read something other than what was written");
 
                 var ns = watch.Elapsed.TotalMilliseconds * 1e6 / iterations;
                 if (ns < best)
@@ -186,10 +187,10 @@ namespace Blobcheg.Tests
             return best;
         }
 
-        // ------------------------------------------------------------- замеры
+        // ------------------------------------------------------------- the measurements
 
         [Test]
-        public void Цена_чтения_в_редакторе_разложена_по_слоям()
+        public void The_price_of_a_read_in_the_editor_broken_down_by_layer()
         {
             const int records = 4096;
             const int iterations = 1_000_000;
@@ -202,7 +203,7 @@ namespace Blobcheg.Tests
             Open(noDebug, plainOffsets);
             try
             {
-                Assert.That(_blob.HasDebug, Is.False, "этот файл собран без отладочного контура");
+                Assert.That(_blob.HasDebug, Is.False, "this file was assembled without a debug contour");
                 loop = NsPerRead(PassLoop, iterations, SumOfOffsets(plainOffsets, iterations));
                 raw = NsPerRead(PassRaw, iterations, (long)Rpm * iterations);
                 checksOnly = NsPerRead(PassRead, iterations, (long)Rpm * iterations);
@@ -215,7 +216,7 @@ namespace Blobcheg.Tests
             Open(withDebug, debugOffsets);
             try
             {
-                Assert.That(_blob.HasDebug, Is.True, "а этот — с контуром");
+                Assert.That(_blob.HasDebug, Is.True, "and this one with a contour");
                 checksAndDebug = NsPerRead(PassRead, iterations, (long)Rpm * iterations);
             }
             finally
@@ -224,20 +225,20 @@ namespace Blobcheg.Tests
             }
 
             UnityEngine.Debug.Log(
-                $"Blobcheg, цена одного чтения в редакторе ({records} записей, {iterations} чтений, лучшее из трёх):\n" +
-                $"  пол стенда (обход без чтения) : {loop:F2} нс\n" +
-                $"  реинтерпретация без проверок  : {raw:F2} нс   (путь релизного плеера)\n" +
-                $"  Read, файл без контура        : {checksOnly:F2} нс   (+{checksOnly - raw:F2} — выравнивание и границы)\n" +
-                $"  Read, файл с контуром         : {checksAndDebug:F2} нс   (+{checksAndDebug - checksOnly:F2} — двоичный поиск и сверка типа)\n" +
-                $"  итого редактор против релиза  : x{(raw > 0 ? checksAndDebug / raw : 0):F1}");
+                $"Blobcheg, the price of one read in the editor ({records} records, {iterations} reads, best of three):\n" +
+                $"  rig floor (walk without a read) : {loop:F2} ns\n" +
+                $"  reinterpretation without checks : {raw:F2} ns   (the release player path)\n" +
+                $"  Read, file without a contour    : {checksOnly:F2} ns   (+{checksOnly - raw:F2} — alignment and bounds)\n" +
+                $"  Read, file with a contour       : {checksAndDebug:F2} ns   (+{checksAndDebug - checksOnly:F2} — binary search and type check)\n" +
+                $"  editor against release, in all  : x{(raw > 0 ? checksAndDebug / raw : 0):F1}");
         }
 
         [Test]
-        public void Цена_отладочного_контура_растёт_с_числом_записей()
+        public void The_price_of_the_debug_contour_grows_with_the_number_of_records()
         {
             const int iterations = 500_000;
             var sizes = new[] { 1, 64, 1024, 16384, 65536 };
-            var report = $"Blobcheg, цена чтения с отладочным контуром по объёму базы ({iterations} чтений):\n";
+            var report = $"Blobcheg, the price of a read with the debug contour by base size ({iterations} reads):\n";
 
             foreach (var records in sizes)
             {
@@ -248,8 +249,8 @@ namespace Blobcheg.Tests
                 {
                     var raw = NsPerRead(PassRaw, iterations, (long)Rpm * iterations);
                     var read = NsPerRead(PassRead, iterations, (long)Rpm * iterations);
-                    report += $"  {records,6} записей: Read {read,7:F2} нс, реинтерпретация {raw,6:F2} нс, " +
-                              $"контур и проверки +{read - raw:F2} нс\n";
+                    report += $"  {records,6} records: Read {read,7:F2} ns, reinterpretation {raw,6:F2} ns, " +
+                              $"contour and checks +{read - raw:F2} ns\n";
                 }
                 finally
                 {
@@ -261,13 +262,14 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// Обе проверки чтения зовут дженериковые интринсики: границы — <c>SizeOf&lt;T&gt;</c>, сверка
-        /// типа — <c>GetHashCode32&lt;T&gt;</c>. В бёрстовой джобе это свёрнутые константы, в редакторе
-        /// на Mono — вызовы на каждом чтении. Без этого замера постоянная часть цены контура
-        /// записалась бы на двоичный поиск, которого при одной записи в базе почти нет.
+        /// Both read checks call generic intrinsics: the bounds call <c>SizeOf&lt;T&gt;</c>, the type
+        /// check calls <c>GetHashCode32&lt;T&gt;</c>. In a bursted job those are folded constants, in the
+        /// editor on Mono they are calls on every read. Without this measurement the constant part of
+        /// the contour's price would be charged to the binary search, which barely exists when the base
+        /// holds a single record.
         /// </summary>
         [Test]
-        public void Цена_дженериковых_интринсиков_в_редакторе()
+        public void The_price_of_the_generic_intrinsics_in_the_editor()
         {
             const int iterations = 1_000_000;
 
@@ -276,10 +278,10 @@ namespace Blobcheg.Tests
                 unchecked((long)(uint)BurstRuntime.GetHashCode32<CostGun>()) * iterations);
 
             UnityEngine.Debug.Log(
-                $"Blobcheg, цена дженериковых интринсиков в редакторе ({iterations} вызовов, лучшее из трёх):\n" +
-                $"  UnsafeUtility.SizeOf<T>()      : {sizeOf:F2} нс   (зовётся из проверки границ)\n" +
-                $"  BurstRuntime.GetHashCode32<T>(): {hash:F2} нс   (зовётся из сверки типа)\n" +
-                $"  вместе на одно чтение          : {sizeOf + hash:F2} нс — под Burst это константы, в редакторе нет");
+                $"Blobcheg, the price of the generic intrinsics in the editor ({iterations} calls, best of three):\n" +
+                $"  UnsafeUtility.SizeOf<T>()      : {sizeOf:F2} ns   (called from the bounds check)\n" +
+                $"  BurstRuntime.GetHashCode32<T>(): {hash:F2} ns   (called from the type check)\n" +
+                $"  together per read              : {sizeOf + hash:F2} ns — under Burst these are constants, in the editor they are not");
         }
 
         static long PassSizeOf(int iterations)

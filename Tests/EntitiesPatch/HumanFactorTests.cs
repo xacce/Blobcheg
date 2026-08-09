@@ -5,19 +5,19 @@ using UnityEngine;
 namespace Blobcheg.PatchTests
 {
     /// <summary>
-    /// Ошибки, которые делают не злоумышленники, а разработчики в первый рабочий день на этом API.
-    /// Каждая из них ощущается правильной — потому что в соседнем API так и есть.
+    /// The mistakes made not by attackers but by developers on their first working day with this API.
+    /// Every one of them feels right — because in a neighbouring API that is exactly how it works.
     /// </summary>
     public sealed unsafe class HumanFactorTests : PatchFixture
     {
-        /// <summary>Тот самый «закешируем, чтобы не искать каждый кадр».</summary>
+        /// <summary>The famous "let's cache it so we do not look it up every frame".</summary>
         static BlobchegReference<PatchGun> s_Cached;
 
         [SetUp]
         public void ForgetCache() => s_Cached = default;
 
         [Test]
-        public void Ссылка_скопированная_в_обычное_поле_не_переезжает_с_пересборкой()
+        public void A_reference_copied_into_an_ordinary_field_does_not_move_with_a_rebuild()
         {
             var first = HotFile(ammo: 1f, rpm: 11);
             Raise(first);
@@ -25,27 +25,27 @@ namespace Blobcheg.PatchTests
 
             Patch();
 
-            // «Слот у меня уже есть, положу его в статик — зачем каждый раз лезть в компонент».
+            // "I already have the slot, I will put it into a static — why climb into the component every time."
             s_Cached = EM.GetComponentData<GunRef>(entity).Gun;
             Assert.That(s_Cached.IsResolved, Is.True);
             Assert.That(Copy(s_Cached.Value).Rpm, Is.EqualTo(11));
 
-            // Пересборка домена под живым редактором. Обещание фичи накрывает слоты в компонентах,
-            // а копия в обычном поле остаётся смотреть в прошлое поколение.
+            // A rebuild of the domain under a live editor. The promise of the feature covers slots in
+            // components, while a copy in an ordinary field is left looking at the previous generation.
             Raise(HotFile(ammo: 2f, rpm: 22));
             Patch();
 
-            Assert.That(EM.GetComponentData<GunRef>(entity).Gun.IsResolved, Is.True, "слот в компоненте переехал");
+            Assert.That(EM.GetComponentData<GunRef>(entity).Gun.IsResolved, Is.True, "the slot in the component moved over");
 
             Assert.That(s_Cached.IsResolved, Is.False,
-                "а копия — нет, и она обязана быть опознаваема как мёртвая: иначе следующий Value " +
-                "прочитает буфер, который вот-вот освободят");
+                "while the copy did not, and it is obliged to be recognisable as dead: otherwise the next Value " +
+                "reads a buffer that is about to be freed");
             Assert.Throws<InvalidOperationException>(() => Copy(s_Cached.Value),
-                "чтение протухшей копии — ошибка, а не байты прошлого поколения");
+                "reading a stale copy is an error, not the bytes of the previous generation");
         }
 
         [Test]
-        public void IsSet_не_обещает_что_Value_можно_читать()
+        public void IsSet_does_not_promise_that_Value_can_be_read()
         {
             var file = HotFile();
             Raise(file);
@@ -53,36 +53,36 @@ namespace Blobcheg.PatchTests
 
             var slot = EM.GetComponentData<GunRef>(entity).Gun;
 
-            // Два похожих свойства рядом — самая массовая ошибка на таком API.
-            Assert.That(slot.IsSet, Is.True, "оффсет назначен");
-            Assert.That(slot.IsResolved, Is.False, "но патча ещё не было");
+            // Two similar properties side by side — the most common mistake with such an API.
+            Assert.That(slot.IsSet, Is.True, "the offset is assigned");
+            Assert.That(slot.IsResolved, Is.False, "but there has been no patch yet");
 
             Assert.Throws<InvalidOperationException>(() => Copy(slot.Value),
-                "IsSet значит «запись назначена», а не «можно читать»; путать их обязано быть больно, а не тихо");
+                "IsSet means \"a record is assigned\" and not \"it can be read\"; confusing them is obliged to hurt, not to be quiet");
         }
 
         [Test]
-        public void Привычка_из_BlobAssetReference_читать_Value_сразу_после_AddComponent()
+        public void The_BlobAssetReference_habit_of_reading_Value_right_after_AddComponent()
         {
             var file = HotFile();
             Raise(file);
 
-            // У Unity BlobAssetReference<T>.Value работает сразу после бейка. Здесь между бейком и
-            // чтением стоит патч импорта, и до него в слоте оффсет.
+            // In Unity BlobAssetReference<T>.Value works right after the bake. Here the import patch
+            // stands between the bake and the read, and before it the slot holds an offset.
             var entity = EM.CreateEntity();
             EM.AddComponentData(entity, new GunRef { Gun = new BlobchegReference<PatchGun>(file["gun"]) });
 
             var slot = EM.GetComponentData<GunRef>(entity).Gun;
 
             var error = Assert.Throws<InvalidOperationException>(() => Copy(slot.Value),
-                "привычка из соседнего API обязана упереться в явную ошибку, а не в нули");
+                "a habit from a neighbouring API is obliged to run into an explicit error and not into zeroes");
 
-            Assert.That(error.Message, Does.Contain("не пропатчен"),
-                "сообщение обязано объяснить именно ЭТО, а не «что-то пошло не так»");
+            Assert.That(error.Message, Does.Contain("is not patched"),
+                "the message is obliged to explain exactly THIS and not \"something went wrong\"");
         }
 
         [Test]
-        public void Копипаста_бейкера_с_оффсетом_чужого_домена_обязана_отбиться()
+        public void A_copy_pasted_baker_with_an_offset_of_a_foreign_domain_is_obliged_to_be_rejected()
         {
             var hot = Raise(HotFile());
 
@@ -93,19 +93,19 @@ namespace Blobcheg.PatchTests
             coldFile.Seal();
             Raise(coldFile);
 
-            // Строку скопировали, тип поменяли, оффсет забыли: в горячую ссылку уехал адрес из
-            // холодной базы.
+            // The line was copied, the type was changed, the offset was forgotten: an address from the
+            // cold base travelled into a hot reference.
             var strayOffset = coldFile["note31"];
             Assert.That(strayOffset, Is.GreaterThan((uint)hot.Length));
 
             Gun(strayOffset);
 
             Assert.Throws<InvalidOperationException>(() => Patch(),
-                "чужой оффсет обязан отбиться, а не превратиться в указатель куда-нибудь");
+                "a foreign offset is obliged to be rejected and not to turn into a pointer to somewhere");
         }
 
         [Test]
-        public void Две_ссылки_на_одну_запись_равны_и_до_и_после_патча()
+        public void Two_references_to_one_record_are_equal_both_before_and_after_the_patch()
         {
             var file = HotFile();
             Raise(file);
@@ -114,22 +114,22 @@ namespace Blobcheg.PatchTests
             var a = new BlobchegReference<PatchGun>(offset);
             var b = new BlobchegReference<PatchGun>(offset);
 
-            Assert.That(a.Data.Value, Is.EqualTo(b.Data.Value), "до патча равны");
+            Assert.That(a.Data.Value, Is.EqualTo(b.Data.Value), "equal before the patch");
 
             var first = Gun(offset);
             var second = Gun(offset);
             Patch();
 
             Assert.That(SlotOf(first), Is.EqualTo(SlotOf(second)),
-                "после патча тоже равны: иначе «if (a == b)» начинает врать ровно после загрузки сцены");
+                "equal after the patch too: otherwise \"if (a == b)\" starts lying right after a scene load");
         }
 
-        // Находка набора, закрытая в пакете: у слота не было ни оператора равенства, ни
-        // IEquatable<>, и единственным работающим сравнением оставался ValueType.Equals — боксинг
-        // и рефлексия по полям, в джобе недоступные вовсе. Теперь сравнение своё, и отвечает
-        // одинаково до и после патча.
+        // A finding of this set, closed inside the package: the slot had neither an equality operator nor
+        // IEquatable<>, and the only working comparison left was ValueType.Equals — boxing and field
+        // reflection, unavailable in a job at all. Now the comparison is our own and answers the same way
+        // before and after the patch.
         [Test]
-        public void Сравнение_ссылок_не_должно_ходить_через_боксинг()
+        public void Comparing_references_must_not_go_through_boxing()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -139,13 +139,13 @@ namespace Blobcheg.PatchTests
             var b = new BlobchegReference<PatchGun>(offset);
             var other = new BlobchegReference<PatchGun>(file["armor"]);
 
-            Assert.That(a == b, Is.True, "две ссылки из одного оффсета обязаны быть равны до патча");
+            Assert.That(a == b, Is.True, "two references from one offset are obliged to be equal before the patch");
             Assert.That(a.Equals(b), Is.True);
             Assert.That(a.GetHashCode(), Is.EqualTo(b.GetHashCode()));
-            Assert.That(a != other, Is.True, "разные оффсеты — разные ссылки");
+            Assert.That(a != other, Is.True, "different offsets mean different references");
 
-            // И то же самое после патча: если сравнение начнёт отвечать иначе, «if (a == b)» в
-            // игровом коде начнёт врать ровно после загрузки сцены.
+            // And the same after the patch: if the comparison starts answering differently, "if (a == b)"
+            // in game code starts lying right after a scene load.
             var first = Gun(offset);
             var second = Gun(offset);
             Patch();
@@ -153,28 +153,28 @@ namespace Blobcheg.PatchTests
             var pa = EM.GetComponentData<GunRef>(first).Gun;
             var pb = EM.GetComponentData<GunRef>(second).Gun;
 
-            Assert.That(pa == pb, Is.True, "после патча ответ обязан остаться тем же");
-            Assert.That(pa.Data.Value, Is.EqualTo(hot.AddressOf(offset)), "сравнивали именно пропатченные слоты");
+            Assert.That(pa == pb, Is.True, "after the patch the answer is obliged to stay the same");
+            Assert.That(pa.Data.Value, Is.EqualTo(hot.AddressOf(offset)), "it was the patched slots that were compared");
         }
 
         [Test]
-        public void Неназначенное_поле_редактора_не_превращается_в_запись_по_нулю()
+        public void An_unassigned_editor_field_does_not_turn_into_a_record_at_zero()
         {
             Raise(HotFile());
 
             var empty = default(BlobchegRef<PatchGun>);
             Assert.That(empty.IsSet, Is.False);
 
-            // Оптимистичный путь — «просто позовём ToReference()» — обязан упереться в ошибку, а не
-            // выдать слот, который потом молча укажет в header.
+            // The optimistic path — "let's just call ToReference()" — is obliged to run into an error and
+            // not to hand out a slot that later quietly points into the header.
             var error = Assert.Throws<InvalidOperationException>(() => empty.ToReference(),
-                "пустое поле редактора не имеет права стать ссылкой на запись по нулевому оффсету");
+                "an empty editor field has no right to become a reference to a record at offset zero");
 
             Assert.That(error.Message, Does.Contain(nameof(PatchGun)));
         }
 
         [Test]
-        public void ToReference_и_конструктор_дают_один_и_тот_же_слот()
+        public void ToReference_and_the_constructor_give_one_and_the_same_slot()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -193,7 +193,7 @@ namespace Blobcheg.PatchTests
                 var viaCtor = new BlobchegReference<PatchGun>(offset);
 
                 Assert.That(viaField.Data.Value, Is.EqualTo(viaCtor.Data.Value),
-                    "два способа сделать одно и то же обязаны сойтись — иначе у адреса две правды");
+                    "two ways of doing the same thing are obliged to agree — otherwise the address has two truths");
 
                 var entity = EM.CreateEntity();
                 EM.AddComponentData(entity, new GunRef { Gun = viaField });
@@ -208,7 +208,7 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void ToReference_с_ассетом_чужой_записи_обязан_отбиться()
+        public void ToReference_with_the_asset_of_a_foreign_record_is_obliged_to_be_rejected()
         {
             var file = HotFile();
             Raise(file);
@@ -216,7 +216,7 @@ namespace Blobcheg.PatchTests
             var carrier = ScriptableObject.CreateInstance<BlobchegRefSo>();
             try
             {
-                // Пикером положили ассет БРОНИ в поле, типизированное пушкой.
+                // The picker put the ARMOR asset into a field typed with the gun.
                 carrier.offset = file["armor"];
                 carrier.recordType = typeof(PatchArmor).FullName;
                 carrier.domainName = nameof(IPatchHot);
@@ -224,7 +224,7 @@ namespace Blobcheg.PatchTests
                 var field = new BlobchegRef<PatchGun>(carrier);
 
                 var error = Assert.Throws<InvalidOperationException>(() => field.ToReference(),
-                    "проверка типа записи обязана стоять и на новом пути тоже");
+                    "the record type check is obliged to stand on the new path as well");
 
                 Assert.That(error.Message, Does.Contain(typeof(PatchArmor).FullName));
             }
@@ -235,10 +235,10 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Повторная_установка_патча_не_пересобирает_таблицу()
+        public void Installing_the_patch_again_does_not_rebuild_the_table()
         {
-            // Разработчик зовёт Install из своего бутстрапа «на всякий случай» — и делает это до
-            // или после того, как его позвал редактор.
+            // A developer calls Install from their own bootstrap "just in case" — and does it before or
+            // after the editor called it.
             var before = BlobchegPatchTableBuilder.RegisteredTypes.Count;
 
             BlobchegPatchInstall.Install();
@@ -246,9 +246,9 @@ namespace Blobcheg.PatchTests
 
             Assert.That(BlobchegPatchTable.IsBuilt, Is.True);
             Assert.That(BlobchegPatchTableBuilder.RegisteredTypes.Count, Is.EqualTo(before),
-                "повторная установка не имеет права ни удвоить список типов, ни потерять таблицу");
+                "installing again has no right either to double the list of types or to lose the table");
 
-            // И патч после этого обязан работать.
+            // And the patch is obliged to work afterwards.
             var file = HotFile();
             var hot = Raise(file);
             var entity = Gun(file["gun"]);

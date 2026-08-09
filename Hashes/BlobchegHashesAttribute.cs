@@ -3,17 +3,19 @@ using System;
 namespace Blobcheg
 {
     /// <summary>
-    /// Объявляет таблицу хешей над роутером. Генератор дописывает партиалу конструктор,
-    /// <c>GetId</c>/<c>TryGetId</c>, <c>HashOf</c> на id и на оффсет в каждой базе роутера, и
-    /// <c>Dispose</c>; объявлена <c>IComponentData</c> — выпускает ещё и бут-систему.
+    /// Declares a hash table over a router. The generator adds a constructor, a
+    /// <c>GetId</c>/<c>TryGetId</c>, a <c>HashOf</c> for an id and for an offset in each base of the
+    /// router, and a <c>Dispose</c> to the partial; if <c>IComponentData</c> is declared it also emits
+    /// a boot system.
     ///
-    /// Таблица объявляется отдельно от роутера и живёт отдельным файлом: основной путь пакета о
-    /// хешах не знает, и проект, которому сейвы не нужны, не платит за них ни байтом.
+    /// The table is declared apart from the router and lives in its own file: the main path of the
+    /// package knows nothing about hashes, and a project that needs no saves does not pay a single byte
+    /// for them.
     /// </summary>
     [AttributeUsage(AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
     public sealed class BlobchegHashesAttribute : Attribute
     {
-        /// <param name="router">Структура роутера, помеченная <c>[BlobchegRouter]</c>.</param>
+        /// <param name="router">The router struct marked with <c>[BlobchegRouter]</c>.</param>
         public BlobchegHashesAttribute(Type router)
             => Router = router ?? throw new ArgumentNullException(nameof(router));
 

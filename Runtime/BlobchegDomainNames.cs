@@ -3,12 +3,12 @@ using System.Collections.Generic;
 namespace Blobcheg
 {
     /// <summary>
-    /// Имена доменов по их ключам — только ради сообщений об ошибках. Отдельно от
-    /// <see cref="BlobchegBases"/>, потому что тот класс читает Burst-код, а managed-словарь в нём
-    /// утащил бы за собой статический конструктор и завалил компиляцию.
+    /// Domain names by their keys — for the sake of error messages only. Kept apart from
+    /// <see cref="BlobchegBases"/> because that class is read by Burst code, and a managed dictionary
+    /// inside it would drag a static constructor along and break the compilation.
     ///
-    /// Без этого «домен 22E12032EA346169 не поднят» — тупик: ключ FNV-64 не гуглится и в проекте
-    /// нигде не написан.
+    /// Without this, "domain 22E12032EA346169 is not loaded" is a dead end: an FNV-64 key is not
+    /// searchable and is written down nowhere in the project.
     /// </summary>
     public static class BlobchegDomainNames
     {
@@ -22,7 +22,7 @@ namespace Blobcheg
             s_Names[domainKey] = name;
         }
 
-        /// <summary>Имя домена, а если оно не встречалось — сам ключ, чтобы сообщение не осталось пустым.</summary>
+        /// <summary>The domain name, and if it was never seen — the key itself, so the message is not left empty.</summary>
         public static string Of(ulong domainKey)
             => s_Names.TryGetValue(domainKey, out var name) ? name : $"{domainKey:X16}";
     }

@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Blobcheg.Tests
 {
-    /// <summary>Домен теста. Маркер-интерфейс и есть база: один домен — один файл.</summary>
+    /// <summary>The domain of the test. The marker interface is the base: one domain, one file.</summary>
     public interface ITestCombatData
     {
     }
@@ -26,8 +26,9 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Объявление базы. Всё тело дописывает генератор — если он не отработал, тест не соберётся.
-    /// Имя члена вступает в роутер, а сам роутер назван: в сборке тестов их два.
+    /// The declaration of a base. The whole body is added by the generator — if it did not run, the test
+    /// does not build. The member name joins the router, and the router itself is named: the test
+    /// assembly holds two of them.
     /// </summary>
     [Blobcheg(typeof(ITestCombatData), "combat", Router = typeof(TestGameRouter))]
     public partial struct TestCombatDb
@@ -81,7 +82,7 @@ namespace Blobcheg.Tests
         }
     }
 
-    /// <summary>Нода-ошибка: запись с массивом структ-литералом. Обязана быть отбита пересборкой.</summary>
+    /// <summary>A broken node: a record with an array written as a struct literal. The rebuild is obliged to reject it.</summary>
     public sealed class TestLootLiteralNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(ITestCombatData) };
@@ -90,7 +91,7 @@ namespace Blobcheg.Tests
             => writer.Add(new TestLootTable { Rolls = 1 });
     }
 
-    /// <summary>Нода-ошибка: открыла билдер и не позвала End.</summary>
+    /// <summary>A broken node: it opened a builder and never called End.</summary>
     public sealed class TestLootUnclosedNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(ITestCombatData) };
@@ -103,13 +104,14 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Сквозной путь: нода в едиторе → пересборка → файл → ref-ассет → чтение по оффсету.
-    /// Кнопки Save в этом пути нет, поэтому пересборка зовётся напрямую — так же, как её зовут хуки.
+    /// The end-to-end path: a node in the editor → the rebuild → the file → the ref asset → a read at an
+    /// offset. There is no Save button on this path, so the rebuild is called directly — the same way the
+    /// hooks call it.
     /// </summary>
     public sealed class BlobchegPipelineTests
     {
-        // Папка своя на каждый тест: удаление ассетов отложенное, и переиспользованное имя
-        // съедает ассет, созданный в ещё не удалённой папке. Ловится это не там, где сломано.
+        // A folder of its own per test: asset deletion is deferred, and a reused name swallows an asset
+        // created in a folder that has not been deleted yet. That gets caught not where it broke.
         string _folder;
 
         TestPistolNodeSo _pistol;
@@ -140,12 +142,12 @@ namespace Blobcheg.Tests
             AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<T>(), path);
 
             var asset = AssetDatabase.LoadAssetAtPath<T>(path);
-            Assert.That(asset, Is.Not.Null, $"ассет '{path}' не создался — дальше проверять нечего");
+            Assert.That(asset, Is.Not.Null, $"asset '{path}' was not created — there is nothing further to check");
             return asset;
         }
 
         [Test]
-        public void Ноды_находятся_поиском_по_проекту()
+        public void Nodes_are_found_by_scanning_the_project()
         {
             var found = BlobchegBuild.FindNodes();
             CollectionAssert.Contains(found, _pistol);
@@ -156,7 +158,7 @@ namespace Blobcheg.Tests
             => BlobchegBuild.RefsOf(node).Single();
 
         [Test]
-        public void Пересборка_кладёт_файл_ref_ассеты_и_читается_по_оффсету()
+        public void The_rebuild_lays_down_the_file_the_ref_assets_and_reads_at_an_offset()
         {
             _pistol.ammoMax = 42f;
             _pistol.rpm = 900;
@@ -166,7 +168,7 @@ namespace Blobcheg.Tests
             Assert.That(report.Records, Is.GreaterThanOrEqualTo(2));
 
             var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
-            Assert.That(File.Exists(file), Is.True, "файл базы должен лечь в StreamingAssets");
+            Assert.That(File.Exists(file), Is.True, "the base file must land in StreamingAssets");
 
             var pistolRef = RefOf(_pistol);
             Assert.That(pistolRef.RecordType, Is.EqualTo(typeof(TestPistol).FullName));
@@ -189,18 +191,18 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пересборка_идемпотентна()
+        public void The_rebuild_is_idempotent()
         {
             BlobchegBuild.RebuildAll();
 
             var again = BlobchegBuild.RebuildAll();
             Assert.That(again.Changed, Is.False,
-                "ничего не изменилось — не должен быть тронут ни файл, ни один ассет, иначе всё перепечётся. " +
-                $"Отчёт: {again}");
+                "nothing changed — neither the file nor a single asset must be touched, otherwise everything gets rebaked. " +
+                $"Report: {again}");
         }
 
         [Test]
-        public void Правка_значения_не_двигает_оффсет()
+        public void Editing_a_value_does_not_move_the_offset()
         {
             BlobchegBuild.RebuildAll();
             var before = RefOf(_pistol).offset;
@@ -215,7 +217,7 @@ namespace Blobcheg.Tests
             var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
             try
             {
-                Assert.That(db.Read<TestPistol>(before).AmmoMax, Is.EqualTo(7f), "значение при этом обязано поменяться");
+                Assert.That(db.Read<TestPistol>(before).AmmoMax, Is.EqualTo(7f), "the value is obliged to change while it does");
             }
             finally
             {
@@ -227,11 +229,11 @@ namespace Blobcheg.Tests
             => File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName));
 
         /// <summary>
-        /// Главное свойство кеша: собранное из памяти обязано совпасть с собранным из ассетов.
-        /// Полный заход, не изменивший ничего, — и есть доказательство совпадения.
+        /// The main property of the cache: what was assembled from memory is obliged to match what was
+        /// assembled from the assets. A full run that changed nothing is the proof of that match.
         /// </summary>
         [Test]
-        public void Инкрементальная_пересборка_совпадает_с_полной()
+        public void An_incremental_rebuild_matches_a_full_one()
         {
             BlobchegBuild.RebuildAll();
 
@@ -243,12 +245,12 @@ namespace Blobcheg.Tests
             var full = BlobchegBuild.RebuildFull();
 
             Assert.That(full.Changed, Is.False,
-                $"полный заход после инкрементального обязан не найти расхождений. Отчёт: {full}");
+                $"a full run after an incremental one is obliged to find no discrepancies. Report: {full}");
             CollectionAssert.AreEqual(incremental, DomainFile());
         }
 
         [Test]
-        public void Новая_нода_попадает_в_инкрементальную_пересборку()
+        public void A_new_node_makes_it_into_an_incremental_rebuild()
         {
             BlobchegBuild.RebuildAll();
 
@@ -256,7 +258,7 @@ namespace Blobcheg.Tests
             AssetDatabase.SaveAssets();
             BlobchegBuild.RebuildAll();
 
-            Assert.That(BlobchegBuild.RefsOf(extra).Any(), Is.True, "нода, созданная после сборки, обязана в неё попасть");
+            Assert.That(BlobchegBuild.RefsOf(extra).Any(), Is.True, "a node created after the build is obliged to make it into it");
 
             var incremental = DomainFile();
             Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False);
@@ -264,7 +266,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Удалённая_нода_уходит_из_инкрементальной_пересборки()
+        public void A_deleted_node_leaves_an_incremental_rebuild()
         {
             var extra = Create<TestArmorNodeSo>("Extra");
             AssetDatabase.SaveAssets();
@@ -275,7 +277,7 @@ namespace Blobcheg.Tests
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(extra));
             var after = BlobchegBuild.RebuildAll();
 
-            Assert.That(after.Records, Is.EqualTo(records - 1), "запись удалённой ноды обязана уйти из базы");
+            Assert.That(after.Records, Is.EqualTo(records - 1), "the record of a deleted node is obliged to leave the base");
 
             var incremental = DomainFile();
             Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False);
@@ -283,7 +285,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Типизированное_поле_не_принимает_чужую_запись()
+        public void A_typed_field_does_not_accept_a_foreign_record()
         {
             BlobchegBuild.RebuildAll();
 
@@ -295,7 +297,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пикер_показывает_только_записи_своего_типа()
+        public void The_picker_shows_only_records_of_its_own_type()
         {
             BlobchegBuild.RebuildAll();
 
@@ -312,7 +314,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Каталог_отбивает_чужую_запись()
+        public void The_catalogue_rejects_a_foreign_record()
         {
             BlobchegBuild.RebuildAll();
 
@@ -322,7 +324,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пустое_поле_бросает_а_не_отдаёт_ноль()
+        public void An_empty_field_throws_instead_of_handing_out_zero()
         {
             var empty = new BlobchegRef<TestPistol>(null);
             Assert.That(empty.IsSet, Is.False);
@@ -330,7 +332,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Нода_с_массивом_пишется_и_читается_через_пересборку()
+        public void A_node_with_an_array_is_written_and_read_through_the_rebuild()
         {
             var loot = Create<TestLootNodeSo>("Loot");
             AssetDatabase.SaveAssets();
@@ -354,7 +356,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Правка_длины_массива_не_двигает_чужие_адреса()
+        public void Editing_the_length_of_an_array_does_not_move_other_addresses()
         {
             var loot = Create<TestLootNodeSo>("Loot");
             AssetDatabase.SaveAssets();
@@ -366,7 +368,7 @@ namespace Blobcheg.Tests
             EditorUtility.SetDirty(loot);
             BlobchegBuild.RebuildAll();
 
-            Assert.That(RefOf(_pistol).offset, Is.EqualTo(pistolBefore), "выросший массив двигает только свою запись");
+            Assert.That(RefOf(_pistol).offset, Is.EqualTo(pistolBefore), "a grown array moves only its own record");
             Assert.That(RefOf(_armor).offset, Is.EqualTo(armorBefore));
 
             var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
@@ -382,17 +384,17 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Литерал_с_массивом_отбивается()
+        public void A_literal_with_an_array_is_rejected()
         {
             Create<TestLootLiteralNodeSo>("LootLiteral");
             AssetDatabase.SaveAssets();
 
             var thrown = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
-            StringAssert.Contains("Begin", thrown.Message, "ошибка обязана назвать правильную форму записи");
+            StringAssert.Contains("Begin", thrown.Message, "the error is obliged to name the right form of the record");
         }
 
         [Test]
-        public void Begin_без_End_падает_с_именем_ноды()
+        public void Begin_without_End_fails_naming_the_node()
         {
             Create<TestLootUnclosedNodeSo>("LootUnclosed");
             AssetDatabase.SaveAssets();
@@ -403,12 +405,13 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// То, ради чего в меню есть команда пересборки: файлы теряются мимо ассетов
-        /// (<c>git clean -X</c>, свежая ворктри), грязных нод при этом нет, и сама пересборка не
-        /// случится ни от импорта, ни от PlayMode — их просто нечем позвать.
+        /// What the rebuild command in the menu exists for: files get lost past the assets
+        /// (<c>git clean -X</c>, a fresh worktree), there are no dirty nodes while that happens, and the
+        /// rebuild will not fire from an import or from PlayMode — there is simply nothing to call them
+        /// with.
         /// </summary>
         [Test]
-        public void Снесённый_файл_возвращает_пересборка_руками()
+        public void A_wiped_file_is_brought_back_by_a_rebuild_by_hand()
         {
             BlobchegBuild.RebuildAll();
 
@@ -420,16 +423,16 @@ namespace Blobcheg.Tests
 
             var report = BlobchegBuild.RebuildFull();
 
-            Assert.That(File.Exists(file), Is.True, "команда в меню держится ровно на этом");
+            Assert.That(File.Exists(file), Is.True, "the menu command stands on exactly this");
             Assert.That(File.ReadAllBytes(file), Is.EqualTo(were),
-                "байты те же: раскладка детерминирована, потеря файла адресов не двигает");
+                "the bytes are the same: the layout is deterministic, losing the file does not move the addresses");
             Assert.That(report.ChangedFiles, Is.GreaterThanOrEqualTo(1));
             Assert.That(BlobchegFileVersions.Of(TestCombatDb.FileName), Is.GreaterThan(seen),
-                "живой мир узнаёт о возвращённом файле по номеру, и никак иначе");
+                "the live world learns about the restored file by its number and in no other way");
         }
 
         [Test]
-        public void Манифест_домена_держит_тот_же_хеш_что_файл()
+        public void The_domain_manifest_holds_the_same_hash_as_the_file()
         {
             BlobchegBuild.RebuildAll();
 

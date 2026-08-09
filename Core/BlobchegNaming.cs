@@ -4,30 +4,32 @@ using System.Text;
 namespace Blobcheg
 {
     /// <summary>
-    /// Единственное место, где имя домена превращается в имя файла и в личность этого файла.
-    /// Обязательно и для писателя, и для транспорта — разъедутся, и база просто не найдётся.
+    /// The single place where a domain name turns into a file name and into the identity of that
+    /// file. Binding on both the writer and the transport — let them drift apart and the base simply
+    /// is not found.
     /// </summary>
     public static class BlobchegNaming
     {
         public const string Extension = ".bcheg";
 
-        /// <summary>Дефолтная папка внутри StreamingAssets проекта.</summary>
+        /// <summary>The default folder inside the project's StreamingAssets.</summary>
         public const string DefaultFolder = "Blobcheg";
 
         public static string FileName(string domainName)
         {
             if (string.IsNullOrEmpty(domainName))
-                throw new ArgumentException("Blobcheg: пустое имя домена", nameof(domainName));
+                throw new ArgumentException("Blobcheg: empty domain name", nameof(domainName));
 
             return domainName + Extension;
         }
 
         /// <summary>
-        /// Личность файла: fnv1a-64 по имени домена или роутера. Едет в header и сверяется на
-        /// подъёме — иначе два подменённых местами .bcheg поднимаются оба и молча отдают чужие байты.
+        /// The identity of a file: fnv1a-64 over the domain or router name. It rides in the header and
+        /// is checked on load — otherwise two .bcheg files swapped by mistake both come up and quietly
+        /// hand out someone else's bytes.
         ///
-        /// Считается по имени, а не по содержимому: содержимое меняется каждой пересборкой, а
-        /// личность обязана пережить её.
+        /// Computed over the name, not over the content: the content changes with every rebuild, the
+        /// identity is obliged to outlive it.
         /// </summary>
         public static ulong NameHash(string name)
         {
@@ -45,14 +47,14 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Тег роутера — старший байт <see cref="BlobchegId"/>. Ноль зарезервирован под «id не
-        /// назначен», поэтому тег живёт в 1..255; уникальность тегов по проекту доказывает
-        /// едиторный реестр роутеров, а не надежда на хеш.
+        /// The router tag — the high byte of <see cref="BlobchegId"/>. Zero is reserved for "id not
+        /// assigned", so the tag lives in 1..255; uniqueness of tags across the project is proven by
+        /// the editor router registry, not by hoping the hash does not collide.
         /// </summary>
         public static byte TagOf(string routerName)
         {
             if (string.IsNullOrEmpty(routerName))
-                throw new ArgumentException("Blobcheg: пустое имя роутера", nameof(routerName));
+                throw new ArgumentException("Blobcheg: empty router name", nameof(routerName));
 
             return (byte)(NameHash(routerName) % 255 + 1);
         }

@@ -1,10 +1,11 @@
 using System.Runtime.CompilerServices;
 
-// Служебные поля ref-ассета (recordType, revision, domainName) ведёт пайплайн и никто больше —
-// поэтому они internal, а не public: потребителю они не нужны и портить их он не должен.
+// The bookkeeping fields of a ref asset (recordType, revision, domainName) are kept by the pipeline
+// and by nobody else — which is why they are internal and not public: the consumer does not need them
+// and must not spoil them.
 [assembly: InternalsVisibleTo("Blobcheg.Authoring")]
 [assembly: InternalsVisibleTo("Blobcheg.Tests")]
 
-// Деструктивный набор патча: ему нужен BlobchegBases.Clear (изоляция реестра между тестами) и
-// служебные поля ref-ассета, собираемого в памяти вместо AssetDatabase.
+// The destructive set of the patch: it needs BlobchegBases.Clear (isolation of the registry between
+// tests) and the bookkeeping fields of a ref asset assembled in memory instead of in the AssetDatabase.
 [assembly: InternalsVisibleTo("Blobcheg.EntitiesPatch.Tests")]

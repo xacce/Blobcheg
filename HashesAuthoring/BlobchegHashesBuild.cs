@@ -6,11 +6,12 @@ using UnityEditor;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Пост-проход пересборки: на каждый роутер собирает файл таблицы хешей. Ядро о нём не знает —
-    /// оно находит его через <see cref="IBlobchegBuildPass"/> и отдаёт готовую раскладку.
+    /// A post-pass of the rebuild: it assembles a hash table file per router. The core knows nothing
+    /// about it — it finds it through <see cref="IBlobchegBuildPass"/> and hands over the finished
+    /// layout.
     ///
-    /// Здесь же живёт вся политика имён: дубли и коллизии ключей валят пересборку, потому что и то,
-    /// и другое означает два предмета с одним адресом в сейве.
+    /// The whole naming policy lives here as well: duplicates and key collisions fail the rebuild,
+    /// because both mean two subjects with one address in a save.
     /// </summary>
     public sealed class BlobchegHashesBuild : IBlobchegBuildPass
     {
@@ -36,7 +37,7 @@ namespace Blobcheg.Authoring
             {
                 var node = rows[row];
 
-                // Дырка от удалённой ноды: строка есть, но пустая, и хеша у неё нет.
+                // A hole from a deleted node: the row is there but empty, and it has no hash.
                 if (node == null)
                 {
                     writer.Append(0);
@@ -46,14 +47,14 @@ namespace Blobcheg.Authoring
                 var name = node.BlobchegName;
                 if (string.IsNullOrEmpty(name))
                     throw new InvalidOperationException(
-                        $"Blobcheg: у ноды '{Path(node)}' пустое имя — хеш считать не от чего. " +
-                        "Пересборка заполняет его именем ассета, значит имя у ассета тоже пустое");
+                        $"Blobcheg: node '{Path(node)}' has an empty name — there is nothing to compute a hash from. " +
+                        "The rebuild fills it with the asset name, so the asset name is empty too");
 
                 if (byName.TryGetValue(name, out var twin))
                     throw new InvalidOperationException(
-                        $"Blobcheg: в роутере '{routerName}' имя '{name}' занято дважды — " +
-                        $"'{Path(twin)}' и '{Path(node)}'. Хеш у них один, а строки разные: сейв " +
-                        "адресовал бы обе ноды одним числом");
+                        $"Blobcheg: in router '{routerName}' the name '{name}' is taken twice — " +
+                        $"'{Path(twin)}' and '{Path(node)}'. Their hash is one and their rows are different: a save " +
+                        "would address both nodes with one number");
 
                 byName.Add(name, node);
 
@@ -61,9 +62,9 @@ namespace Blobcheg.Authoring
 
                 if (byKey.TryGetValue(key, out var clash))
                     throw new InvalidOperationException(
-                        $"Blobcheg: в роутере '{routerName}' имена '{byName.First(p => p.Value == clash).Key}' " +
-                        $"и '{name}' сошлись на одном хеше {key:X16} — '{Path(clash)}' и '{Path(node)}'. " +
-                        "Переименуй одну из них");
+                        $"Blobcheg: in router '{routerName}' the names '{byName.First(p => p.Value == clash).Key}' " +
+                        $"and '{name}' met on one hash {key:X16} — '{Path(clash)}' and '{Path(node)}'. " +
+                        "Rename one of them");
 
                 byKey.Add(key, node);
                 writer.Append(key);
@@ -83,7 +84,7 @@ namespace Blobcheg.Authoring
                 BlobchegFileVersions.Bump(BlobchegNaming.FileName(writer.Identity));
             }
 
-            // Ноды в манифесте лежат в порядке строк — это и есть таблица «хеш → нода» для глаз.
+            // The nodes lie in the manifest in row order — that is the "hash → node" table for the eye.
             layout.SyncManifest(writer.Identity, BlobchegFileKind.Hashes, rows.ToArray(),
                 writer.RowCount, writer.ContentHash, writer.FileChanged, ref report);
         }

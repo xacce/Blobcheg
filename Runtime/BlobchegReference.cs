@@ -6,14 +6,16 @@ using Unity.Collections.LowLevel.Unsafe;
 namespace Blobcheg
 {
     /// <summary>
-    /// Слот ссылки на запись внутри компонента. Восемь байт, и в них по очереди живут две разные
-    /// вещи: до патча — оффсет записи в файле, после патча — её адрес в поднятом буфере. Ровно так
-    /// же устроен <c>BlobAssetReferenceData</c> у Unity, и по той же причине: сериализуемая форма
-    /// обязана пережить процесс, а читать хочется без сложения.
+    /// The slot of a reference to a record inside a component. Eight bytes, and two different things
+    /// live in them in turn: before the patch the offset of the record in the file, after the patch its
+    /// address in the loaded buffer. Unity's <c>BlobAssetReferenceData</c> is built exactly the same
+    /// way and for the same reason: the serialisable form is obliged to outlive the process, while the
+    /// read should happen without an addition.
     ///
-    /// Тип отдельный и нетипизированный, потому что по нему обход полей узнаёт наши слоты в чужой
-    /// структуре — сравнением типа поля, а не имени. Ноль означает «не назначено» бесплатно: оффсеты
-    /// начинаются с <see cref="BlobchegFormat.HeaderSize"/>, а нулевого адреса не бывает.
+    /// The type is separate and untyped because the field walk recognises our slots inside a foreign
+    /// struct by it — by comparing the field type, not the name. Zero means "not assigned" for free:
+    /// offsets start at <see cref="BlobchegFormat.HeaderSize"/>, and there is no such thing as a zero
+    /// address.
     /// </summary>
     public struct BlobchegReferenceData
     {
@@ -21,30 +23,33 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Ссылка на запись, живущая в компоненте сущности. Кладётся бейкером оффсетом, превращается в
-    /// адрес патчем на импорте сцены; читается без базы и без сложения.
+    /// A reference to a record living inside an entity component. Put down by the baker as an offset,
+    /// turned into an address by the patch on scene import; read without a base and without an
+    /// addition.
     ///
-    /// Это не замена <see cref="BlobchegRef{T}"/>: тот — редакторное поле-носитель адреса, этот —
-    /// рантайм-слот в компоненте. Обычный путь «оффсет плюс <c>Read</c>» никуда не девается.
+    /// This is not a replacement for <see cref="BlobchegRef{T}"/>: that one is the editor field
+    /// carrying an address, this one is the runtime slot in a component. The usual "offset plus
+    /// <c>Read</c>" path is not going anywhere.
     /// </summary>
     public unsafe struct BlobchegReference<T> : IEquatable<BlobchegReference<T>> where T : unmanaged
     {
         public BlobchegReferenceData Data;
 
-        /// <summary>Из адреса записи в редакторе: <c>new BlobchegReference&lt;GunData&gt;(a.gun.Offset)</c>.</summary>
+        /// <summary>From a record address in the editor: <c>new BlobchegReference&lt;GunData&gt;(a.gun.Offset)</c>.</summary>
         public BlobchegReference(uint offset) => Data = new BlobchegReferenceData { Value = offset };
 
         public bool IsSet => Data.Value != 0;
 
         /// <summary>
-        /// Пропатчено ли поле. Не «валидно»: непропатченное поле — это нормальное состояние
-        /// сущности, которая ещё не доехала до патча.
+        /// Whether the field is patched. Not "valid": an unpatched field is the normal state of an
+        /// entity that has not reached the patch yet.
         /// </summary>
         public bool IsResolved => Data.Value != 0 && BlobchegBases.IsKnownAddress(Data.Value);
 
         /// <summary>
-        /// Сама запись. В релизе — чистая реинтерпретация по адресу; в редакторе и development-билде
-        /// сверяется, что в слоте действительно адрес поднятой базы, а не оставшийся оффсет.
+        /// The record itself. In release a pure reinterpretation at the address; in the editor and in a
+        /// development build it is checked that the slot really holds the address of a loaded base and
+        /// not a leftover offset.
         /// </summary>
         public ref readonly T Value
         {
@@ -57,9 +62,10 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Две ссылки равны, если в них одно и то же. Сравнение обязано отвечать одинаково до и
-        /// после патча — иначе привычное <c>if (a == b)</c> в игровом коде начинает врать ровно
-        /// после загрузки сцены; оба состояния сравниваются по содержимому слота, и оба сходятся.
+        /// Two references are equal if they hold the same thing. The comparison is obliged to answer the
+        /// same way before and after the patch — otherwise the familiar <c>if (a == b)</c> in game code
+        /// starts lying right after a scene load; both states are compared by the content of the slot,
+        /// and both agree.
         /// </summary>
         public bool Equals(BlobchegReference<T> other) => Data.Value == other.Data.Value;
 
@@ -76,18 +82,19 @@ namespace Blobcheg
         {
             if (Data.Value == 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: пустой BlobchegReference<{typeof(T).Name}> — запись не назначена");
+                    $"Blobcheg: an empty BlobchegReference<{typeof(T).Name}> — no record is assigned");
 
             if (!BlobchegBases.IsKnownAddress(Data.Value))
                 throw new InvalidOperationException(
-                    $"Blobcheg: BlobchegReference<{typeof(T).Name}> не пропатчен — в слоте оффсет {Data.Value}, " +
-                    "а не адрес. Сущность не проходила патч импорта, либо база домена не поднята");
+                    $"Blobcheg: BlobchegReference<{typeof(T).Name}> is not patched — the slot holds offset {Data.Value}, " +
+                    "not an address. The entity never went through the import patch, or the domain base is not loaded");
         }
     }
 
     /// <summary>
-    /// То же без параметра — под записи из <c>AddBytes</c>, у которых типа нет. Отдаёт байты, потому
-    /// что реинтерпретировать нечего: дыра ровно там же, где у <see cref="BlobchegRawRef"/>.
+    /// The same without a parameter — for records from <c>AddBytes</c>, which have no type. It hands out
+    /// bytes because there is nothing to reinterpret: the hole is in exactly the same place as in
+    /// <see cref="BlobchegRawRef"/>.
     /// </summary>
     public unsafe struct BlobchegRawReference
     {
@@ -113,11 +120,11 @@ namespace Blobcheg
         void CheckResolved()
         {
             if (Data.Value == 0)
-                throw new InvalidOperationException("Blobcheg: пустой BlobchegRawReference — запись не назначена");
+                throw new InvalidOperationException("Blobcheg: an empty BlobchegRawReference — no record is assigned");
 
             if (!BlobchegBases.IsKnownAddress(Data.Value))
                 throw new InvalidOperationException(
-                    $"Blobcheg: BlobchegRawReference не пропатчен — в слоте оффсет {Data.Value}, а не адрес");
+                    $"Blobcheg: BlobchegRawReference is not patched — the slot holds offset {Data.Value}, not an address");
         }
     }
 }

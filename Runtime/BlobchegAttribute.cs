@@ -3,18 +3,19 @@ using System;
 namespace Blobcheg
 {
     /// <summary>
-    /// Объявляет базу над доменом. Генератор дописывает партиалу конструктор, <c>Read&lt;T&gt;</c> с
-    /// констрейнтом домена и <c>Dispose</c> поверх <see cref="BlobchegBlob"/>.
+    /// Declares a base over a domain. The generator adds a constructor, a <c>Read&lt;T&gt;</c> with the
+    /// domain constraint and a <c>Dispose</c> over <see cref="BlobchegBlob"/> to the partial.
     ///
-    /// Констрейнт — единственная проверка, которая работает всегда, потому что она компиляторная:
-    /// чужой домен просто не соберётся.
+    /// The constraint is the only check that always works, because it is a compiler check: a foreign
+    /// domain simply does not build.
     /// </summary>
     [AttributeUsage(AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
     public sealed class BlobchegAttribute : Attribute
     {
-        /// <param name="domain">Маркер-интерфейс домена.</param>
+        /// <param name="domain">The marker interface of the domain.</param>
         /// <param name="member">
-        /// Имя члена в строке роутера. Не указано — база в роутер не входит и живёт сама по себе.
+        /// The name of the member in the router row. Not given — the base does not join a router and
+        /// lives on its own.
         /// </param>
         public BlobchegAttribute(Type domain, string member = null)
         {
@@ -22,33 +23,34 @@ namespace Blobcheg
             Member = member;
         }
 
-        /// <summary>Маркер-интерфейс домена. Он же имя файла базы.</summary>
+        /// <summary>The marker interface of the domain. Also the name of the base file.</summary>
         public Type Domain { get; }
 
-        /// <summary>Имя члена строки роутера; <c>null</c> — база вне роутеров.</summary>
+        /// <summary>The name of the router row member; <c>null</c> means a base outside any router.</summary>
         public string Member { get; }
 
         /// <summary>
-        /// Структура роутера. Не указана — единственный объявленный роутер проекта; если их ноль или
-        /// больше одного, это ошибка, а не догадка.
+        /// The router struct. Not given — the single router declared in the project; if there are zero
+        /// of them or more than one, that is an error and not a guess.
         /// </summary>
         public Type Router { get; set; }
     }
 
     /// <summary>
-    /// Объявляет роутер: по <see cref="BlobchegId"/> отдаёт оффсеты ноды во всех своих базах.
-    /// Генератор дописывает партиалу конструктор, <c>Get</c>, <c>Get*</c>/<c>TryGet*</c> на каждую
-    /// базу, enum её бит и <c>Dispose</c>.
+    /// Declares a router: by a <see cref="BlobchegId"/> it hands out the offsets of a node in all of
+    /// its bases. The generator adds a constructor, a <c>Get</c>, a <c>Get*</c>/<c>TryGet*</c> per
+    /// base, the enum of its bits and a <c>Dispose</c> to the partial.
     ///
-    /// Базы вступают в роутер сами — именем члена в <see cref="BlobchegAttribute"/>.
+    /// Bases join a router by themselves — by the member name in <see cref="BlobchegAttribute"/>.
     /// </summary>
     [AttributeUsage(AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
     public sealed class BlobchegRouterAttribute : Attribute
     {
         /// <summary>
-        /// Номера строк этого роутера объявляют ноды, пересборка их не раздаёт. Каждая нода роутера
-        /// обязана реализовать <c>IBlobchegIndexed</c>, а носитель id перестаёт быть источником
-        /// правды и становится производным: снеси все носители, пересобери — id вернутся те же.
+        /// The row numbers of this router are declared by the nodes, a rebuild does not hand them out.
+        /// Every node of the router is obliged to implement <c>IBlobchegIndexed</c>, and the id carrier
+        /// stops being the source of truth and becomes derived: wipe every carrier, rebuild — the same
+        /// ids come back.
         /// </summary>
         public bool FixedIndex { get; set; }
     }

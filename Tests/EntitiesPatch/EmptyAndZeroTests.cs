@@ -5,13 +5,14 @@ using Unity.Entities;
 namespace Blobcheg.PatchTests
 {
     /// <summary>
-    /// Пустое и нулевое. Главный вопрос раздела — не путает ли патч «не назначено» с «запись по
-    /// нулевому адресу»: у оффсета ноль значил бы начало header'а, у адреса — нулевой указатель.
+    /// The empty and the zero. The main question of the section is whether the patch confuses "not
+    /// assigned" with "a record at address zero": as an offset zero would mean the start of the header,
+    /// as an address a null pointer.
     /// </summary>
     public sealed unsafe class EmptyAndZeroTests : PatchFixture
     {
         [Test]
-        public void Ноль_в_слоте_это_не_запись_по_нулевому_адресу()
+        public void Zero_in_a_slot_is_not_a_record_at_address_zero()
         {
             var hot = Raise(HotFile());
 
@@ -23,64 +24,64 @@ namespace Blobcheg.PatchTests
             var slot = EM.GetComponentData<GunRef>(entity).Gun;
 
             Assert.That(slot.Data.Value, Is.Zero,
-                "ноль обязан остаться нулём: адрес «база плюс ноль» — это начало header'а, а не запись");
+                "zero is obliged to stay zero: the address \"base plus zero\" is the start of the header, not a record");
             Assert.That(slot.Data.Value, Is.Not.EqualTo(hot.Ptr));
             Assert.That(slot.IsSet, Is.False);
             Assert.That(slot.IsResolved, Is.False);
 
             Assert.Throws<InvalidOperationException>(() => Copy(slot.Value),
-                "чтение неназначенной ссылки — ошибка, а не нулевая структура");
+                "reading an unassigned reference is an error, not a zeroed struct");
         }
 
         [Test]
-        public void Патч_мира_без_единой_ссылки_не_бросает_и_ничего_не_трогает()
+        public void Patching_a_world_without_a_single_reference_neither_throws_nor_touches_anything()
         {
             Raise(HotFile());
 
             var entity = EM.CreateEntity();
             EM.AddComponentData(entity, new PlainData { Value = 4242 });
 
-            Assert.DoesNotThrow(() => Patch(), "мир без слотов патчу неинтересен");
+            Assert.DoesNotThrow(() => Patch(), "a world without slots is of no interest to the patch");
             Assert.That(EM.GetComponentData<PlainData>(entity).Value, Is.EqualTo(4242),
-                "компонент без слотов патч не имеет права трогать");
+                "the patch has no right to touch a component without slots");
         }
 
         [Test]
-        public void Буфер_нулевой_длины_патчится_без_единого_касания()
+        public void A_buffer_of_zero_length_is_patched_without_a_single_touch()
         {
             Raise(HotFile());
 
             var entity = EM.CreateEntity();
             EM.AddBuffer<RefElement>(entity);
 
-            Assert.DoesNotThrow(() => Patch(), "буфер из нуля элементов — нормальное состояние, а не провал");
+            Assert.DoesNotThrow(() => Patch(), "a buffer of zero elements is a normal state, not a failure");
             Assert.That(EM.GetBuffer<RefElement>(entity).Length, Is.Zero);
 
-            // И обратный проход тоже: у пустого буфера нечего сворачивать, но пройти по нему он обязан.
+            // And the reverse pass too: an empty buffer has nothing to fold, but the pass is obliged to walk it.
             byte[] saved = null;
             Assert.DoesNotThrow(() => saved = Save());
             Assert.That(saved, Is.Not.Null);
-            Assert.That(BlobchegPatchErrors.HasAny, Is.False, "пустой буфер не имеет права положить провал в ящик");
+            Assert.That(BlobchegPatchErrors.HasAny, Is.False, "an empty buffer has no right to drop a failure into the box");
         }
 
         [Test]
-        public void Ссылка_в_поднятую_но_пустую_базу_обязана_отбиться()
+        public void A_reference_into_a_loaded_but_empty_base_is_obliged_to_be_rejected()
         {
-            // База без единой записи — файл ровно в один header. Первый возможный оффсет записи
-            // (HeaderSize) в такой базе уже за концом файла.
+            // A base without a single record is a file of exactly one header. The first possible record
+            // offset (HeaderSize) in such a base is already past the end of the file.
             var empty = Raise(Domain(nameof(IPatchHot)).Seal());
             Assert.That(empty.Length, Is.EqualTo(BlobchegFormat.HeaderSize));
 
             Gun(BlobchegFormat.HeaderSize);
 
             var error = Assert.Throws<InvalidOperationException>(() => Patch(),
-                "оффсет за концом пустой базы обязан быть ошибкой, а не указателем на первый байт после header'а");
+                "an offset past the end of an empty base is obliged to be an error, not a pointer at the first byte after the header");
 
             Assert.That(error.Message, Does.Contain(nameof(GunRef)));
         }
 
         [Test]
-        public void Нулевой_слот_переживает_патч_и_обратный_проход_нулём()
+        public void A_zero_slot_outlives_the_patch_and_the_reverse_pass_as_zero()
         {
             Raise(HotFile());
 
@@ -94,14 +95,14 @@ namespace Blobcheg.PatchTests
             {
                 var slot = SlotOf(loaded, Single<GunRef>(loaded));
 
-                // Слепое вычитание адреса базы из нуля дало бы ulong.MaxValue минус адрес — то есть
-                // абсурдное число, которое следующий патч уже не отличит ни от чего.
-                Assert.That(slot, Is.Zero, "ноль обязан уехать в файл нулём");
+                // Blindly subtracting the base address from zero would give ulong.MaxValue minus the
+                // address — an absurd number the next patch could no longer tell from anything.
+                Assert.That(slot, Is.Zero, "zero is obliged to travel into the file as zero");
             }
         }
 
         [Test]
-        public void Буфер_из_одного_нулевого_элемента_не_становится_адресом_базы()
+        public void A_buffer_of_one_zero_element_does_not_become_the_base_address()
         {
             var hot = Raise(HotFile());
 
@@ -114,11 +115,11 @@ namespace Blobcheg.PatchTests
             var element = EM.GetBuffer<RefElement>(entity)[0];
             Assert.That(element.Gun.Data.Value, Is.Zero);
             Assert.That(element.Gun.Data.Value, Is.Not.EqualTo(hot.Ptr));
-            Assert.That(element.Marker, Is.EqualTo(1), "соседнее поле элемента патч трогать не имеет права");
+            Assert.That(element.Marker, Is.EqualTo(1), "the patch has no right to touch the neighbouring field of the element");
         }
 
         [Test]
-        public void Мир_без_единой_сущности_сохраняется_и_читается()
+        public void A_world_without_a_single_entity_is_saved_and_read()
         {
             Raise(HotFile());
 

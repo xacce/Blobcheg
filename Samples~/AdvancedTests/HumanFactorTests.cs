@@ -9,20 +9,21 @@ using UnityEditor;
 namespace Blobcheg.AdvancedTests
 {
     /// <summary>
-    /// Человеческий фактор. Не злоумышленник и не край диапазона, а обычные привычки: сохранить id
-    /// в сейв, закешировать оффсет, проверить «не ноль ли», поверить манифесту, поправить пару байт
-    /// в собранном файле руками. Эти сценарии стоят продакшена чаще, чем все границы вместе.
+    /// The human factor. Not an attacker and not the edge of a range but ordinary habits: put an id into
+    /// a save, cache an offset, check "is it non-zero", trust the manifest, fix a couple of bytes in an
+    /// assembled file by hand. These scenarios cost production more often than all the boundaries put
+    /// together.
     /// </summary>
     public sealed class HumanFactorTests : AdvancedFixture
     {
         /// <summary>
-        /// Самая дорогая из возможных поломок: игрок открывает сохранение и получает не тот предмет,
-        /// без единой ошибки. Закрыта тем, что id не пересчитывается — он лежит на носителе ноды и
-        /// наследуется, а удалённая нода оставляет за собой пустую строку. Строка-дырка стоит
-        /// нескольких байт в файле; подтянуть следующую значило бы сдвинуть чужой сохранённый id.
+        /// The most expensive breakage possible: a player opens a save and gets the wrong item, without a
+        /// single error. It is closed by the fact that an id is not recomputed — it lies on the node's
+        /// carrier and is inherited, while a deleted node leaves an empty row behind. A hole row costs a
+        /// few bytes in the file; pulling the next one in would mean shifting someone else's saved id.
         /// </summary>
         [Test]
-        public void Сохранённый_id_после_удаления_соседа_не_указывает_на_другую_ноду()
+        public void A_saved_id_after_a_neighbour_is_deleted_does_not_point_at_another_node()
         {
             var created = new[]
             {
@@ -42,7 +43,7 @@ namespace Blobcheg.AdvancedTests
 
             Rebuild();
 
-            // Так делает потребитель: взял id и положил его в сейв. Дальше он видит только число.
+            // This is what a consumer does: took the id and put it into a save. From there on they see only a number.
             var saved = IdOf(byId[1], AdvRouter.RouterName);
             Assert.That(saved.Index, Is.EqualTo(1u));
 
@@ -54,13 +55,13 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.That(router.Count, Is.EqualTo(3),
-                    "удалённая нода оставила дырку: строк по-прежнему три, первая пуста");
-                Assert.That(router.HasCold(BlobchegId.In(AdvRouter.RouterName, 0)), Is.False, "и она пуста");
+                    "the deleted node left a hole: there are still three rows and the first one is empty");
+                Assert.That(router.HasCold(BlobchegId.In(AdvRouter.RouterName, 0)), Is.False, "and it is empty");
 
                 Assert.That(IdOf(byId[1], AdvRouter.RouterName), Is.EqualTo(saved),
-                    "id соседа не съезжает следом за удалённым");
+                    "the neighbour's id does not slide down after the deleted one");
                 Assert.That(cold.Read<AdvColdInfo>(router.GetCold(saved)).Tier, Is.EqualTo(200),
-                    "сохранённый id обязан вести к своей ноде");
+                    "a saved id is obliged to lead to its own node");
             }
             finally
             {
@@ -70,35 +71,36 @@ namespace Blobcheg.AdvancedTests
         }
 
         /// <summary>
-        /// Кешировать адрес потребитель будет — в компоненте, в статике, в запечённой субсцене.
-        /// Поэтому адрес закреплён за записью: прошлый адрес приезжает в раскладку заявкой с
-        /// носителя ноды, и появление соседа его не двигает. Двигает только компакт — и он на то и
-        /// отдельная команда, что после него перепекается всё, что адрес запомнило.
+        /// A consumer will cache an address — in a component, in a static, in a baked subscene. That is
+        /// why an address is pinned to its record: the previous address arrives into the layout as a claim
+        /// from the node's carrier, and the appearance of a neighbour does not move it. Only a compaction
+        /// moves it — and it is a separate command precisely because everything that remembered the
+        /// address gets rebaked after it.
         /// </summary>
         [Test]
-        public void Закешированный_оффсет_переживает_появление_чужой_записи()
+        public void A_cached_offset_outlives_the_appearance_of_a_foreign_record()
         {
             var gun = Node<AdvComboNodeSo>("Combo");
             gun.rpm = 999;
             Dirty(gun);
             Rebuild();
 
-            // Потребитель закешировал адрес у себя: положил в компонент, в статик, в сейв — неважно.
+            // The consumer cached the address on their side: put it into a component, a static, a save — it does not matter.
             var cached = OffsetOf(gun, "IAdvCombat");
 
-            // Появилась ЧУЖАЯ нода с типом, имя которого сортируется РАНЬШЕ AdvGun: без заявки на
-            // прежний адрес она сдвинула бы все записи следующих типов.
+            // A FOREIGN node appeared with a type whose name sorts BEFORE AdvGun: without a claim on the
+            // previous address it would shift every record of the following types.
             Node<AdvArmorNodeSo>("Armor");
             Rebuild();
 
             Assert.That(OffsetOf(gun, "IAdvCombat"), Is.EqualTo(cached),
-                "новая нода не имеет права двигать чужой адрес");
+                "a new node has no right to move someone else's address");
 
             var db = Combat();
             try
             {
                 Assert.That(db.Read<AdvGun>(cached).Rpm, Is.EqualTo(999),
-                    "и по закешированному адресу лежит та же запись");
+                    "and the same record lies at the cached address");
             }
             finally
             {
@@ -107,12 +109,12 @@ namespace Blobcheg.AdvancedTests
         }
 
         /// <summary>
-        /// Обратная сторона: компакт адреса двигает нарочно. Здесь важно, что он не оставляет
-        /// потребителя с протухшим числом молча — носители переписаны, и по старому адресу либо
-        /// лежит не та запись, либо не лежит ничего.
+        /// The other side: a compaction moves addresses on purpose. What matters here is that it does not
+        /// leave the consumer with a stale number silently — the carriers are rewritten, and at the old
+        /// address either the wrong record lies or nothing does.
         /// </summary>
         [Test]
-        public void Компакт_двигает_адрес_и_переписывает_носитель()
+        public void A_compaction_moves_the_address_and_rewrites_the_carrier()
         {
             var armor = Node<AdvArmorNodeSo>("Armor");
             var gun = Node<AdvComboNodeSo>("Combo");
@@ -126,16 +128,16 @@ namespace Blobcheg.AdvancedTests
             BlobchegBuild.Compact();
 
             var compacted = OffsetOf(gun, "IAdvCombat");
-            Assert.That(compacted, Is.LessThan(withHole), "компакт убрал дырку и подтянул запись");
+            Assert.That(compacted, Is.LessThan(withHole), "the compaction removed the hole and pulled the record in");
             Assert.That(compacted, Is.EqualTo((uint)BlobchegFormat.HeaderSize),
-                "единственная запись после компакта лежит сразу за header'ом");
+                "after a compaction the only record lies right after the header");
 
             var db = Combat();
             try
             {
-                Assert.That(db.Read<AdvGun>(compacted).Rpm, Is.EqualTo(600), "по новому адресу читается");
+                Assert.That(db.Read<AdvGun>(compacted).Rpm, Is.EqualTo(600), "it reads at the new address");
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(withHole).Rpm; },
-                    "а по старому — уже нет, и это видно, а не молчит");
+                    "and no longer at the old one, and that is visible rather than silent");
             }
             finally
             {
@@ -144,7 +146,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Порядок_id_воспроизводим_между_пересборками()
+        public void The_id_order_is_reproducible_across_rebuilds()
         {
             var created = new BlobchegNodeSo[]
             {
@@ -162,16 +164,15 @@ namespace Blobcheg.AdvancedTests
             var again = created.Select(n => IdOf(n, AdvRouter.RouterName).Value).ToArray();
 
             CollectionAssert.AreEqual(first, again,
-                "порядок id обязан быть функцией проекта, а не порядка обхода: иначе билд и редактор разъедутся");
+                "the id order is obliged to be a function of the project and not of the traversal order: otherwise the build and the editor drift apart");
         }
 
         /// <summary>
-        /// Привычка «if (id != 0)» — самая распространённая проверка на свете, и здесь она обязана
-        /// работать. Работает она потому, что тег ноль зарезервирован: строка ноль существует, но
-        /// её id нулём не бывает.
+        /// The habit "if (id != 0)" is the most widespread check in the world, and here it is obliged to
+        /// work. It works because tag zero is reserved: row zero exists, but its id is never zero.
         /// </summary>
         [Test]
-        public void Привычная_проверка_на_ноль_работает()
+        public void The_familiar_check_against_zero_works()
         {
             var created = new[]
             {
@@ -182,16 +183,16 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             var ids = created.Select(n => IdOf(n, AdvRouter.RouterName)).ToArray();
-            Assert.That(ids.Count(id => id.Index == 0), Is.EqualTo(1), "строка ноль есть, как и раньше");
-            Assert.That(ids.Count(id => id.Value == 0), Is.Zero, "а вот id ноль не выдаётся никому");
+            Assert.That(ids.Count(id => id.Index == 0), Is.EqualTo(1), "row zero exists, as before");
+            Assert.That(ids.Count(id => id.Value == 0), Is.Zero, "while id zero is handed out to nobody");
 
             Assert.That(BlobchegId.None.IsValid, Is.False);
-            Assert.That(BlobchegId.None.Value, Is.Zero, "«не назначен» и ноль — одно и то же значение");
+            Assert.That(BlobchegId.None.Value, Is.Zero, "\"not assigned\" and zero are the same value");
             Assert.That(new BlobchegId(0).IsValid, Is.False);
         }
 
         [Test]
-        public void Манифест_домена_не_является_доказательством_собранности()
+        public void A_domain_manifest_is_no_proof_that_it_is_built()
         {
             Node<AdvComboNodeSo>("Combo");
             Rebuild();
@@ -199,19 +200,19 @@ namespace Blobcheg.AdvancedTests
             var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(
                 BlobchegBuild.ManifestFolder + "/IAdvCombat.asset");
 
-            Assert.That(manifest, Is.Not.Null, "манифест — то, что разработчик видит глазами в проекте");
+            Assert.That(manifest, Is.Not.Null, "the manifest is what a developer sees with their eyes in the project");
             Assert.That(manifest.recordCount, Is.GreaterThan(0));
 
             File.Delete(FileOf("IAdvCombat"));
 
             Assert.That(manifest.recordCount, Is.GreaterThan(0),
-                "манифест по-прежнему бодро рапортует о записях, которых на диске больше нет");
+                "the manifest still cheerfully reports records that are no longer on disk");
 
             var load = BlobchegTransport.Default.Read(AdvCombatDb.FileName, Allocator.Persistent);
             try
             {
                 Assert.Throws<BlobchegTransientException>(() => load.Complete(),
-                    "зато подъём обязан упасть явно — иначе рассинхрон манифеста и файла ушёл бы в рантайм");
+                    "but the load is obliged to fail explicitly — otherwise the drift between manifest and file would go into runtime");
             }
             finally
             {
@@ -220,7 +221,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Возвращённая_запись_копируется_и_база_не_портится()
+        public void A_returned_record_is_copied_and_the_base_is_not_spoiled()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             node.rpm = 600;
@@ -231,13 +232,13 @@ namespace Blobcheg.AdvancedTests
             var db = Combat();
             try
             {
-                // Привычка из managed-мира: «взял объект, поправил поле». Здесь это копия.
+                // A habit from the managed world: "took the object, fixed a field". Here that is a copy.
                 var mine = db.Read<AdvGun>(offset);
                 mine.Rpm = 1;
                 mine.Ammo = -1f;
 
                 Assert.That(db.Read<AdvGun>(offset).Rpm, Is.EqualTo(600),
-                    "правка копии не имеет права доехать до базы — её читают все сразу");
+                    "an edit of a copy has no right to reach the base — everyone reads it at once");
                 Assert.That(db.Read<AdvGun>(offset).Ammo, Is.EqualTo(30f));
             }
             finally
@@ -247,14 +248,14 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Правка_собранного_файла_руками_отбивается()
+        public void Editing_an_assembled_file_by_hand_is_rejected()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             node.rpm = 600;
             Dirty(node);
             Rebuild();
 
-            // «Это же просто данные» — разработчик правит значение прямо в бинарнике.
+            // "It is just data" — a developer edits a value straight in the binary.
             var offset = (int)OffsetOf(node, "IAdvCombat");
             var file = Bytes("IAdvCombat");
             BlobchegBytes.WriteU32(file, offset + 4, 1234);
@@ -263,7 +264,7 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.Throws<InvalidOperationException>(() => { _ = new AdvCombatDb(buffer); },
-                    "файл — производное, а не исходник; правка мимо пересборки обязана быть видна сразу");
+                    "the file is derived and not a source; an edit past the rebuild is obliged to be visible at once");
             }
             finally
             {
@@ -272,7 +273,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Правка_значения_видна_в_отчёте_пересборки()
+        public void An_edit_of_a_value_is_visible_in_the_rebuild_report()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             node.rpm = 1;
@@ -283,20 +284,20 @@ namespace Blobcheg.AdvancedTests
             Dirty(node);
             var report = Rebuild();
 
-            Assert.That(report.Changed, Is.True, "изменилось значение — пересборка обязана это заметить");
-            Assert.That(report.ChangedFiles, Is.GreaterThan(0), "и переписать файл");
+            Assert.That(report.Changed, Is.True, "a value changed — the rebuild is obliged to notice that");
+            Assert.That(report.ChangedFiles, Is.GreaterThan(0), "and to rewrite the file");
 
             var quiet = Rebuild();
-            Assert.That(quiet.Changed, Is.False, "а вот после этого — не трогать ничего");
+            Assert.That(quiet.Changed, Is.False, "and after that — to touch nothing");
         }
 
         [Test]
-        public void Удаление_последней_ноды_очищает_базу_а_не_оставляет_вчерашнюю()
+        public void Deleting_the_last_node_clears_the_base_instead_of_leaving_yesterdays_one()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             Rebuild();
 
-            Assert.That(BlobchegBuild.RefsOf(node).Count(), Is.EqualTo(2), "нода писала в две базы");
+            Assert.That(BlobchegBuild.RefsOf(node).Count(), Is.EqualTo(2), "the node wrote into two bases");
             var before = Bytes("IAdvCombat").Length;
 
             Kill(node);
@@ -309,7 +310,7 @@ namespace Blobcheg.AdvancedTests
             {
                 Assert.That(db.Length, Is.LessThan(before));
                 Assert.That(db.Length, Is.EqualTo(BlobchegFormat.HeaderSize),
-                    "нод не осталось — база обязана стать пустой, а не остаться вчерашней");
+                    "no nodes are left — the base is obliged to become empty and not to stay yesterday's");
             }
             finally
             {
@@ -318,7 +319,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Поле_на_удалённую_ноду_отвечает_ошибкой_а_не_нулевым_id()
+        public void A_field_pointing_at_a_deleted_node_answers_with_an_error_and_not_a_zero_id()
         {
             var node = Node<AdvColdOnlyNodeSo>("Doomed");
             Rebuild();
@@ -332,9 +333,9 @@ namespace Blobcheg.AdvancedTests
             Kill(node);
 
             Assert.That(field.IsSet, Is.False,
-                "ассет уничтожен — поле обязано узнать это Unity'шным сравнением, а не ReferenceEquals");
+                "the asset was destroyed — the field is obliged to learn that by Unity's comparison and not by ReferenceEquals");
             Assert.Throws<InvalidOperationException>(() => { _ = field.Id; },
-                "повисшая ссылка обязана падать, а не отдавать id ноль");
+                "a dangling reference is obliged to fail and not to hand out id zero");
         }
     }
 }

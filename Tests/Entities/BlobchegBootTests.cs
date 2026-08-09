@@ -21,12 +21,12 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// База, объявленная <c>IComponentData</c>: под неё генератор выпускает бут-систему
-    /// <c>TestBootDbBootSystem</c>. Если он её не выпустил, этот файл не соберётся.
+    /// A base declared <c>IComponentData</c>: the generator emits a <c>TestBootDbBootSystem</c> boot
+    /// system for it. If it did not, this file does not build.
     ///
-    /// <c>[DisableAutoCreation]</c> уезжает на выпущенную систему: тестовой базе нечего делать в
-    /// дефолтном мире потребителя, тем более что её файла на свежем чекауте ещё нет. Мир под неё
-    /// тест создаёт свой.
+    /// The <c>[DisableAutoCreation]</c> travels onto the emitted system: a test base has no business in
+    /// the consumer's default world, all the more so since its file does not exist yet on a fresh
+    /// checkout. The test creates a world of its own for it.
     /// </summary>
     [Blobcheg(typeof(ITestBootData))]
     [DisableAutoCreation]
@@ -35,13 +35,13 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Выпущенная генератором бут-система. Мир создаётся свой: доказывать надо саму систему, а не
-    /// то, в каком порядке её создал дефолтный мир редактора.
+    /// The boot system emitted by the generator. A world of its own is created: what has to be proven is
+    /// the system itself and not the order in which the editor's default world created it.
     /// </summary>
     public sealed unsafe class BlobchegBootTests
     {
         [Test]
-        public void Пересборка_под_живым_миром_доезжает_до_синглтона()
+        public void A_rebuild_under_a_live_world_reaches_the_singleton()
         {
             BlobchegBuild.RebuildAll();
 
@@ -58,26 +58,26 @@ namespace Blobcheg.Tests
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "база не поднялась — дальше проверять нечего");
+                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "the base did not load — there is nothing further to check");
 
                 var key = BlobchegNaming.NameHash(TestBootDb.DomainName);
                 Assert.That(BlobchegBases.TryGet(key, out var before, out var length), Is.True);
 
-                // Пересборка в редакторе кончается ровно этим: номер файла поднят. Дальше сторожить
-                // его — забота того, кто базу поднял.
+                // A rebuild in the editor ends with exactly this: the file number is bumped. Watching it
+                // after that is the business of whoever loaded the base.
                 BlobchegFileVersions.Bump(TestBootDb.FileName);
                 system.Update(world.Unmanaged);
 
                 Assert.That(BlobchegBases.TryGet(key, out var after, out var lengthAfter), Is.True);
                 Assert.That((ulong)after, Is.Not.EqualTo((ulong)before),
-                    "файл переписан — в мире обязан оказаться НОВЫЙ буфер, а не прежние байты");
-                Assert.That(lengthAfter, Is.EqualTo(length), "файл тот же, значит и длина та же");
+                    "the file was rewritten — the world is obliged to end up with the NEW buffer and not the old bytes");
+                Assert.That(lengthAfter, Is.EqualTo(length), "the file is the same, so the length is the same");
 
                 var database = query.GetSingleton<TestBootDb>();
-                Assert.That(database.IsCreated, Is.True, "синглтон обязан держать новый блоб, а не освобождённый старый");
+                Assert.That(database.IsCreated, Is.True, "the singleton is obliged to hold the new blob and not the freed old one");
                 Assert.That(database.Length, Is.EqualTo(lengthAfter));
 
-                // Второй апдейт без пересборки ничего не трогает: иначе база перечитывалась бы каждый кадр.
+                // A second update without a rebuild touches nothing: otherwise the base would be re-read every frame.
                 system.Update(world.Unmanaged);
                 Assert.That(BlobchegBases.TryGet(key, out var idle, out _), Is.True);
                 Assert.That((ulong)idle, Is.EqualTo((ulong)after));
@@ -89,7 +89,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Битый_файл_отбивается_один_раз_и_чинится_пересборкой()
+        public void A_broken_file_is_rejected_once_and_repaired_by_a_rebuild()
         {
             BlobchegBuild.RebuildAll();
 
@@ -100,19 +100,21 @@ namespace Blobcheg.Tests
             var world = new World("blobcheg-boot-broken-tests");
             try
             {
-                // Версия формата лежит в header'е сразу за magic. Тройка — прошлый формат пакета:
-                // ровно такой файл и отбил читатель, когда обновлённый пакет встретил старые .bcheg.
+                // The format version lies in the header right after the magic. Three is the package's
+                // previous format: exactly such a file was rejected by the reader when the updated
+                // package met old .bcheg files.
                 var broken = (byte[])sane.Clone();
                 broken[4] = 3;
                 File.WriteAllBytes(path, broken);
 
-                LogAssert.Expect(LogType.Exception, new Regex("версия формата 3"));
+                LogAssert.Expect(LogType.Exception, new Regex("format version 3"));
 
                 var system = world.CreateSystem<TestBootDbBootSystem>();
                 var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
-                // Дальше кадры идут, а отказ обязан остаться один. Иначе настоящую причину топит
-                // пересказ её последствий: чтение забрано, и каждый следующий Poll бьётся об это.
+                // The frames keep going, and the failure is obliged to stay a single one. Otherwise the
+                // real cause is drowned by a retelling of its consequences: the read was taken away, and
+                // every following Poll runs into that.
                 var clock = Stopwatch.StartNew();
                 while (clock.ElapsedMilliseconds < 2000)
                 {
@@ -122,8 +124,8 @@ namespace Blobcheg.Tests
 
                 LogAssert.NoUnexpectedReceived();
 
-                // Пересборка переписала файл — вот теперь подъём обязан поехать заново, без
-                // перезагрузки домена: иначе сорвавшийся мир не чинится вообще ничем.
+                // The rebuild rewrote the file — now the load is obliged to run again, without a domain
+                // reload: otherwise a world that broke is repaired by nothing at all.
                 File.WriteAllBytes(path, sane);
                 BlobchegFileVersions.Bump(TestBootDb.FileName);
 
@@ -135,7 +137,7 @@ namespace Blobcheg.Tests
                 }
 
                 Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                    "починенный файл обязан доехать до синглтона");
+                    "the repaired file is obliged to reach the singleton");
             }
             finally
             {
@@ -145,15 +147,16 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// Путь до файла базы теста. Сносить и портить его можно: сохранённые байты возвращаются в
-        /// finally, а пересборка всё равно соберёт его заново.
+        /// The path to the test base file. Wiping and corrupting it is allowed: the saved bytes are put
+        /// back in the finally, and the rebuild assembles it again anyway.
         /// </summary>
         static string PathOfDatabase()
             => Path.Combine(Application.streamingAssetsPath, BlobchegNaming.DefaultFolder, TestBootDb.FileName);
 
         /// <summary>
-        /// Собирает лог за время прогона. Варнинг здесь — предмет проверки, а <c>LogAssert</c> на
-        /// варнингах доказывает только «пришёл хотя бы раз»; нам нужно ещё и «ровно раз».
+        /// Collects the log over the run. The warning here is the subject of the check, and
+        /// <c>LogAssert</c> on warnings proves only "it arrived at least once"; we also need "exactly
+        /// once".
         /// </summary>
         sealed class LogTrap : System.IDisposable
         {
@@ -164,7 +167,7 @@ namespace Blobcheg.Tests
             void Take(string condition, string trace, LogType type) => _messages.Add((type, condition));
 
             public int Notifications => _messages.Count(m =>
-                m.type == LogType.Warning && m.text.Contains("нотификация, а не проблема"));
+                m.type == LogType.Warning && m.text.Contains("a notification and not a problem"));
 
             public IEnumerable<string> Loud => _messages
                 .Where(m => m.type == LogType.Error || m.type == LogType.Exception || m.type == LogType.Assert)
@@ -187,11 +190,12 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// Файла базы ещё нет — так выглядит домен, приехавший с пуллом раньше своей пересборки.
-        /// Красный error здесь врёт: чинить нечего, и подъём поедет сам.
+        /// The base file is not there yet — that is what a domain that arrived with a pull before its own
+        /// rebuild looks like. A red error here lies: there is nothing to fix and the load will run by
+        /// itself.
         /// </summary>
         [Test]
-        public void Пропавший_файл_отбивается_варнингом_и_чинится_пересборкой()
+        public void A_missing_file_is_rejected_with_a_warning_and_repaired_by_a_rebuild()
         {
             BlobchegBuild.RebuildAll();
 
@@ -210,19 +214,19 @@ namespace Blobcheg.Tests
 
                     Spin(system, world, 1000);
 
-                    Assert.That(log.Loud, Is.Empty, "переходный момент — не ошибка, красного в логе быть не должно");
+                    Assert.That(log.Loud, Is.Empty, "a transient moment is not an error, there must be no red in the log");
                     Assert.That(log.Notifications, Is.EqualTo(1),
-                        "варнинг обязан быть, и ровно один: кадры идут, а сказать тут нечего дважды");
-                    Assert.That(query.CalculateEntityCount(), Is.Zero, "поднимать пока нечего");
+                        "there is obliged to be a warning, and exactly one: the frames keep going and there is nothing to say twice");
+                    Assert.That(query.CalculateEntityCount(), Is.Zero, "there is nothing to load yet");
 
-                    // Пересборка написала файл и подняла его номер — дальше система обязана сама.
+                    // The rebuild wrote the file and bumped its number — from there the system is obliged to manage on its own.
                     File.WriteAllBytes(path, sane);
                     BlobchegFileVersions.Bump(TestBootDb.FileName);
 
                     Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
 
                     Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                        "написанный файл обязан доехать до синглтона без перезагрузки домена");
+                        "the written file is obliged to reach the singleton without a domain reload");
                 }
                 finally
                 {
@@ -233,11 +237,12 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// Файл пойман посреди перезаписи: длину читатель узнал от нового header'а, а байты достались
-        /// от прежнего. Через кадр то же чтение проходит — значит и это нотификация.
+        /// The file was caught mid-rewrite: the reader learned the length from the new header while the
+        /// bytes came from the old one. A frame later the same read goes through — so this is a
+        /// notification too.
         /// </summary>
         [Test]
-        public void Файл_посреди_перезаписи_отбивается_варнингом_и_чинится_пересборкой()
+        public void A_file_caught_mid_rewrite_is_rejected_with_a_warning_and_repaired_by_a_rebuild()
         {
             BlobchegBuild.RebuildAll();
 
@@ -256,7 +261,7 @@ namespace Blobcheg.Tests
 
                     Spin(system, world, 1000);
 
-                    Assert.That(log.Loud, Is.Empty, "недописанный файл — это момент, а не поломка");
+                    Assert.That(log.Loud, Is.Empty, "an unfinished file is a moment and not a breakage");
                     Assert.That(log.Notifications, Is.EqualTo(1));
                     Assert.That(query.CalculateEntityCount(), Is.Zero);
 
@@ -276,12 +281,12 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// То же под живым миром: база уже поднята, а перезаливка попала в середину перезаписи.
-        /// Номер файла при этом обязан остаться неувиденным — иначе перечитывать станет нечего до
-        /// следующей пересборки, и мир молча останется на прежних байтах.
+        /// The same under a live world: the base is already loaded and the reload landed in the middle of
+        /// a rewrite. The file number is obliged to stay unseen — otherwise there will be nothing to
+        /// re-read until the next rebuild and the world will quietly stay on the old bytes.
         /// </summary>
         [Test]
-        public void Перезаливка_на_недописанном_файле_повторяет_попытку_сама()
+        public void A_reload_on_an_unfinished_file_retries_by_itself()
         {
             BlobchegBuild.RebuildAll();
 
@@ -298,22 +303,22 @@ namespace Blobcheg.Tests
                     var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
                     Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
-                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "база не поднялась — дальше проверять нечего");
+                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "the base did not load — there is nothing further to check");
                     Assert.That(BlobchegBases.TryGet(key, out var before, out _), Is.True);
 
-                    // Пересборка «переписывает» файл: номер поднят, а байты на диске недописаны.
+                    // The rebuild "rewrites" the file: the number is bumped while the bytes on disk are unfinished.
                     File.WriteAllBytes(path, sane.Concat(new byte[] { 0 }).ToArray());
                     BlobchegFileVersions.Bump(TestBootDb.FileName);
 
                     Spin(system, world, 1000);
 
                     Assert.That(log.Loud, Is.Empty);
-                    Assert.That(log.Notifications, Is.EqualTo(1), "один варнинг на полосу, а не на кадр");
+                    Assert.That(log.Notifications, Is.EqualTo(1), "one warning per streak, not per frame");
                     Assert.That(BlobchegBases.TryGet(key, out var held, out _), Is.True);
-                    Assert.That((ulong)held, Is.EqualTo((ulong)before), "мир едет на прежней базе, пока новая недописана");
+                    Assert.That((ulong)held, Is.EqualTo((ulong)before), "the world keeps running on the old base while the new one is unfinished");
 
-                    // Файл дописан, а номер БОЛЬШЕ НЕ ПОДНИМАЕТСЯ: та пересборка уже случилась,
-                    // и повторить попытку — забота самой системы.
+                    // The file is finished and the number is NOT BUMPED AGAIN: that rebuild already
+                    // happened, and retrying is the system's own business.
                     File.WriteAllBytes(path, sane);
 
                     Spin(system, world, 5000,
@@ -321,7 +326,7 @@ namespace Blobcheg.Tests
 
                     Assert.That(BlobchegBases.TryGet(key, out var after, out _), Is.True);
                     Assert.That((ulong)after, Is.Not.EqualTo((ulong)before),
-                        "дописанный файл обязан доехать до мира сам — иначе он остался бы на вчерашних байтах молча");
+                        "the finished file is obliged to reach the world by itself — otherwise it would quietly stay on yesterday's bytes");
                     Assert.That(query.GetSingleton<TestBootDb>().IsCreated, Is.True);
                 }
                 finally
@@ -333,22 +338,22 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Бут_система_заведена_и_в_редакторном_мире()
+        public void The_boot_system_exists_in_the_editor_world_too()
         {
             var filter = (WorldSystemFilterAttribute)typeof(TestBootDbBootSystem)
                 .GetCustomAttributes(typeof(WorldSystemFilterAttribute), false)[0];
 
             Assert.That(filter.FilterFlags & WorldSystemFilterFlags.Editor, Is.Not.EqualTo(default(WorldSystemFilterFlags)),
-                "без этого флага базы в редакторном мире нет, и любой проход патча там упирается в «домен не поднят»");
+                "without this flag there is no base in the editor world, and any patch pass there runs into \"the domain is not loaded\"");
             Assert.That(filter.FilterFlags & WorldSystemFilterFlags.Default, Is.Not.EqualTo(default(WorldSystemFilterFlags)),
-                "а игровой мир при этом никуда не делся");
+                "while the game world went nowhere");
         }
 
         [Test]
-        public void Бут_система_поднимает_базу_в_синглтон()
+        public void The_boot_system_loads_the_base_into_a_singleton()
         {
-            // Файл базы обязан лежать на диске: писатель открывается на каждый объявленный домен,
-            // поэтому пустой ITestBootData тоже собирается.
+            // The base file is obliged to lie on disk: a writer is opened for every declared domain, so
+            // an empty ITestBootData gets assembled too.
             BlobchegBuild.RebuildAll();
 
             var world = new World("blobcheg-boot-tests");
@@ -365,7 +370,7 @@ namespace Blobcheg.Tests
                 }
 
                 Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                    "бут-система обязана положить базу синглтоном за пять секунд");
+                    "the boot system is obliged to put the base down as a singleton within five seconds");
 
                 var database = query.GetSingleton<TestBootDb>();
                 Assert.That(database.IsCreated, Is.True);
@@ -373,26 +378,26 @@ namespace Blobcheg.Tests
             }
             finally
             {
-                // Мир диспозится — OnDestroy системы отдаёт буфер базы обратно.
+                // The world is disposed — the system's OnDestroy gives the base buffer back.
                 world.Dispose();
             }
         }
 
         [Test]
-        public void Запрет_автосоздания_едет_с_базы_на_выпущенную_систему()
+        public void The_auto_creation_ban_travels_from_the_base_onto_the_emitted_system()
         {
             var system = typeof(TestBootDbBootSystem);
 
             Assert.That(system.GetCustomAttributes(typeof(DisableAutoCreationAttribute), false), Is.Not.Empty,
-                "[DisableAutoCreation] на базе обязан оказаться на её бут-системе, иначе дефолтный мир " +
-                "потребителя поднимает чужую базу");
+                "a [DisableAutoCreation] on the base is obliged to end up on its boot system, otherwise the " +
+                "consumer's default world loads a foreign base");
 
             var inGroup = (UpdateInGroupAttribute)system.GetCustomAttributes(typeof(UpdateInGroupAttribute), false)[0];
             Assert.That(inGroup.GroupType, Is.EqualTo(typeof(BlobchegBootGroup)));
         }
 
         [Test]
-        public void Группа_подъёма_стоит_до_командного_буфера_инициализации()
+        public void The_load_group_stands_before_the_initialisation_command_buffer()
         {
             var group = typeof(BlobchegBootGroup);
 
@@ -402,7 +407,7 @@ namespace Blobcheg.Tests
 
             var before = (UpdateBeforeAttribute)group.GetCustomAttributes(typeof(UpdateBeforeAttribute), false)[0];
             Assert.That(before.SystemType, Is.EqualTo(typeof(BeginInitializationEntityCommandBufferSystem)),
-                "базы обязаны подняться раньше, чем проиграется первый командный буфер кадра");
+                "the bases are obliged to load before the first command buffer of the frame is played back");
         }
     }
 }

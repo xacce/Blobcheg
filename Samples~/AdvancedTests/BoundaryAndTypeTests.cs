@@ -8,14 +8,14 @@ using Unity.Collections;
 namespace Blobcheg.AdvancedTests
 {
     /// <summary>
-    /// Границы адреса и границы типа: за концом файла, внутрь header'а, мимо выравнивания, ровно на
-    /// последней записи, ровно на 64 базах роутера — и что происходит, когда запись читают типом
-    /// того же размера, но не тем.
+    /// Address boundaries and type boundaries: past the end of the file, into the header, off the
+    /// alignment, exactly on the last record, exactly on 64 bases of a router — and what happens when a
+    /// record is read with a type of the same size but the wrong one.
     /// </summary>
     public sealed class BoundaryAndTypeTests : AdvancedFixture
     {
         [Test]
-        public void Оффсет_за_концом_файла_падает()
+        public void An_offset_past_the_end_of_the_file_fails()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             Rebuild();
@@ -26,14 +26,14 @@ namespace Blobcheg.AdvancedTests
                 var past = (uint)BlobchegFormat.AlignUp(db.Length);
 
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(past).Rpm; },
-                    "адрес ровно на конце файла — это уже не запись");
+                    "an address exactly at the end of the file is no longer a record");
 
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(past + 16u).Rpm; });
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(0xFFFFFFF0u).Rpm; },
-                    "адрес у потолка uint не имеет права свернуться в валидный");
+                    "an address near the uint ceiling has no right to fold into a valid one");
 
                 Assert.That(db.Read<AdvGun>(OffsetOf(node, "IAdvCombat")).Rpm, Is.EqualTo(600),
-                    "и при этом настоящий адрес обязан читаться");
+                    "and a real address is obliged to read all the same");
             }
             finally
             {
@@ -42,7 +42,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Оффсет_мимо_выравнивания_падает()
+        public void An_offset_off_the_alignment_fails()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             Rebuild();
@@ -52,7 +52,7 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(offset + 1u).Rpm; },
-                    "начало записи всегда кратно 16 — всё остальное не начало записи");
+                    "the start of a record is always a multiple of 16 — everything else is not the start of a record");
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(offset + 15u).Rpm; });
             }
             finally
@@ -62,7 +62,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Оффсет_внутрь_header_падает()
+        public void An_offset_into_the_header_fails()
         {
             Node<AdvComboNodeSo>("Combo");
             Rebuild();
@@ -71,7 +71,7 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(0).Rpm; },
-                    "нулевой адрес — это header, а не запись; он же значение неинициализированного поля");
+                    "address zero is the header and not a record; it is also the value of an uninitialised field");
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGun>(16).Rpm; });
             }
             finally
@@ -81,7 +81,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Тип_крупнее_записи_не_лезет_в_буфер()
+        public void A_type_larger_than_the_record_does_not_fit_into_the_buffer()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             Rebuild();
@@ -91,7 +91,7 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvFat>(offset).C0.A; },
-                    "512-байтовая структура из 8-байтовой записи взяться не может");
+                    "a 512-byte struct cannot come out of an 8-byte record");
             }
             finally
             {
@@ -100,7 +100,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Последняя_запись_читается_целиком()
+        public void The_last_record_is_read_whole()
         {
             var fat = Node<AdvFatNodeSo>("Fat");
             fat.first = 3.25;
@@ -113,11 +113,11 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.That(offset + 512u, Is.LessThanOrEqualTo((uint)db.Length),
-                    "запись обязана целиком помещаться в файл");
+                    "a record is obliged to fit into the file whole");
 
                 ref readonly var record = ref db.Read<AdvFat>(offset);
-                Assert.That(record.C0.A, Is.EqualTo(3.25), "первые 8 байт последней записи");
-                Assert.That(record.C7.H, Is.EqualTo(-7.75), "и последние её 8 байт тоже — до самого конца файла");
+                Assert.That(record.C0.A, Is.EqualTo(3.25), "the first 8 bytes of the last record");
+                Assert.That(record.C7.H, Is.EqualTo(-7.75), "and its last 8 bytes too — right up to the end of the file");
             }
             finally
             {
@@ -126,7 +126,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Однобайтовая_запись_не_сдвигает_соседей()
+        public void A_one_byte_record_does_not_shift_the_neighbours()
         {
             var tiny = Node<AdvRawNodeSo>("Tiny");
             var big = Node<AdvRawNodeSo>("Big");
@@ -144,38 +144,38 @@ namespace Blobcheg.AdvancedTests
 
             Assert.That(tinyAt, Is.Not.EqualTo(bigAt));
             Assert.That(Math.Abs((long)tinyAt - bigAt), Is.GreaterThanOrEqualTo(16),
-                "между началами двух записей всегда есть выравнивание");
+                "there is always alignment between the starts of two records");
 
             var file = Bytes("IAdvLoose");
-            Assert.That(file[(int)tinyAt], Is.EqualTo((byte)0x11), "однобайтовая запись лежит там, где обещал её адрес");
+            Assert.That(file[(int)tinyAt], Is.EqualTo((byte)0x11), "the one-byte record lies where its address promised");
             Assert.That(file[(int)bigAt], Is.EqualTo((byte)0x20));
-            Assert.That(file[(int)bigAt + 39], Is.EqualTo((byte)(0x20 + 39)), "и сосед не обрезан");
+            Assert.That(file[(int)bigAt + 39], Is.EqualTo((byte)(0x20 + 39)), "and the neighbour is not truncated");
         }
 
         [Test]
-        public void Роутер_без_единой_базы_отбивается()
+        public void A_router_without_a_single_base_is_rejected()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => BlobchegRouterFormat.MaskWidthFor(0),
-                "роутеру без баз нечего маршрутизировать");
+                "a router without bases has nothing to route");
 
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => BlobchegRouterWriter.Open(Scratch, "AdvEmptyRouter", 0, 0),
-                "писатель роутера обязан отбить это на входе, а не собрать файл, который никто не поднимет");
+                "the router writer is obliged to reject that at the input and not to assemble a file nobody will load");
         }
 
         [Test]
-        public void Больше_шестидесяти_четырёх_баз_отбивается()
+        public void More_than_sixty_four_bases_is_rejected()
         {
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => BlobchegRouterFormat.MaskWidthFor(BlobchegRouterFormat.MaxDomains + 1),
-                "маска шире 64 бит не бывает — это обязана быть ошибка, а не потерянная база");
+                "there is no mask wider than 64 bits — that is obliged to be an error and not a lost base");
 
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => BlobchegRouterWriter.Open(Scratch, "AdvWideRouter", BlobchegRouterFormat.MaxDomains + 1, 0));
         }
 
         [Test]
-        public void Роутер_ровно_на_шестидесяти_четырёх_базах_живёт()
+        public void A_router_on_exactly_sixty_four_bases_lives()
         {
             const int count = BlobchegRouterFormat.MaxDomains;
 
@@ -203,15 +203,15 @@ namespace Blobcheg.AdvancedTests
             {
                 var edges = blob.Get(blob.IdAt(0));
                 Assert.That(edges.Has(0), Is.True);
-                Assert.That(edges.Has(count - 1), Is.True, "старший бит маски — тот, на котором ломается popcount");
+                Assert.That(edges.Has(count - 1), Is.True, "the top bit of the mask is the one popcount breaks on");
                 Assert.That(edges.Offset(0), Is.EqualTo(0x100u));
                 Assert.That(edges.Offset(count - 1), Is.EqualTo(0x200u));
                 Assert.That(edges.Has(1), Is.False);
 
                 var empty = blob.Get(blob.IdAt(1));
-                Assert.That(empty.Mask, Is.EqualTo(0ul), "строка без единой базы допустима");
+                Assert.That(empty.Mask, Is.EqualTo(0ul), "a row without a single base is allowed");
                 Assert.Throws<InvalidOperationException>(() => empty.Offset(0),
-                    "но оффсета у неё нет, и сентинела вместо него быть не может");
+                    "but it has no offset, and there can be no sentinel in its place");
                 Assert.That(empty.TryOffset(0, out _), Is.False);
             }
             finally
@@ -221,7 +221,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Id_за_последней_строкой_падает()
+        public void An_id_past_the_last_row_fails()
         {
             Node<AdvComboNodeSo>("Combo");
             Node<AdvColdOnlyNodeSo>("Cold");
@@ -233,7 +233,7 @@ namespace Blobcheg.AdvancedTests
                 Assert.That(router.Count, Is.EqualTo(2));
 
                 Assert.Throws<InvalidOperationException>(() => router.Get(router.IdAt((uint)router.Count)),
-                    "строки с таким номером нет — это ошибка, а не пустая строка");
+                    "there is no row with that number — that is an error and not an empty row");
                 Assert.Throws<InvalidOperationException>(() => router.Get(router.IdAt(BlobchegId.MaxIndex)));
                 Assert.Throws<InvalidOperationException>(() => router.Get(new BlobchegId(uint.MaxValue - 1)));
                 Assert.Throws<InvalidOperationException>(() => router.Get(BlobchegId.None));
@@ -242,7 +242,7 @@ namespace Blobcheg.AdvancedTests
                 Assert.That(router.TryGet(BlobchegId.None, out _), Is.False);
 
                 Assert.Throws<ArgumentOutOfRangeException>(() => router.IdAt(BlobchegId.MaxIndex + 1),
-                    "строка за потолком роутера — это не id, а мусор с чужим тегом внутри");
+                    "a row past the router ceiling is not an id but garbage with a foreign tag inside");
             }
             finally
             {
@@ -251,12 +251,13 @@ namespace Blobcheg.AdvancedTests
         }
 
         /// <summary>
-        /// Констрейнт домена в сгенерированном <c>Read&lt;T&gt;</c> ловит только ЧУЖОЙ домен —
-        /// близнец внутри своего домена проходит компилятор насквозь. Ловит его отладочный контур,
-        /// и он живёт под тем же дефайном, что и проверка границ: в редакторе и в development-билде.
+        /// The domain constraint in the generated <c>Read&lt;T&gt;</c> catches only a FOREIGN domain — a
+        /// twin inside its own domain passes the compiler straight through. What catches it is the debug
+        /// contour, and it lives under the same define as the bounds check: in the editor and in a
+        /// development build.
         /// </summary>
         [Test]
-        public void Близнец_того_же_размера_обязан_быть_отбит()
+        public void A_twin_of_the_same_size_is_obliged_to_be_rejected()
         {
             var gun = Node<AdvComboNodeSo>("Combo");
             gun.ammo = 12.5f;
@@ -269,7 +270,7 @@ namespace Blobcheg.AdvancedTests
             try
             {
                 Assert.Throws<InvalidOperationException>(() => { _ = db.Read<AdvGunTwin>(offset).Rpm; },
-                    "по этому адресу лежит AdvGun; отдавать его как AdvGunTwin нельзя даже при равном размере");
+                    "an AdvGun lies at this address; handing it out as an AdvGunTwin is not allowed even at equal size");
             }
             finally
             {
@@ -278,7 +279,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Смесь_bool_enum_и_выравнивания_переживает_круг()
+        public void A_mix_of_bool_enum_and_alignment_outlives_the_round_trip()
         {
             var node = Node<AdvMixedNodeSo>("Mixed");
             node.flag = true;
@@ -293,7 +294,7 @@ namespace Blobcheg.AdvancedTests
             {
                 ref readonly var record = ref db.Read<AdvMixed>(OffsetOf(node, "IAdvCombat"));
 
-                Assert.That(record.Flag, Is.True, "bool переживает круг как есть, без превращения в 0/1 наугад");
+                Assert.That(record.Flag, Is.True, "a bool outlives the round trip as it is, without turning into a random 0/1");
                 Assert.That(record.Tier, Is.EqualTo(AdvTier.High));
                 Assert.That(record.Weight, Is.EqualTo(-1234.5678).Within(0.0));
                 Assert.That(record.Small, Is.EqualTo((short)-31000));
@@ -305,7 +306,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Сырой_путь_и_типизированный_кладут_одни_и_те_же_байты()
+        public void The_raw_path_and_the_typed_one_lay_down_the_same_bytes()
         {
             var typed = Node<AdvLooseNodeSo>("Typed");
             var raw = Node<AdvRawNodeSo>("Raw");
@@ -323,14 +324,14 @@ namespace Blobcheg.AdvancedTests
             var rawAt = OffsetOf(raw, "IAdvLoose");
 
             Assert.That(BitConverter.ToInt64(file, (int)typedAt), Is.EqualTo(typed.a),
-                "типизированная запись — это ровно байты структуры, little-endian, без обёрток");
+                "a typed record is exactly the bytes of the struct, little-endian, with no wrappers");
 
             var db = Loose();
             try
             {
                 Assert.That(db.Read<AdvLooseBlock>(typedAt).B, Is.EqualTo(typed.b));
 
-                // Сырая запись того же размера читается тем же способом: типа у неё нет, но байты те же.
+                // A raw record of the same size is read the same way: it has no type, but the bytes are the same.
                 Assert.That(file[(int)rawAt], Is.EqualTo((byte)0));
                 Assert.That(file[(int)rawAt + 15], Is.EqualTo((byte)15));
             }

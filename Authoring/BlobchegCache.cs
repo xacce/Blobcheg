@@ -5,25 +5,27 @@ using UnityEditor;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Что пересборка помнит с прошлого раза: список нод, их записи в байтах и их носители.
-    /// Живёт в памяти и умирает вместе с доменом — переживать перезагрузку ему незачем, а файл на
-    /// диске был бы вторым источником правды о том, что и так лежит в ассетах.
+    /// What the rebuild remembers from last time: the list of nodes, their records in bytes and their
+    /// carriers. It lives in memory and dies together with the domain — it has no reason to outlive a
+    /// reload, and a file on disk would be a second source of truth about what lies in the assets
+    /// anyway.
     ///
-    /// Смысл один: пересборка обязана стоить столько, сколько изменилось, а не сколько нод в
-    /// проекте. Без кеша каждый импорт любой ноды заново обходит проект, зовёт Write у всех и
-    /// читает носители всех — на 10 000 нодах это секунды на каждое сохранение.
+    /// There is one point to it: a rebuild is obliged to cost as much as changed, not as much as there
+    /// are nodes in the project. Without the cache every import of any node walks the project again,
+    /// calls Write on all of them and reads the carriers of all of them — on 10,000 nodes that is
+    /// seconds on every save.
     ///
-    /// Грязной нода становится тремя путями: её переимпортировали (это видит тот же хук, который
-    /// пересборку и запускает), её правят в инспекторе и она грязная в памяти, или ей выдали
-    /// другой id, чем был на момент записи — свой id нода могла положить прямо в запись.
+    /// A node becomes dirty in three ways: it was reimported (the same hook that starts the rebuild sees
+    /// that), it is edited in the inspector and is dirty in memory, or it was handed a different id than
+    /// the one it had at write time — a node may have put its own id straight into the record.
     ///
-    /// Чего кеш НЕ умеет: заметить правку чужого ассета, от которого нода зависит. Пересборка и
-    /// раньше на неё не срабатывала — хук запускается только на импорт самой ноды, — поэтому кеш
-    /// здесь ничего не ухудшает и не притворяется, что умеет больше.
+    /// What the cache CANNOT do: notice an edit of a foreign asset the node depends on. The rebuild did
+    /// not fire on that before either — the hook only runs on an import of the node itself — so the
+    /// cache makes nothing worse here and does not pretend to do more.
     /// </summary>
     static class BlobchegCache
     {
-        /// <summary>Одна запись ноды: то же самое, что нода отдала коллектору.</summary>
+        /// <summary>One record of a node: the same thing the node handed to the collector.</summary>
         public struct Written
         {
             public Type Domain;
@@ -36,21 +38,21 @@ namespace Blobcheg.Authoring
         {
             public string Path;
 
-            /// <summary>Личность ноды: путь у неё меняется, GUID — нет.</summary>
+            /// <summary>The identity of a node: its path changes, its GUID does not.</summary>
             public string Guid;
 
             public BlobchegNodeSo Node;
 
-            /// <summary>Нужно звать Write заново.</summary>
+            /// <summary>Write has to be called again.</summary>
             public bool Dirty = true;
 
-            /// <summary>Что нода написала в прошлый раз. <c>null</c> — не писала ни разу.</summary>
+            /// <summary>What the node wrote last time. <c>null</c> means it never wrote.</summary>
             public List<Written> Records;
 
-            /// <summary>Id, с которыми она это писала: по индексу <see cref="BlobchegRouters.All"/>.</summary>
+            /// <summary>The ids it wrote that with: by the index of <see cref="BlobchegRouters.All"/>.</summary>
             public uint[] IdsAtWrite;
 
-            /// <summary>Носители ноды, прочитанные с ассета. <c>null</c> — не читаны.</summary>
+            /// <summary>The carriers of the node, read from the asset. <c>null</c> means unread.</summary>
             public List<BlobchegRefSo> Refs;
 
             public List<BlobchegIdSo> Ids;
@@ -61,14 +63,14 @@ namespace Blobcheg.Authoring
 
         static bool _filled;
 
-        /// <summary>Ноды в порядке пути. Первый заход обходит проект, дальше список правится точечно.</summary>
+        /// <summary>The nodes in path order. The first run walks the project, after that the list is edited spot by spot.</summary>
         public static IReadOnlyList<Entry> Fill()
         {
             if (_filled)
             {
-                // Ассет мог быть уничтожен мимо хука (например, откатом версии на диске).
-                // Пустая обёртка в списке — это молчаливо пропущенная нода, поэтому список
-                // собирается заново.
+                // The asset may have been destroyed past the hook (by rolling back a version on disk, for
+                // instance). An empty wrapper in the list is a silently skipped node, so the list is
+                // gathered again.
                 foreach (var entry in Entries)
                 {
                     if (entry.Node == null)
@@ -82,9 +84,9 @@ namespace Blobcheg.Authoring
             if (_filled)
                 return Entries;
 
-            // Список сортируется разом и набирается в хвост: вставка поиском места превратила бы
-            // наполнение на 10 000 нодах в квадрат. GUID берётся у обхода, а не спрашивается заново:
-            // он там уже посчитан.
+            // The list is sorted in one go and filled into the tail: inserting by searching for a place
+            // would turn filling on 10,000 nodes into a quadratic. The GUID is taken from the walk rather
+            // than asked for again: it is already computed there.
             var found = BlobchegBuild.FindNodesByGuid();
             var byPath = new List<KeyValuePair<string, Entry>>(found.Count);
 
@@ -108,9 +110,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Носители ноды: из памяти, если пересборка их уже читала, иначе с ассета. Этим живут
-        /// пикеры — им нужен весь проект сразу, а спрашивать базу ассетов по разу на ноду на
-        /// 10 000 нодах стоит секунды на каждое открытие поля.
+        /// The carriers of a node: from memory if the rebuild has already read them, otherwise from the
+        /// asset. The pickers live on this — they need the whole project at once, and asking the asset
+        /// database once per node on 10,000 nodes costs seconds on every opening of a field.
         /// </summary>
         public static IEnumerable<BlobchegRefSo> RefsOf(Entry entry)
             => entry.Refs ?? BlobchegBuild.RefsOf(entry.Node);
@@ -118,7 +120,7 @@ namespace Blobcheg.Authoring
         public static IEnumerable<BlobchegIdSo> IdsOf(Entry entry)
             => entry.Ids ?? BlobchegBuild.IdsOf(entry.Node);
 
-        /// <summary>Забыть всё. Зовут гейт пре-билда и правки, после которых верить кешу нельзя.</summary>
+        /// <summary>Forget everything. Called by the pre-build gate and by edits after which the cache cannot be trusted.</summary>
         public static void Drop()
         {
             Entries.Clear();
@@ -126,7 +128,7 @@ namespace Blobcheg.Authoring
             _filled = false;
         }
 
-        /// <summary>Что принёс импорт. Пути — из <c>OnPostprocessAllAssets</c>.</summary>
+        /// <summary>What the import brought. The paths come from <c>OnPostprocessAllAssets</c>.</summary>
         public static void Touch(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
         {
             if (!_filled)
@@ -135,9 +137,10 @@ namespace Blobcheg.Authoring
             foreach (var path in deleted)
                 Remove(path);
 
-            // Переезд берётся ПАРОЙ, а не двумя независимыми списками: сам ассет никуда не девался,
-            // и перечитывать его по новому пути нельзя — база ассетов о переименовании в этом заходе
-            // ещё не знает, и нода молча выпала бы из пересборки вместе со своей записью.
+            // A move is taken as a PAIR and not as two independent lists: the asset itself went nowhere,
+            // and re-reading it at the new path is not allowed — the asset database does not know about
+            // the rename in this run yet, and the node would quietly drop out of the rebuild together
+            // with its record.
             for (var i = 0; i < moved.Length; i++)
             {
                 if (i < movedFrom.Length && ByPath.TryGetValue(movedFrom[i], out var entry))
@@ -156,7 +159,7 @@ namespace Blobcheg.Authoring
                 Mark(path);
         }
 
-        /// <summary>Тот же ассет по новому пути: запись остаётся, место в списке пересчитывается.</summary>
+        /// <summary>The same asset at a new path: the entry stays, its place in the list is recomputed.</summary>
         static void Rekey(Entry entry, string path)
         {
             ByPath.Remove(entry.Path);
@@ -208,13 +211,13 @@ namespace Blobcheg.Authoring
             Entries.Remove(entry);
         }
 
-        /// <summary>Порядок нод — по пути: он же порядок, в котором их отдаёт полный обход.</summary>
+        /// <summary>The order of the nodes is by path: the same order a full walk hands them out in.</summary>
         static void Put(string path, BlobchegNodeSo node)
         {
             var guid = AssetDatabase.AssetPathToGUID(path);
 
-            // Нода, созданная между полными обходами, известна только кешу. Обходу о ней надо
-            // сказать: иначе она пропадёт из него незаметно — ему не с чем будет сверить.
+            // A node created between full walks is known only to the cache. The walk has to be told about
+            // it: otherwise it disappears from it unnoticed — there will be nothing to compare against.
             BlobchegBuild.Remember(guid);
 
             var entry = new Entry { Path = path, Guid = guid, Node = node };

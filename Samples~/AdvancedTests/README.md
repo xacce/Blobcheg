@@ -1,90 +1,95 @@
-# Деструктивные тесты Blobcheg
+# The destructive Blobcheg tests
 
-Набор, задача которого — **сломать пакет**, а не подтвердить, что он работает. Тесты писались
-вслепую: сначала сценарии злоупотребления и ожидания «как обязана вести себя правильная система»,
-и только потом код пакета — ради имён типов, не ради ожиданий.
+A set whose job is to **break the package**, not to confirm that it works. The tests were written
+blind: first the abuse scenarios and the expectations of "how a correct system is obliged to behave",
+and only then the code of the package — for the names of the types, not for the expectations.
 
-Первый прогон дал 11 красных. Каждая красная была находкой, и разбор находок описан ниже: что
-закрыто в пакете, что оказалось снято другой работой, и что осталось принятым пределом. Сейчас
-набор зелёный целиком — не потому, что ожидания подогнали под код, а потому, что код догнал
-ожидания.
+The first run gave 11 reds. Every red one was a finding, and the account of the findings is below: what
+was closed in the package, what turned out to be removed by other work, and what stayed an accepted
+limit. Right now the set is green all the way through — not because the expectations were fitted to the
+code, but because the code caught up with the expectations.
 
-## Почему это отдельный набор
+## Why this is a separate set
 
-В `Tests/` пакета лежит то, что обязано быть зелёным всегда. Здесь — инструмент разработчика
-САМОГО пакета: он нарочно роняет пересборку, портит файлы на диске, входит в пересборку из
-середины пересборки. Потребителю пакета это не нужно и стоило бы ему секунд импорта.
+`Tests/` of the package holds what is obliged to be green always. Here is a tool for the developer of
+the package ITSELF: it drops a rebuild on purpose, corrupts files on disk, enters a rebuild from the
+middle of a rebuild. A consumer of the package does not need this and it would cost them seconds of
+import.
 
-Поэтому набор живёт в `Samples~` — папка с тильдой невидима для Unity, в компиляцию потребителя не
-попадает и не стоит ему ни секунды. Ставится осознанно.
+That is why the set lives in `Samples~` — a folder with a tilde is invisible to Unity, it does not enter
+the consumer's compilation and does not cost them a single second. It is installed deliberately.
 
-## Как поставить
+## How to install
 
-Package Manager → **Blobcheg** → **Samples** → *Деструктивные тесты (core dev)* → **Import**.
-Ляжет в `Assets/Samples/Blobcheg/<версия>/…` и появится в Test Runner (EditMode).
+Package Manager → **Blobcheg** → **Samples** → *Destructive tests (core dev)* → **Import**.
+It lands in `Assets/Samples/Blobcheg/<version>/…` and appears in the Test Runner (EditMode).
 
-Из CLI, без Package Manager — `tools~/run-advanced-tests.ps1` в корне пакета: копирует набор в
-указанный проект, гоняет `unity test --filter Blobcheg.AdvancedTests` и убирает за собой.
+From the CLI, without the Package Manager — `tools~/run-advanced-tests.ps1` in the root of the package:
+it copies the set into the given project, runs `unity test --filter Blobcheg.AdvancedTests` and cleans
+up after itself.
 
 ```powershell
 ./tools~/run-advanced-tests.ps1 -Project C:/Projects/Evuck/EvuckServer
 ```
 
-## Что покрыто
+## What is covered
 
-Две дороги, обе сквозные — от входа до байта в бинарнике, без единого взгляда во внутренности:
+Two roads, both end to end — from the entrance to a byte in the binary, without a single look into the
+internals:
 
-- **едиторный цикл** — ассеты нод → `RebuildAll` → файлы в StreamingAssets → ref/id-ассеты →
-  чтение реинтерпретацией;
-- **файловый цикл** — `BlobchegWriter`/`BlobchegRouterWriter` → байты на диске → `BlobchegBlob`/
-  `BlobchegRouterBlob`. Нужен там, где ассетами не изобразить: 64 базы, сто тысяч строк роутера.
+- **the editor cycle** — node assets → `RebuildAll` → files in StreamingAssets → ref/id assets →
+  reading by reinterpretation;
+- **the file cycle** — `BlobchegWriter`/`BlobchegRouterWriter` → bytes on disk → `BlobchegBlob`/
+  `BlobchegRouterBlob`. Needed where assets cannot depict it: 64 bases, a hundred thousand router rows.
 
-| Файл | О чём |
+| File | About what |
 |---|---|
-| `EmptyAndLifecycleTests` | пустой домен, запись нулевой длины, пропавший файл, чтение до подъёма и после `Dispose`, все способы соврать в декларации ноды |
-| `BoundaryAndTypeTests` | за концом файла, внутрь header'а, мимо выравнивания, ровно на последней записи, 0/64/65 баз роутера, чтение типом-близнецом |
-| `IdentityTests` | id и оффсет чужого роутера/чужой базы, подменённый файл, `default(BlobchegId)`, стабильность id при правке, переименовании и одинаковых именах |
-| `CorruptionTests` | обрезали, дописали, перевернули байт, подменили magic/версию/флаги, соврали в прологе роутера |
-| `ConcurrencyAndVolumeTests` | чтение из бёрстовой джобы, реентранс пересборки, 100k строк, запись в мегабайты |
-| `HumanFactorTests` | сохранённый id, закешированный оффсет, компакт, «id не ноль значит есть», манифест как доказательство, правка бинарника руками |
-| `SemanticAndAbsurdTests` | два фасада над одним файлом, круговые ссылки записей, нода на саму себя, собранный блоб на входе, указатель внутри записи |
-| `ArrayDestructiveTests` | массивы в записи: миллион элементов, забытый Allocate, литерал с массивом на глубине, окно после End, упавший Write, чужой билдер, рекурсивное дерево, десять правок длины — план и находки в `PLAN-arrays.md` |
+| `EmptyAndLifecycleTests` | an empty domain, a record of zero length, a missing file, reading before the base is up and after `Dispose`, every way of lying in a node's declaration |
+| `BoundaryAndTypeTests` | past the end of the file, into the header, past the alignment, exactly on the last record, 0/64/65 bases of a router, reading with a twin type |
+| `IdentityTests` | an id and an offset of another router / another base, a substituted file, `default(BlobchegId)`, the stability of an id across an edit, a rename and identical names |
+| `CorruptionTests` | truncated, appended to, a byte flipped, the magic/version/flags substituted, a lie in the router prolog |
+| `ConcurrencyAndVolumeTests` | reading from a Burst job, reentrancy of a rebuild, 100k rows, writing into megabytes |
+| `HumanFactorTests` | a saved id, a cached offset, a compaction, "the id is not zero so it exists", a manifest as proof, editing the binary by hand |
+| `SemanticAndAbsurdTests` | two facades over one file, circular references between records, a node pointing at itself, an assembled blob at the entrance, a pointer inside a record |
+| `ArrayDestructiveTests` | arrays in a record: a million elements, a forgotten Allocate, a literal with an array at depth, the window after End, a Write that threw, another builder, a recursive tree, ten edits of the length — the plan and the findings are in `PLAN-arrays.md` |
 
-## Что набор нашёл и что с этим сделали
+## What the set found and what was done about it
 
-Три находки имели один общий корень: **у адреса в этом формате не было личности**. Ни оффсет, ни
-`BlobchegId` не несли ни признака своей базы/роутера, ни поколения раскладки, а header и пролог
-хранили что угодно, кроме «чей это файл».
+Three findings had one common root: **an address in this format had no identity**. Neither an offset nor
+a `BlobchegId` carried a mark of its base/router or of the generation of the layout, and the header and
+the prolog held anything except "whose file is this".
 
-| Находка | Что сделано |
+| The finding | What was done |
 |---|---|
-| `id` чужого роутера резолвился молча | Старший байт `BlobchegId` — **тег роутера**, младшие три — номер строки. Чужой тег отбивается на лукапе. Уникальность тегов доказывает реестр роутеров на пересборке |
-| `default(BlobchegId)` был валидной строкой 0 | Тем же тегом: ноль зарезервирован, поэтому нулём инициализированное поле — это «не назначен», а привычное `if (id != 0)` наконец проверяет |
-| оффсет из чужой базы читался молча | У **файла** личность появилась — хеш имени домена в header'е, сверяется на подъёме. У самого оффсета её быть не может, это позиция; чужой адрес ловит отладочный контур — см. ниже |
-| запись читалась типом-близнецом молча | Проверка типа была за `BLOBCHEG_DEBUG`, которого не ставил никто, — она существовала на бумаге. Теперь отладочный контур пишется в редакторе всегда, а сверка живёт под `ENABLE_UNITY_COLLECTIONS_CHECKS`, рядом с проверкой границ. Снимает контур только гейт пре-билда и только для релизного плеера |
-| запись с сырым указателем уезжала в файл | `where T : unmanaged` пропускает `T*` и `IntPtr`. Пайплайн теперь проверяет тип записи рекурсивно и называет поле |
-| две пустые сырые записи получали ОДИН адрес | Запись нулевой длины занимает в раскладке байт, а не ноль |
-| пересборка входила сама в себя | Защита от реентранса переехала с хука импорта на саму пересборку |
-| переименованная нода выпадала из пересборки молча | Починить обход нельзя: замером показано, что в этом заходе редактора ассет не поднимается ни под старым путём, ни под новым, и `ImportAsset(ForceSynchronousImport)` с `Refresh` этого не меняют. Поэтому пересборка теперь ОТКАЗЫВАЕТСЯ: обход помнит GUID'ы, которые уже видел, и нода, чей файл лежит на диске, а тип по нему не спрашивается, — это потеря, а не удаление. Обходов заодно стало два (полный обход отстаёт от переименования, поисковый индекс — от импорта), а инкрементальный путь переезд ноды теперь просто переносит в кеше, не перечитывая её |
-| сохранённый id после удаления соседа вёл к другой ноде | Снято работой над стабильностью адресов: id наследуется с носителя, удалённая нода оставляет пустую строку |
-| закешированный оффсет после появления соседа врал | Снято там же: прежний адрес приезжает в раскладку заявкой. Тест переписан — теперь он проверяет, что адрес НЕ едет, а парный к нему проверяет, что компакт его двигает и переписывает носитель |
+| an `id` of another router resolved silently | The high byte of `BlobchegId` is the **router tag**, the low three are the row number. Another's tag is rejected on the lookup. The uniqueness of the tags is proven by the router registry on the rebuild |
+| `default(BlobchegId)` was a valid row 0 | By the same tag: zero is reserved, so a zero-initialised field is "not assigned", and the habitual `if (id != 0)` finally checks something |
+| an offset from another base read silently | The **file** got an identity — the hash of the domain name in the header, checked when it comes up. The offset itself cannot have one, it is a position; another's address is caught by the debug contour — see below |
+| a record read with a twin type silently | The type check sat behind `BLOBCHEG_DEBUG`, which nobody set — it existed on paper. Now the debug contour is written in the editor always, and the check lives under `ENABLE_UNITY_COLLECTIONS_CHECKS`, next to the bounds check. Only the pre-build gate removes the contour, and only for a release player |
+| a record with a raw pointer drove into the file | `where T : unmanaged` lets `T*` and `IntPtr` through. The pipeline now checks the record type recursively and names the field |
+| two empty raw records got ONE address | A record of zero length occupies a byte in the layout, not zero |
+| a rebuild entered itself | The reentrancy guard moved from the import hook onto the rebuild itself |
+| a renamed node fell out of the rebuild silently | The walk cannot be fixed: it was measured that in that pass of the editor the asset does not come up under the old path nor under the new one, and `ImportAsset(ForceSynchronousImport)` with a `Refresh` do not change that. So the rebuild now REFUSES: the walk remembers the GUIDs it has already seen, and a node whose file lies on disk while its type is not asked for is a loss, not a deletion. There are two walks now on top of that (the full walk lags behind a rename, the search index lags behind an import), and the incremental path now simply moves a node in the cache instead of re-reading it |
+| a saved id after a neighbour was deleted led to another node | Removed by the work on address stability: an id is inherited from its carrier, a deleted node leaves an empty row |
+| a cached offset lied after a neighbour appeared | Removed there as well: the previous address arrives in the layout as a claim. The test was rewritten — now it checks that the address does NOT move, and its pair checks that a compaction moves it and rewrites the carrier |
 
-### Принятый предел
+### The accepted limit
 
-`Копия_базы_это_вид_а_не_владелец` — единственный тест, который закрепляет ограничение, а не победу.
-База это value-структура с владеющим указателем, и такой она сделана нарочно: её кладут в
-`IComponentData` и копируют каждым `GetSingleton`. Версия владения (safety handle) требует ячейки,
-переживающей освобождение самой памяти, — то есть либо утечки, либо реестра, недоступного из Бёрста.
-Контракт прямой: `Dispose` зовёт тот, кто поднял, и ровно один раз; остальные экземпляры — виды.
+`A_copy_of_a_base_is_a_view_and_not_an_owner` is the only test that pins down a limitation rather than a
+victory. A base is a value struct with an owning pointer, and it is made that way on purpose: it is put
+into an `IComponentData` and copied by every `GetSingleton`. A version with ownership (a safety handle)
+demands a cell that outlives the freeing of the memory itself — that is, either a leak or a registry
+unreachable from Burst. The contract is plain: `Dispose` is called by whoever brought the base up, and
+exactly once; the other instances are views.
 
-Тест существует затем, чтобы предел выглядел решением, а не недосмотром.
+The test exists so that the limit looks like a decision and not an oversight.
 
-## Правила набора
+## The rules of the set
 
-- Тест судит API, а не наоборот. Пришлось подгонять ожидание под код — значит проблема в коде,
-  и это фиксируется `// BUG:`, а не правкой ожидания. Исключение одно: ожидание, построенное на
-  посылке, которой больше нет (раскладка «обязана поехать»), переписывается вместе с посылкой.
-- Ни один тест не имеет права уронить редактор: двойное освобождение, чтение освобождённой памяти
-  и бесконечная рекурсия не выполняются, а обставляются так, чтобы их наличие было ВИДНО.
-- Домены и роутеры набора живут в его собственной сборке, поэтому потребителю они не видны и в его
-  роутеры не вступают.
+- The test judges the API and not the other way round. Having to fit an expectation to the code means
+  the problem is in the code, and that is recorded with a `// BUG:` and not with an edit of the
+  expectation. There is one exception: an expectation built on a premise that no longer exists (a
+  layout that "is obliged to move") is rewritten together with the premise.
+- No test has the right to bring the editor down: a double free, a read of freed memory and an infinite
+  recursion are not executed, they are staged so that their presence is VISIBLE.
+- The domains and the routers of the set live in its own assembly, so a consumer does not see them and
+  they do not join their routers.

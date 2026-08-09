@@ -6,22 +6,23 @@ using Unity.Collections.LowLevel.Unsafe;
 namespace Blobcheg
 {
     /// <summary>
-    /// Типизированный массив переменной длины внутри записи: восемь байт — само-относительный
-    /// оффсет и длина. Оффсет меряется от адреса ЭТОГО поля, хвост лежит внутри байтового блока
-    /// той же записи, поэтому запись остаётся непрозрачным блоком, который ездит по файлу целиком:
-    /// ни Flush, ни целостность, ни ревизия, ни патч ссылок о массиве не знают.
+    /// A typed variable-length array inside a record: eight bytes — a self-relative offset and a
+    /// length. The offset is measured from the address of THIS field, the tail lies inside the byte
+    /// block of the same record, so the record stays an opaque block that travels through the file as a
+    /// whole: neither Flush, nor integrity, nor the revision, nor the reference patch knows about the
+    /// array.
     ///
-    /// Все члены — readonly намеренно. <see cref="BlobchegBlob.Read{T}"/> отдаёт
-    /// <c>ref readonly</c>, и доступ к не-readonly члену через такую ссылку компилятор обслуживает
-    /// защитной копией — а копия имеет другой адрес, и само-относительный оффсет из неё ведёт в
-    /// никуда молча и на нормальном пути.
+    /// Every member is readonly on purpose. <see cref="BlobchegBlob.Read{T}"/> hands out a
+    /// <c>ref readonly</c>, and access to a non-readonly member through such a reference is served by
+    /// the compiler with a defensive copy — and a copy has a different address, so a self-relative
+    /// offset taken from it leads nowhere, silently and on the normal path.
     ///
-    /// Заполняет поле только билдер записи в едиторе. Нулевой оффсет — пустой массив, он читается
-    /// без разыменования.
+    /// Only the record builder in the editor fills the field. A zero offset means an empty array, and
+    /// it is read without dereferencing.
     /// </summary>
     public unsafe struct BlobchegArray<T> where T : unmanaged
     {
-        internal int _offset;   // байты от адреса этого поля до первого элемента; 0 — пусто
+        internal int _offset;   // bytes from the address of this field to the first element; 0 means empty
         internal int _length;
 
         public readonly int Length => _length;
@@ -42,8 +43,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Указатель на первый элемент — форма для горячего цикла: адрес проверяется один раз,
-        /// дальше цикл бесплатный. У пустого массива указателя нет — <c>null</c> без разыменования.
+        /// A pointer to the first element — the shape for a hot loop: the address is checked once and
+        /// the loop after that is free. An empty array has no pointer — <c>null</c> without
+        /// dereferencing.
         /// </summary>
         public readonly T* GetUnsafePtr()
         {
@@ -62,49 +64,50 @@ namespace Blobcheg
         readonly void CheckElement(int index, byte* element)
         {
             if ((uint)index >= (uint)_length)
-                throw new IndexOutOfRangeException("Blobcheg: индекс за границей массива записи");
+                throw new IndexOutOfRangeException("Blobcheg: index past the bounds of the record array");
 
             CheckSpan(element, element + sizeof(T) - 1);
         }
 
         /// <summary>
-        /// Первый и последний байт диапазона обязаны лежать в буфере какой-то поднятой базы.
-        /// Кратность проверяется у абсолютного адреса элемента, а не у самого оффсета: поле массива
-        /// может лежать в записи на 4 при 8-байтовом элементе, и тогда оффсет некратен при
-        /// правильно выровненном элементе — важен адрес, по которому читают.
+        /// The first and the last byte of the span are obliged to lie in the buffer of some loaded
+        /// base. Divisibility is checked on the absolute address of the element, not on the offset
+        /// itself: the array field may sit at 4 inside a record while the element is 8 bytes wide, and
+        /// then the offset is not divisible even though the element is aligned correctly — what matters
+        /// is the address that is read from.
         /// </summary>
         [Conditional("ENABLE_UNITY_COLLECTIONS_CHECKS")]
         readonly void CheckSpan(byte* first, byte* last)
         {
             if (_offset == 0)
                 throw new InvalidOperationException(
-                    "Blobcheg: у непустого массива нулевой оффсет — поле не заполнял билдер записи");
+                    "Blobcheg: a non-empty array has a zero offset — the field was never filled by a record builder");
 
             if ((ulong)first % (ulong)UnsafeUtility.AlignOf<T>() != 0)
                 throw new InvalidOperationException(
-                    "Blobcheg: адрес элемента не кратен выравниванию его типа — оффсет массива бит");
+                    "Blobcheg: the element address is not a multiple of its type alignment — the array offset is broken");
 
             if (BlobchegBases.IsKnownAddress((ulong)first) && BlobchegBases.IsKnownAddress((ulong)last))
                 return;
 
             ThrowCopied();
             throw new InvalidOperationException(
-                "Blobcheg: адрес элемента вне буферов поднятых баз — запись скопирована из блоба " +
-                "по значению, а само-относительный оффсет живёт только по исходному адресу. " +
-                "Держите запись как ref readonly, не копируйте её в локальную переменную");
+                "Blobcheg: the element address is outside the buffers of the loaded bases — the record was " +
+                "copied out of the blob by value, and a self-relative offset only lives at the original " +
+                "address. Hold the record as ref readonly, do not copy it into a local variable");
         }
 
         /// <summary>
-        /// Managed-версия той же ошибки, с именем типа элемента: это самая частая человеческая
-        /// ошибка, и её обязано быть видно без угадывания. Под Burst метод выброшен — там бросает
-        /// литеральный текст выше.
+        /// The managed version of the same error, carrying the element type name: this is the most
+        /// frequent human mistake, and it must be visible without guessing. Under Burst the method is
+        /// discarded — there the literal text above is what throws.
         /// </summary>
         [BurstDiscard]
         static void ThrowCopied()
             => throw new InvalidOperationException(
-                $"Blobcheg: массив элементов '{typeof(T).FullName}' читается из копии записи — " +
-                "запись скопирована из блоба по значению, а само-относительный оффсет живёт только " +
-                "по исходному адресу. Держите запись как ref readonly, не копируйте её в локальную " +
-                "переменную");
+                $"Blobcheg: the array of '{typeof(T).FullName}' elements is read from a copy of the record — " +
+                "the record was copied out of the blob by value, and a self-relative offset only lives at " +
+                "the original address. Hold the record as ref readonly, do not copy it into a local " +
+                "variable");
     }
 }

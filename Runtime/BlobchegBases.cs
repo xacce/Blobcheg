@@ -4,58 +4,61 @@ using Unity.Burst;
 namespace Blobcheg
 {
     /// <summary>
-    /// Исход перевода слота. Код возврата, а не исключение: перевод зовётся из Burst-кода, где
-    /// исключения с собранным сообщением нет, а разные беды обязаны доехать до человека разными
-    /// словами.
+    /// The outcome of translating a slot. A return code and not an exception: the translation is
+    /// called from Burst code, where there is no exception with an assembled message, and different
+    /// troubles are obliged to reach a human in different words.
     /// </summary>
     public enum BlobchegRebase : byte
     {
-        /// <summary>Слот пуст или уже в нужной форме.</summary>
+        /// <summary>The slot is empty or already in the needed form.</summary>
         Unchanged = 0,
 
-        /// <summary>Слот переписан.</summary>
+        /// <summary>The slot was rewritten.</summary>
         Patched = 1,
 
-        /// <summary>Базы этого домена в процессе нет — переводить не на что.</summary>
+        /// <summary>There is no base of this domain in the process — there is nothing to translate onto.</summary>
         DomainNotRaised = 2,
 
-        /// <summary>Значение не адрес живого поколения и как оффсет не помещается в базу.</summary>
+        /// <summary>The value is not an address of a live generation and as an offset does not fit into the base.</summary>
         OutOfRange = 3,
 
-        /// <summary>Как оффсет значение невозможно: внутри header'а или не кратно выравниванию записи.</summary>
+        /// <summary>As an offset the value is impossible: inside the header or not a multiple of the record alignment.</summary>
         BadOffset = 4,
 
-        /// <summary>По полученному адресу не начинается запись ожидаемого типа.</summary>
+        /// <summary>No record of the expected type starts at the resulting address.</summary>
         WrongRecord = 5,
     }
 
     /// <summary>
-    /// Реестр адресов поднятых баз: домен → где сейчас лежит его буфер. Нужен ровно тем, кто
-    /// работает с записью по указателю, а не по оффсету, — патчу сущностей и его проверкам.
+    /// The registry of the addresses of loaded bases: domain → where its buffer lies right now. It is
+    /// needed by exactly those who work with a record by pointer rather than by offset — the entity
+    /// patch and its checks.
     ///
-    /// Живёт в рантайм-сборке, а не рядом с патчем, потому что регистрируется здесь сам
-    /// <see cref="BlobchegBlob"/>: базу можно поднять и без Entities, а вопрос «в слоте адрес или
-    /// ещё оффсет» задают все одинаково.
+    /// It lives in the runtime assembly and not next to the patch because <see cref="BlobchegBlob"/>
+    /// registers itself here: a base can be loaded without Entities too, and the question "is the slot
+    /// an address or still an offset" is asked by everyone alike.
     ///
-    /// Отставные поколения буфера хранятся рядом с текущим. Пересборка домена в редакторе двигает
-    /// базу, и перевести розданные адреса на новую можно только зная старую; двух импортов подряд
-    /// в один кадр хватает, чтобы одного прошлого поколения стало мало, поэтому их
-    /// <see cref="RetiredGenerations"/>. Отставное поколение не разыменовывается никогда — из него
-    /// берётся только арифметика, — поэтому освобождённый буфер остаётся в списке.
+    /// Retired generations of the buffer are kept next to the current one. Rebuilding a domain in the
+    /// editor moves the base, and translating the addresses already handed out onto the new one is only
+    /// possible while the old one is known; two imports in a row within one frame are enough to make a
+    /// single previous generation too few, which is why there are
+    /// <see cref="RetiredGenerations"/> of them. A retired generation is never dereferenced — only the
+    /// arithmetic is taken from it — which is why a freed buffer stays in the list.
     ///
-    /// В этом классе не должно появиться ни одного managed-статика: его читает Burst-код, а Бёрст
-    /// тянет за собой весь статический конструктор. Имена доменов для сообщений живут отдельно, в
+    /// Not a single managed static may appear in this class: Burst code reads it, and Burst drags the
+    /// whole static constructor along. Domain names for messages live separately, in
     /// <see cref="BlobchegDomainNames"/>.
     /// </summary>
     public static unsafe class BlobchegBases
     {
         /// <summary>
-        /// Потолок доменов в процессе. Реестр — плоский массив с линейным поиском: доменов в проекте
-        /// единицы, а хешмапа под Бёрстом стоила бы дороже, чем перебор.
+        /// The ceiling of domains in a process. The registry is a flat array with a linear search:
+        /// there are only a handful of domains in a project, and a hash map under Burst would cost more
+        /// than the scan.
         /// </summary>
         public const int MaxDomains = 64;
 
-        /// <summary>Сколько прошлых поколений буфера домена помним ради перевода указателей.</summary>
+        /// <summary>How many past generations of a domain buffer are remembered for translating pointers.</summary>
         public const int RetiredGenerations = 4;
 
         internal struct Table
@@ -72,17 +75,17 @@ namespace Blobcheg
         static readonly SharedStatic<Table> s_Table = SharedStatic<Table>.GetOrCreate<Table>();
 
         /// <summary>
-        /// Ставит базу домена на учёт. Повторная регистрация того же домена — это пересборка:
-        /// прежний адрес уходит в отставные поколения, чтобы розданные указатели можно было
-        /// перевести на новый буфер.
+        /// Puts the base of a domain on the register. Registering the same domain again means a rebuild:
+        /// the previous address moves into the retired generations so that the pointers already handed
+        /// out can be translated onto the new buffer.
         /// </summary>
         public static void Register(ulong domainKey, byte* ptr, int length, uint debugOffset = 0)
         {
             if (domainKey == 0)
-                throw new ArgumentException("Blobcheg: домен с нулевым ключом", nameof(domainKey));
+                throw new ArgumentException("Blobcheg: a domain with a zero key", nameof(domainKey));
 
             if (ptr == null || length < BlobchegFormat.HeaderSize)
-                throw new ArgumentException($"Blobcheg: буфер домена {domainKey:X16} пуст или короче header'а");
+                throw new ArgumentException($"Blobcheg: the buffer of domain {domainKey:X16} is empty or shorter than the header");
 
             ref var t = ref s_Table.Data;
 
@@ -98,12 +101,13 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Снимает с учёта конкретный буфер, а не домен вообще. Указатель в аргументе обязателен:
-        /// при пересборке порядок бывает любой, и <c>Dispose</c> старой базы не должен снести живую
-        /// новую.
+        /// Takes a particular buffer off the register, not the domain as a whole. The pointer argument
+        /// is mandatory: on a rebuild the order can be anything, and the <c>Dispose</c> of the old base
+        /// must not wipe out the live new one.
         ///
-        /// Снятый буфер уходит в отставные, а не забывается: указатели в него у сущностей уже есть,
-        /// и следующий подъём домена обязан суметь их перевести.
+        /// The buffer taken off goes into the retired ones rather than being forgotten: entities already
+        /// hold pointers into it, and the next load of the domain is obliged to be able to translate
+        /// them.
         /// </summary>
         public static void Unregister(ulong domainKey, byte* ptr)
         {
@@ -123,7 +127,7 @@ namespace Blobcheg
             t.DebugOffsets[slot] = 0;
         }
 
-        /// <summary>Адрес и длина текущего буфера домена. <c>false</c> — база не поднята.</summary>
+        /// <summary>The address and length of the current domain buffer. <c>false</c> means the base is not loaded.</summary>
         public static bool TryGet(ulong domainKey, out byte* ptr, out int length)
         {
             ref var t = ref s_Table.Data;
@@ -141,7 +145,7 @@ namespace Blobcheg
             return true;
         }
 
-        /// <summary>Отладочный контур текущего буфера домена. Ноль в <paramref name="debugOffset"/> — контура нет.</summary>
+        /// <summary>The debug contour of the current domain buffer. A zero <paramref name="debugOffset"/> means there is none.</summary>
         public static bool TryGetDebug(ulong domainKey, out byte* ptr, out uint debugOffset)
         {
             ref var t = ref s_Table.Data;
@@ -160,8 +164,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Уже адрес внутри текущего буфера этого домена, а не оффсет? На этом стоит идемпотентность
-        /// патча: оффсет меряется от нуля файла и в диапазон настоящей аллокации не попадает.
+        /// Already an address inside the current buffer of this domain rather than an offset? The
+        /// idempotence of the patch stands on this: an offset is measured from zero of the file and does
+        /// not fall into the range of a real allocation.
         /// </summary>
         public static bool IsAddressOf(ulong domainKey, ulong value)
         {
@@ -172,8 +177,8 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Адрес внутри буфера любой поднятой базы. Вопрос «это вообще указатель» без привязки к
-        /// домену; им пользуются проверки чтения, которым домен поля неизвестен.
+        /// An address inside the buffer of any loaded base. The question "is this a pointer at all" with
+        /// no domain attached; the read checks use it, since the domain of a field is unknown to them.
         /// </summary>
         public static bool IsKnownAddress(ulong value)
         {
@@ -187,11 +192,13 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Превращает содержимое слота в адрес. Три входа в одном, потому что вызывающий их не
-        /// различает: в поле может лежать оффсет (сущность только что приехала), адрес текущего
-        /// поколения (патч уже был) или адрес отставного (домен пересобрали под живым миром).
+        /// Turns the content of a slot into an address. Three entrances in one, because the caller does
+        /// not tell them apart: the field may hold an offset (the entity has only just arrived), the
+        /// address of the current generation (the patch has already happened) or the address of a
+        /// retired one (the domain was rebuilt under a live world).
         ///
-        /// Не бросает: зовётся из Burst-кода. Разбираться с кодом возврата — забота вызывающего.
+        /// It does not throw: it is called from Burst code. Dealing with the return code is the
+        /// caller's business.
         /// </summary>
         public static BlobchegRebase TryResolve(ulong domainKey, ulong value, out ulong address)
         {
@@ -208,20 +215,22 @@ namespace Blobcheg
 
             var start = t.Ptrs[slot];
 
-            // Уже адрес текущего поколения — патч идемпотентен.
+            // Already an address of the current generation — the patch is idempotent.
             if (InCurrent(ref t, slot, value))
                 return BlobchegRebase.Unchanged;
 
             var retired = RetiredIndexOf(ref t, slot, value);
             if (retired >= 0)
             {
-                // Адрес отставного поколения: домен пересобрали, оффсет тот же, база уехала.
+                // The address of a retired generation: the domain was rebuilt, the offset is the same,
+                // the base moved.
                 address = start + (value - t.RetiredPtrs[slot * RetiredGenerations + retired]);
                 return BlobchegRebase.Patched;
             }
 
-            // Дальше значение может быть только оффсетом. Внутри header'а записей не бывает, и
-            // начало записи всегда выровнено — иначе это не адрес записи, чем бы оно ни было.
+            // Past this point the value can only be an offset. There are no records inside the header,
+            // and the start of a record is always aligned — otherwise it is not the address of a record,
+            // whatever else it may be.
             if (value < BlobchegFormat.HeaderSize || (value & (BlobchegFormat.RecordAlign - 1)) != 0)
                 return BlobchegRebase.BadOffset;
 
@@ -233,8 +242,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Обратный ход: адрес снова в оффсет. Нужен перед записью мира — в файл обязан уехать
-        /// оффсет, адрес процесса там бессмыслен. Оффсет на входе оставляется как есть.
+        /// The way back: an address into an offset again. Needed before writing a world — an offset is
+        /// what must travel into the file, a process address is meaningless there. An offset on the
+        /// input is left as it is.
         /// </summary>
         public static BlobchegRebase TryUnresolve(ulong domainKey, ulong value, out ulong offset)
         {
@@ -247,9 +257,9 @@ namespace Blobcheg
 
             var slot = IndexOf(ref t, domainKey);
 
-            // Домена нет вовсе — значит и адреса в него не бывало, в слоте лежит оффсет. Мир,
-            // который никогда не патчили, сохраняется как есть; это единственное место, где
-            // ненайденный домен не ошибка.
+            // There is no domain at all — so there never was an address into it and the slot holds an
+            // offset. A world that was never patched is saved as it is; this is the only place where a
+            // domain that was not found is not an error.
             if (slot < 0)
                 return BlobchegRebase.Unchanged;
 
@@ -266,14 +276,15 @@ namespace Blobcheg
                 return BlobchegRebase.Patched;
             }
 
-            // Не попало ни в одно поколение — значит это не указатель, а число, которое и так
-            // оффсет. Хорош он или плох, обратный ход не судит: прямой проход уже отбил его вслух,
-            // а второй отказ на том же числе делал бы мир с одной битой ссылкой незаписываемым.
-            // Строгость двух направлений одного прохода обязана быть одинаковой.
+            // It fell into no generation — so this is not a pointer but a number that is already an
+            // offset. Whether it is a good one the way back does not judge: the forward pass already
+            // rejected it out loud, and a second refusal over the same number would make a world with
+            // one broken reference unsaveable. The strictness of the two directions of one pass is
+            // obliged to be the same.
             return BlobchegRebase.Unchanged;
         }
 
-        /// <summary>Только для тестов: снять всё и начать с чистого реестра.</summary>
+        /// <summary>Tests only: take everything off and start with a clean registry.</summary>
         internal static void Clear()
         {
             ref var t = ref s_Table.Data;
@@ -299,7 +310,7 @@ namespace Blobcheg
         {
             if (t.Count == MaxDomains)
                 throw new InvalidOperationException(
-                    $"Blobcheg: доменов в процессе больше {MaxDomains} — потолок реестра адресов");
+                    $"Blobcheg: more than {MaxDomains} domains in the process — the ceiling of the address registry");
 
             var slot = t.Count++;
             t.Keys[slot] = domainKey;
@@ -316,7 +327,7 @@ namespace Blobcheg
             return slot;
         }
 
-        /// <summary>Сдвигает текущее поколение в голову списка отставных; самое старое выпадает.</summary>
+        /// <summary>Shifts the current generation to the head of the retired list; the oldest one falls out.</summary>
         static void Retire(ref Table t, int slot)
         {
             if (t.Ptrs[slot] == 0)

@@ -5,12 +5,12 @@ using System.IO;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Писатель таблицы хешей. Строки добавляются в порядке номеров — номер и есть порядок вызова
-    /// <see cref="Append"/>, ровно как у писателя роутера.
+    /// The hash table writer. Rows are added in number order — the number is exactly the order of the
+    /// <see cref="Append"/> calls, just as in the router writer.
     ///
-    /// Раскладку таблицы считает он: слоты расставляются здесь, чтобы в рантайме не осталось ни
-    /// одной вставки. Политика (чьё имя, что делать с дублем) живёт выше, в
-    /// <see cref="BlobchegHashesBuild"/>: писателю приезжает уже готовый ключ.
+    /// It is the one that computes the table layout: the slots are laid out here so that not a single
+    /// insertion is left at runtime. The policy (whose name, what to do with a duplicate) lives above,
+    /// in <see cref="BlobchegHashesBuild"/>: the writer receives a key that is already finished.
     /// </summary>
     public sealed class BlobchegHashesWriter
     {
@@ -25,7 +25,7 @@ namespace Blobcheg.Authoring
         {
             if (domainCount <= 0)
                 throw new ArgumentOutOfRangeException(nameof(domainCount),
-                    "Blobcheg: таблица хешей над роутером без единой базы");
+                    "Blobcheg: a hash table over a router without a single base");
 
             Directory = directory ?? throw new ArgumentNullException(nameof(directory));
             RouterName = routerName;
@@ -42,7 +42,7 @@ namespace Blobcheg.Authoring
         public string Directory { get; }
         public string RouterName { get; }
 
-        /// <summary>Личность файла: имя роутера плюс суффикс. Оно же имя манифеста.</summary>
+        /// <summary>The identity of the file: the router name plus the suffix. Also the manifest name.</summary>
         public string Identity { get; }
 
         public string FilePath { get; }
@@ -56,21 +56,21 @@ namespace Blobcheg.Authoring
         public static BlobchegHashesWriter Open(string directory, string routerName, int domainCount, ulong layoutHash)
             => new BlobchegHashesWriter(directory, routerName, domainCount, layoutHash);
 
-        /// <summary>Кладёт строку. Ключ ноль — дырка от удалённой ноды: строка есть, но пустая.</summary>
+        /// <summary>Puts down a row. A zero key is a hole from a deleted node: the row is there but empty.</summary>
         public void Append(ulong key)
         {
             RequireOpen();
             _keys.Add(key);
         }
 
-        /// <summary>Обратная дорожка: по этому адресу в базе <paramref name="bit"/> лежит эта строка.</summary>
+        /// <summary>The reverse lane: this row lies at this address in base <paramref name="bit"/>.</summary>
         public void Track(int bit, uint offset, uint row)
         {
             RequireOpen();
 
             if (bit < 0 || bit >= _domainCount)
                 throw new ArgumentOutOfRangeException(nameof(bit),
-                    $"Blobcheg: таблица '{Identity}' — бит {bit} при {_domainCount} базах");
+                    $"Blobcheg: table '{Identity}' — bit {bit} with {_domainCount} bases");
 
             _tracks[bit].Add((offset, row));
         }
@@ -100,7 +100,7 @@ namespace Blobcheg.Authoring
                 {
                     if (slotKeys[slot] == key)
                         throw new InvalidOperationException(
-                            $"Blobcheg: таблица '{Identity}' — ключ {key:X16} положен дважды");
+                            $"Blobcheg: table '{Identity}' — key {key:X16} was put down twice");
 
                     slot = (slot + 1) & (capacity - 1);
                 }
@@ -109,7 +109,7 @@ namespace Blobcheg.Authoring
                 slotRows[slot] = (uint)row;
             }
 
-            // Внутри дорожки — по возрастанию оффсета: лукап ищет двоичным поиском.
+            // Inside a lane — by ascending offset: the lookup searches with a binary search.
             var total = 0;
             foreach (var track in _tracks)
             {
@@ -165,7 +165,7 @@ namespace Blobcheg.Authoring
 
             BlobchegBytes.WriteU32(file, backIndexOffset + _domainCount * 4, (uint)written);
 
-            // Отладочного контура у таблицы нет: имя ноды по id уже отдаёт роутер.
+            // The table has no debug contour: the router already hands out the node name by id.
             ContentHash = BlobchegBytes.Seal(file, BlobchegFormat.FlagsOf(BlobchegFileKind.Hashes), 0,
                 BlobchegNaming.NameHash(Identity));
 
@@ -177,7 +177,7 @@ namespace Blobcheg.Authoring
         {
             if (_flushed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: таблица '{Identity}' уже собрана — дописывать в неё нечего");
+                    $"Blobcheg: table '{Identity}' is already assembled — there is nothing left to add to it");
         }
     }
 }

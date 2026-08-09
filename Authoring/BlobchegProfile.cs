@@ -7,8 +7,8 @@ using System.Text;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// ВРЕМЕННАЯ разбивка времени пересборки по участкам: нужна, чтобы увидеть, где именно
-    /// уходят секунды, а не гадать. Выключена по умолчанию, включается замером.
+    /// A TEMPORARY breakdown of the rebuild time by section: it exists so that where the seconds go can
+    /// be seen rather than guessed. Off by default, switched on by a measurement.
     /// </summary>
     public static class BlobchegProfile
     {
@@ -53,12 +53,12 @@ namespace Blobcheg.Authoring
             Counts.Clear();
         }
 
-        /// <summary>Строки «мс ×вызовов участок», от дорогого к дешёвому.</summary>
+        /// <summary>Lines of "ms ×calls section", from the expensive to the cheap.</summary>
         public static string Dump()
         {
             var text = new StringBuilder();
             foreach (var name in Totals.Keys.OrderByDescending(n => Totals[n]))
-                text.AppendLine($"{Totals[name],9:F0} мс  ×{Counts[name],-6} {name}");
+                text.AppendLine($"{Totals[name],9:F0} ms  ×{Counts[name],-6} {name}");
 
             return text.ToString();
         }

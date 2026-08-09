@@ -6,10 +6,11 @@ using Unity.IO.LowLevel.Unsafe;
 namespace Blobcheg
 {
     /// <summary>
-    /// Идущее чтение файла базы. Unmanaged — поэтому лежит полем прямо в <c>ISystem</c>.
-    /// Чтение асинхронное by construction: на Android StreamingAssets лежит в архиве, и блокирующее
-    /// ожидание на главном потоке там либо стопорит кадр, либо вешает игру насмерть.
-    /// Ошибки не возвращаются, а бросаются: база либо поднялась целиком, либо игра не поехала.
+    /// A base file read in progress. Unmanaged — which is why it lies as a field right inside an
+    /// <c>ISystem</c>. The read is asynchronous by construction: on Android StreamingAssets lies inside
+    /// an archive, and a blocking wait on the main thread there either stalls the frame or hangs the
+    /// game for good. Errors are not returned but thrown: either the base came up whole, or the game
+    /// did not start.
     /// </summary>
     public unsafe struct BlobchegLoad : IDisposable
     {
@@ -31,8 +32,9 @@ namespace Blobcheg
         internal Stage At;
 
         /// <summary>
-        /// Двигает автомат чтения и говорит, готов ли буфер. Именно метод, а не свойство: без вызова
-        /// автомат не поедет, и «IsDone», которое никогда не станет true, было бы ловушкой.
+        /// Advances the read state machine and tells whether the buffer is ready. A method and not a
+        /// property on purpose: without the call the machine does not move, and an "IsDone" that never
+        /// turns true would be a trap.
         /// </summary>
         public bool Poll()
         {
@@ -45,9 +47,9 @@ namespace Blobcheg
 
                     var status = SizeHandle.Status;
                     SizeHandle.Dispose();
-                    // Хендла больше нет: если ниже бросит, Dispose не должен его трогать.
+                    // The handle is gone: if the line below throws, Dispose must not touch it.
                     At = Stage.Taken;
-                    RequireStatus(status, "размер");
+                    RequireStatus(status, "size");
                     StartBody();
                     return false;
                 }
@@ -60,7 +62,7 @@ namespace Blobcheg
                     var status = BodyHandle.Status;
                     BodyHandle.Dispose();
                     At = Stage.Taken;
-                    RequireStatus(status, "тело");
+                    RequireStatus(status, "body");
                     At = Stage.Ready;
                     return true;
                 }
@@ -70,11 +72,11 @@ namespace Blobcheg
 
                 default:
                     throw new InvalidOperationException(
-                        $"Blobcheg: чтение '{Path}' уже закончено — буфер забран или оборвался");
+                        $"Blobcheg: the read of '{Path}' is already over — the buffer was taken or the read broke off");
             }
         }
 
-        /// <summary>Блокирующее ожидание — тесты и едиторные инструменты, не игровой поток.</summary>
+        /// <summary>A blocking wait — tests and editor tools, not the game thread.</summary>
         public void Complete()
         {
             while (!Poll())
@@ -84,12 +86,12 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>Отдаёт буфер и владение им. До готовности — ошибка.</summary>
+        /// <summary>Hands out the buffer and the ownership of it. Before it is ready — an error.</summary>
         public BlobchegBuffer Acquire()
         {
             if (At != Stage.Ready)
                 throw new InvalidOperationException(
-                    $"Blobcheg: Acquire буфера '{Path}' до готовности — сначала Poll или Complete");
+                    $"Blobcheg: Acquire of the '{Path}' buffer before it is ready — Poll or Complete first");
 
             var buffer = Buffer;
             Buffer = default;
@@ -118,18 +120,19 @@ namespace Blobcheg
 
         void StartBody()
         {
-            // Переходный: в редакторе так выглядит домен, приехавший с пуллом раньше своей
-            // пересборки. Файл появится, и подъём поедет заново — см. BlobchegTransientException.
+            // Transient: in the editor this is what a domain that arrived with a pull ahead of its own
+            // rebuild looks like. The file will appear and the load will run again — see
+            // BlobchegTransientException.
             if (Info->FileState != FileState.Exists)
-                throw new BlobchegTransientException($"Blobcheg: файла базы '{Path}' нет");
+                throw new BlobchegTransientException($"Blobcheg: there is no base file '{Path}'");
 
             var size = Info->FileSize;
             if (size < BlobchegFormat.HeaderSize)
                 throw new InvalidOperationException(
-                    $"Blobcheg: файл базы '{Path}' длиной {size} Б короче header'а");
+                    $"Blobcheg: base file '{Path}' of {size} B is shorter than the header");
 
             if (size > int.MaxValue)
-                throw new InvalidOperationException($"Blobcheg: файл базы '{Path}' длиной {size} Б не лезет в буфер");
+                throw new InvalidOperationException($"Blobcheg: base file '{Path}' of {size} B does not fit into a buffer");
 
             Buffer = BlobchegBuffer.Alloc((int)size, Allocator);
             *Command = new ReadCommand { Buffer = Buffer.Ptr, Offset = 0, Size = size };
@@ -141,7 +144,7 @@ namespace Blobcheg
         {
             if (status != ReadStatus.Complete)
                 throw new InvalidOperationException(
-                    $"Blobcheg: чтение ({what}) файла базы '{Path}' не удалось: {status}");
+                    $"Blobcheg: the read ({what}) of base file '{Path}' failed: {status}");
         }
 
         void FreeScratch()

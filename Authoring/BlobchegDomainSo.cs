@@ -3,19 +3,20 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Манифест домена: то же, что в header'е последнего собранного файла, но со стороны едитора.
-    /// Источником истины про состав не является — состав ищется по проекту; манифест нужен, чтобы
-    /// сверить «запечено ровно то, что лежит в ассетах», и чтобы это было видно глазами.
+    /// The manifest of a domain: the same thing that is in the header of the last assembled file, but
+    /// from the editor side. It is not the source of truth about the contents — the contents are found
+    /// by scanning the project; the manifest exists so that "exactly what lies in the assets was baked"
+    /// can be checked, and so that it is visible to the eye.
     /// </summary>
     public sealed class BlobchegDomainSo : ScriptableObject
     {
         /// <summary>
-        /// Какой файл описан. У роутера и у таблицы хешей <c>nodes</c> идут в порядке id, у базы —
-        /// в порядке обхода проекта.
+        /// Which file is described. For a router and for a hash table the <c>nodes</c> run in id order,
+        /// for a base in project traversal order.
         /// </summary>
         public BlobchegFileKind kind;
 
-        /// <summary>Манифест роутера, а не базы. Осталось для глаз и для тестов.</summary>
+        /// <summary>The manifest of a router, not of a base. Kept for the eye and for the tests.</summary>
         public bool IsRouter => kind == BlobchegFileKind.Router;
 
         public string domainName;

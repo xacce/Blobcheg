@@ -8,28 +8,30 @@ using Unity.Entities;
 namespace Blobcheg
 {
     /// <summary>
-    /// Managed-сторона таблицы слотов: обход типов, разрешение домена записи, аллокация нативных
-    /// контейнеров. Отдельно от <see cref="BlobchegPatchTable"/> не по вкусу, а по необходимости —
-    /// ту таблицу читает Burst-код, и managed-статик в её классе валит компиляцию целиком.
+    /// The managed side of the slot table: walking the types, resolving the domain of a record,
+    /// allocating the native containers. It is kept apart from <see cref="BlobchegPatchTable"/> not out
+    /// of taste but out of necessity — that table is read by Burst code, and a managed static in its
+    /// class breaks the compilation entirely.
     /// </summary>
     public static unsafe class BlobchegPatchTableBuilder
     {
         static readonly List<ComponentType> s_Registered = new List<ComponentType>();
         static readonly List<string> s_Diagnostics = new List<string>();
 
-        /// <summary>Типы компонентов, в которых есть хотя бы один слот. Их метёт живой путь.</summary>
+        /// <summary>The component types that hold at least one slot. The live path sweeps them.</summary>
         public static IReadOnlyList<ComponentType> RegisteredTypes => s_Registered;
 
         /// <summary>
-        /// Что не удалось разобрать при сборке. Отдельный список, а не исключение: сборка обходит
-        /// все типы процесса разом, и один неправильно объявленный компонент не имеет права выключить
-        /// патч всему проекту. Проваленный тип просто не регистрируется, а его беда называется вслух.
+        /// What could not be worked out while building. A separate list and not an exception: the build
+        /// walks every type in the process at once, and one wrongly declared component has no right to
+        /// switch the patch off for the whole project. A failed type simply does not get registered, and
+        /// its trouble is named out loud.
         /// </summary>
         public static IReadOnlyList<string> Diagnostics => s_Diagnostics;
 
         /// <summary>
-        /// Собирает таблицу обходом типов. Один раз на процесс: раскладка структур в рантайме не
-        /// меняется, а новых типов компонентов после инициализации TypeManager не появляется.
+        /// Builds the table by walking the types. Once per process: the layout of structs does not change
+        /// at runtime, and no new component types appear after the TypeManager is initialised.
         /// </summary>
         public static void Build()
         {
@@ -70,15 +72,16 @@ namespace Blobcheg
                 if (found.Count == 0)
                     continue;
 
-                // Общий компонент лежит в мире одним значением на индекс, а не в чанке рядом с
-                // сущностью: ни обход чанков в форке, ни обратный проход перед записью до него не
-                // добираются. Молча оставить в нём оффсет — худшее из возможного, поэтому вслух.
+                // A shared component lies in the world as one value per index rather than in a chunk next
+                // to the entity: neither the chunk walk in the fork nor the reverse pass before a write
+                // reaches it. Quietly leaving an offset in it is the worst possible outcome, hence out
+                // loud.
                 if (typeof(ISharedComponentData).IsAssignableFrom(type))
                 {
                     s_Diagnostics.Add(
-                        $"Blobcheg: в общем компоненте '{type.FullName}' объявлен слот " +
-                        "BlobchegReference — патч общие компоненты не обходит, слот останется оффсетом. " +
-                        "Перенеси ссылку в обычный компонент или читай её через «оффсет плюс Read»");
+                        $"Blobcheg: shared component '{type.FullName}' declares a BlobchegReference slot — " +
+                        "the patch does not walk shared components, and the slot will stay an offset. " +
+                        "Move the reference into an ordinary component or read it through \"offset plus Read\"");
                     continue;
                 }
 
@@ -100,8 +103,8 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Снимает таблицу. Нужен на перезагрузке домена в редакторе: managed-сторона там умирает
-        /// сама, а persistent-память — нет.
+        /// Takes the table down. Needed on a domain reload in the editor: the managed side dies by itself
+        /// there, the persistent memory does not.
         /// </summary>
         public static void Destroy()
         {
@@ -125,9 +128,10 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Маркер-интерфейс домена → ключ его базы. Домены объявлены атрибутом
-        /// <see cref="BlobchegAttribute"/>, и другим доменам взяться неоткуда: имя файла, личность в
-        /// header'е и ключ реестра считаются из одного и того же имени маркера.
+        /// The marker interface of a domain → the key of its base. Domains are declared by the
+        /// <see cref="BlobchegAttribute"/> attribute, and there is nowhere else for a domain to come
+        /// from: the file name, the identity in the header and the registry key are all computed from
+        /// the same marker name.
         /// </summary>
         static Dictionary<Type, ulong> CollectDomains()
         {
@@ -147,8 +151,9 @@ namespace Blobcheg
                     var key = BlobchegNaming.NameHash(attr.Domain.Name);
                     domains[attr.Domain] = key;
 
-                    // Имя нужно раньше, чем поднимется база: самое частое сообщение патча — «домен
-                    // не поднят», и в нём домен обязан быть назван, а не показан ключом FNV-64.
+                    // The name is needed before the base loads: the most frequent message of the patch is
+                    // "the domain is not loaded", and in it the domain is obliged to be named rather than
+                    // shown as an FNV-64 key.
                     BlobchegDomainNames.Remember(key, attr.Domain.Name);
                 }
             }
@@ -165,8 +170,8 @@ namespace Blobcheg
                     if (!type.IsValueType || type.IsPrimitive || type.IsEnum || type.ContainsGenericParameters)
                         continue;
 
-                    // Общие компоненты сюда тоже попадают — не чтобы регистрировать, а чтобы
-                    // заметить в них слот и сказать об этом. Молчание было бы хуже.
+                    // Shared components get here too — not to be registered, but so that a slot in them is
+                    // noticed and said out loud. Silence would be worse.
                     if (typeof(IComponentData).IsAssignableFrom(type) ||
                         typeof(IBufferElementData).IsAssignableFrom(type) ||
                         typeof(ISharedComponentData).IsAssignableFrom(type))
@@ -176,8 +181,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Только сборки, которые видят <c>Blobcheg.Runtime</c>. Полный обход домена приложения на
-        /// старте стоит заметно, а слот нашего типа в сборке, не знающей о пакете, не появится.
+        /// Only the assemblies that see <c>Blobcheg.Runtime</c>. A full walk of the application domain at
+        /// startup costs noticeably, and a slot of our type will not appear in an assembly that knows
+        /// nothing about the package.
         /// </summary>
         static IEnumerable<Assembly> RelevantAssemblies()
         {
@@ -228,16 +234,16 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Обход полей по образцу <c>EntityRemapUtility.CalculateOffsetsRecurse</c>: спуск во
-        /// вложенные value-структуры, матч по типу поля, а не по имени. Останавливаемся на самом
-        /// слоте — внутрь <see cref="BlobchegReference{T}"/> лезть нечего.
+        /// A field walk modelled on <c>EntityRemapUtility.CalculateOffsetsRecurse</c>: descending into
+        /// nested value structs, matching by field type rather than by name. It stops at the slot itself
+        /// — there is nothing to climb into inside a <see cref="BlobchegReference{T}"/>.
         /// </summary>
         static void Walk(Type type, int baseOffset, List<BlobchegFieldSlot> found, HashSet<Type> seen,
             Dictionary<Type, ulong> domains, int depth)
         {
             if (depth > 32)
                 throw new InvalidOperationException(
-                    $"Blobcheg: вложенность структуры '{type.FullName}' глубже 32 — обход полей отказался");
+                    $"Blobcheg: struct '{type.FullName}' is nested deeper than 32 — the field walk refused");
 
             foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             {
@@ -261,18 +267,18 @@ namespace Blobcheg
 
                 if (fieldType == typeof(BlobchegReferenceData))
                     throw new InvalidOperationException(
-                        $"Blobcheg: в '{type.FullName}' поле '{field.Name}' объявлено как " +
-                        "BlobchegReferenceData напрямую. Это нутро слота, а не поле: домен из него не " +
-                        "выводится. Объяви BlobchegReference<T>");
+                        $"Blobcheg: in '{type.FullName}' the field '{field.Name}' is declared as " +
+                        "BlobchegReferenceData directly. That is the innards of a slot, not a field: no " +
+                        "domain can be derived from it. Declare a BlobchegReference<T>");
 
                 if (fieldType == typeof(BlobchegRawReference))
                     throw new InvalidOperationException(
-                        $"Blobcheg: в '{type.FullName}' поле '{field.Name}' — BlobchegRawReference. " +
-                        "У сырой записи нет типа, значит и домена, и патчить её нечем. Оставь такие " +
-                        "записи на путь «оффсет плюс Read»");
+                        $"Blobcheg: in '{type.FullName}' the field '{field.Name}' is a BlobchegRawReference. " +
+                        "A raw record has no type, therefore no domain, and there is nothing to patch it " +
+                        "with. Leave such records on the \"offset plus Read\" path");
 
-                // Циклов у value-структур не бывает, но одна и та же структура может встретиться в
-                // соседних полях — повторный спуск в неё по тому же пути и ограничивает seen.
+                // Value structs cannot form cycles, but the same struct may turn up in neighbouring
+                // fields — what seen limits is descending into it twice along the same path.
                 if (!seen.Add(fieldType))
                     continue;
 
@@ -282,9 +288,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Личность типа записи — тем же счётом, каким её пишет в отладочный контур писатель базы
-        /// (<c>BurstRuntime.GetHashCode32&lt;T&gt;</c>). Обобщённый метод через рефлексию, потому что
-        /// на этапе сборки таблицы тип записи — это <c>Type</c>, а не параметр.
+        /// The identity of a record type — computed the same way the base writer puts it into the debug
+        /// contour (<c>BurstRuntime.GetHashCode32&lt;T&gt;</c>). A generic method through reflection,
+        /// because at table-building time the record type is a <c>Type</c> and not a parameter.
         /// </summary>
         static uint RecordTypeHashOf(Type record)
         {
@@ -301,7 +307,7 @@ namespace Blobcheg
                     return method;
 
             throw new InvalidOperationException(
-                "Blobcheg: в этой версии Burst нет BurstRuntime.GetHashCode32<T>() — сверять тип записи нечем");
+                "Blobcheg: this version of Burst has no BurstRuntime.GetHashCode32<T>() — there is nothing to check the record type with");
         }
 
         static ulong DomainKeyOf(Type record, Dictionary<Type, ulong> domains)
@@ -316,8 +322,8 @@ namespace Blobcheg
 
                 if (marker != null)
                     throw new InvalidOperationException(
-                        $"Blobcheg: запись '{record.FullName}' входит сразу в домены '{marker.Name}' и " +
-                        $"'{iface.Name}'. Патч не может выбрать, из какой базы брать адрес");
+                        $"Blobcheg: record '{record.FullName}' belongs to domains '{marker.Name}' and " +
+                        $"'{iface.Name}' at once. The patch cannot choose which base to take the address from");
 
                 marker = iface;
                 key = candidate;
@@ -325,8 +331,8 @@ namespace Blobcheg
 
             if (marker == null)
                 throw new InvalidOperationException(
-                    $"Blobcheg: запись '{record.FullName}' не входит ни в один домен — нет маркер-интерфейса, " +
-                    "объявленного через [Blobcheg]. Патчить её неоткуда");
+                    $"Blobcheg: record '{record.FullName}' belongs to no domain — there is no marker interface " +
+                    "declared through [Blobcheg]. There is nowhere to patch it from");
 
             return key;
         }

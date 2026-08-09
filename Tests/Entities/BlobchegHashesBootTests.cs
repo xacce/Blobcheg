@@ -19,15 +19,15 @@ namespace Blobcheg.Tests
     {
     }
 
-    /// <summary>Роутер этой сборки. Свой, потому что таблица и роутер обязаны быть одной компиляции.</summary>
+    /// <summary>The router of this assembly. Its own, because a table and a router must be of one compilation.</summary>
     [BlobchegRouter]
     public partial struct TestBootRouter
     {
     }
 
     /// <summary>
-    /// Таблица, объявленная <c>IComponentData</c>: под неё генератор выпускает
-    /// <c>TestBootHashesBootSystem</c>. Не выпустил — этот файл не соберётся.
+    /// A table declared <c>IComponentData</c>: the generator emits a
+    /// <c>TestBootHashesBootSystem</c> for it. If it did not, this file does not build.
     /// </summary>
     [BlobchegHashes(typeof(TestBootRouter))]
     [DisableAutoCreation]
@@ -36,13 +36,14 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Нод у этого роутера в проекте нет, и таблица собирается пустой — доказывать здесь надо
-    /// подъём, а не лукап: лукап доказан в Blobcheg.Hashes.Tests, где ноды свои.
+    /// This router has no nodes in the project and the table is assembled empty — what has to be proven
+    /// here is the load and not the lookup: the lookup is proven in Blobcheg.Hashes.Tests, which has its
+    /// own nodes.
     /// </summary>
     public sealed class BlobchegHashesBootTests
     {
         [Test]
-        public void Бут_система_поднимает_таблицу_в_синглтон()
+        public void The_boot_system_loads_the_table_into_a_singleton()
         {
             BlobchegBuild.RebuildAll();
 
@@ -60,7 +61,7 @@ namespace Blobcheg.Tests
                 }
 
                 Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                    "бут-система обязана положить таблицу синглтоном за пять секунд");
+                    "the boot system is obliged to put the table down as a singleton within five seconds");
 
                 var table = query.GetSingleton<TestBootHashes>();
                 Assert.That(table.IsCreated, Is.True);
@@ -73,7 +74,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Таблица_перечитывается_под_живым_миром()
+        public void The_table_is_re_read_under_a_live_world()
         {
             BlobchegBuild.RebuildAll();
 
@@ -90,15 +91,15 @@ namespace Blobcheg.Tests
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "таблица не поднялась — дальше проверять нечего");
+                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "the table did not load — there is nothing further to check");
 
-                // Пересборка в редакторе кончается ровно этим: номер файла поднят.
+                // A rebuild in the editor ends with exactly this: the file number is bumped.
                 BlobchegFileVersions.Bump(TestBootHashes.FileName);
                 system.Update(world.Unmanaged);
 
                 var table = query.GetSingleton<TestBootHashes>();
                 Assert.That(table.IsCreated, Is.True,
-                    "синглтон обязан держать новый блоб, а не освобождённый старый");
+                    "the singleton is obliged to hold the new blob and not the freed old one");
             }
             finally
             {
@@ -107,12 +108,12 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Бут_система_таблицы_стоит_в_группе_подъёма()
+        public void The_boot_system_of_the_table_stands_in_the_load_group()
         {
             var system = typeof(TestBootHashesBootSystem);
 
             Assert.That(system.GetCustomAttributes(typeof(DisableAutoCreationAttribute), false), Is.Not.Empty,
-                "[DisableAutoCreation] на таблице обязан оказаться на её бут-системе");
+                "a [DisableAutoCreation] on the table is obliged to end up on its boot system");
 
             var inGroup = (UpdateInGroupAttribute)system.GetCustomAttributes(typeof(UpdateInGroupAttribute), false)[0];
             Assert.That(inGroup.GroupType, Is.EqualTo(typeof(BlobchegBootGroup)));

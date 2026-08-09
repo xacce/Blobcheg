@@ -4,10 +4,10 @@ using System.IO;
 
 namespace Blobcheg
 {
-    /// <summary>Одна клетка строки роутера: в какой базе нода лежит и по какому оффсету.</summary>
+    /// <summary>One cell of a router row: which base the node lies in and at which offset.</summary>
     public readonly struct BlobchegRouterCell
     {
-        /// <summary>Номер бита базы, он же позиция домена в отсортированном списке роутера.</summary>
+        /// <summary>The bit number of the base, also the position of the domain in the router's sorted list.</summary>
         public readonly int Bit;
 
         public readonly uint Offset;
@@ -20,11 +20,12 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Писатель роутера. Строки добавляются в порядке id — id и есть порядок вызова
-    /// <see cref="Append"/>, поэтому раздача id живёт у того, кто знает ноды, а не здесь.
+    /// The router writer. Rows are added in id order — the id is exactly the order of the
+    /// <see cref="Append"/> calls, which is why handing out ids lives with whoever knows the nodes, not
+    /// here.
     ///
-    /// Оффсеты приходят готовыми: роутер собирается ПОСЛЕ <c>Flush</c> всех баз, иначе оффсетов ещё
-    /// не существует.
+    /// Offsets arrive ready-made: the router is assembled AFTER the <c>Flush</c> of every base,
+    /// otherwise the offsets do not exist yet.
     /// </summary>
     public sealed class BlobchegRouterWriter
     {
@@ -62,18 +63,18 @@ namespace Blobcheg
         public static BlobchegRouterWriter Open(string directory, string routerName, int domainCount, ulong layoutHash)
             => new BlobchegRouterWriter(directory, routerName, domainCount, layoutHash);
 
-        /// <summary>Кладёт строку и возвращает её номер. Пустая строка допустима — нода без записей.</summary>
+        /// <summary>Puts down a row and returns its number. An empty row is allowed — a node with no records.</summary>
         public uint Append(string nodeName, IReadOnlyList<BlobchegRouterCell> cells)
         {
             if (_flushed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: Append в роутер '{RouterName}' после Flush — файл уже собран");
+                    $"Blobcheg: Append into router '{RouterName}' after Flush — the file is already assembled");
 
             var mask = 0ul;
             var start = _offsets.Count;
 
-            // Ячейки кладутся по возрастанию бита: лукап берёт popcount младших бит, и порядок в
-            // файле обязан этому отвечать.
+            // Cells are laid out by ascending bit: the lookup takes the popcount of the lower bits, and
+            // the order in the file is obliged to answer that.
             var sorted = new List<BlobchegRouterCell>(cells);
             sorted.Sort((a, b) => a.Bit.CompareTo(b.Bit));
 
@@ -81,12 +82,12 @@ namespace Blobcheg
             {
                 if (cell.Bit < 0 || cell.Bit >= _domainCount)
                     throw new ArgumentOutOfRangeException(nameof(cells),
-                        $"Blobcheg: роутер '{RouterName}' — бит {cell.Bit} при {_domainCount} базах");
+                        $"Blobcheg: router '{RouterName}' — bit {cell.Bit} with {_domainCount} bases");
 
                 var bit = 1ul << cell.Bit;
                 if ((mask & bit) != 0)
                     throw new InvalidOperationException(
-                        $"Blobcheg: роутер '{RouterName}' — нода '{nodeName}' дважды указала базу {cell.Bit}");
+                        $"Blobcheg: router '{RouterName}' — node '{nodeName}' named base {cell.Bit} twice");
 
                 mask |= bit;
                 _offsets.Add(cell.Offset);
@@ -101,11 +102,11 @@ namespace Blobcheg
         public void Flush(bool withDebug = false)
         {
             if (_flushed)
-                throw new InvalidOperationException($"Blobcheg: повторный Flush роутера '{RouterName}'");
+                throw new InvalidOperationException($"Blobcheg: a repeated Flush of router '{RouterName}'");
 
             var count = _masks.Count;
 
-            // Роутеру без строк описывать нечего — см. тот же довод у писателя базы.
+            // A router without rows has nothing to describe — see the same argument at the base writer.
             withDebug &= count > 0;
 
             var masksOffset = BlobchegFormat.AlignUp(BlobchegRouterFormat.PrologOffset + BlobchegRouterFormat.PrologSize);
@@ -155,7 +156,7 @@ namespace Blobcheg
             FileChanged = BlobchegBytes.WriteIfChanged(Directory, FilePath, file, ContentHash);
         }
 
-        /// <summary>Имя ноды по id — только для инструментов едитора, поэтому в релизный плеер не едет.</summary>
+        /// <summary>The node name by id — for editor tools only, so it does not travel into a release player.</summary>
         byte[] BuildDebugSection(uint sectionOffset)
         {
             var count = _masks.Count;

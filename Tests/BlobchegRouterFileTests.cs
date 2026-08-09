@@ -7,8 +7,8 @@ using Unity.Collections;
 namespace Blobcheg.Tests
 {
     /// <summary>
-    /// Файл роутера сам по себе: раскладка, popcount-лукап, границы. Ассетов и кодогена здесь нет —
-    /// доказывается ровно бинарник и чтение по нему.
+    /// The router file on its own: the layout, the popcount lookup, the bounds. There are no assets and
+    /// no codegen here — what is proven is exactly the binary and reading from it.
     /// </summary>
     public sealed class BlobchegRouterFileTests
     {
@@ -51,7 +51,7 @@ namespace Blobcheg.Tests
         BlobchegRouterBlob Load(string name, int domainCount, ulong layoutHash)
             => new BlobchegRouterBlob(BlobchegBuffer.From(Bytes(name), Allocator.Persistent), name, domainCount, layoutHash);
 
-        /// <summary>Подъём, который обязан бросить: буфер освобождаем сами — владение к нему не перешло.</summary>
+        /// <summary>A load that is obliged to throw: we free the buffer ourselves — ownership never passed to it.</summary>
         void RequireThrows(string name, int domainCount, ulong layoutHash, string what)
         {
             var buffer = BlobchegBuffer.From(Bytes(name), Allocator.Persistent);
@@ -69,13 +69,13 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Строка_отдаёт_оффсеты_по_битам_а_не_по_порядку_в_файле()
+        public void A_row_hands_out_offsets_by_bit_and_not_by_order_in_the_file()
         {
             const int domains = 8;
             var hash = HashOf(domains);
 
             var writer = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
-            // Ячейки нарочно приходят вперемешку: в файле они обязаны лечь по возрастанию бита.
+            // The cells arrive shuffled on purpose: in the file they are obliged to land by ascending bit.
             writer.Append("a", Row((5, 500), (0, 100), (3, 300)));
             writer.Append("b", Row());
             writer.Append("c", Row((7, 700)));
@@ -91,7 +91,7 @@ namespace Blobcheg.Tests
                 Assert.That(a.Mask, Is.EqualTo(0b101001ul));
 
                 var b = router.Get(router.IdAt(1));
-                Assert.That(b.Mask, Is.Zero, "нода могла войти в роутер, ничего не написав в его базы");
+                Assert.That(b.Mask, Is.Zero, "a node may have joined the router without writing into any of its bases");
                 Assert.That(b.Has(0), Is.False);
                 Assert.Throws<InvalidOperationException>(() => b.Offset(0));
                 Assert.That(b.TryOffset(0, out _), Is.False);
@@ -112,7 +112,7 @@ namespace Blobcheg.Tests
         [TestCase(16, 15)]
         [TestCase(32, 31)]
         [TestCase(64, 63)]
-        public void Маска_любой_ширины_читается_включая_старший_бит(int domains, int top)
+        public void A_mask_of_any_width_is_read_including_the_top_bit(int domains, int top)
         {
             var hash = HashOf(domains);
             var writer = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
@@ -124,7 +124,7 @@ namespace Blobcheg.Tests
             {
                 var row = router.Get(router.IdAt(0));
                 Assert.That(row.Offset(0), Is.EqualTo(16u));
-                Assert.That(row.Offset(top), Is.EqualTo(32u), "старший бит лежит в маске выбранной ширины");
+                Assert.That(row.Offset(top), Is.EqualTo(32u), "the top bit lies inside a mask of the chosen width");
             }
             finally
             {
@@ -133,7 +133,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Неизвестный_id_бросает_а_TryGet_отвечает_false()
+        public void An_unknown_id_throws_while_TryGet_answers_false()
         {
             const int domains = 4;
             var hash = HashOf(domains);
@@ -158,19 +158,19 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Файл_под_другой_набор_баз_не_поднимается()
+        public void A_file_built_for_a_different_set_of_bases_does_not_load()
         {
             const int domains = 4;
             var writer = BlobchegRouterWriter.Open(_dir, "R", domains, HashOf(domains));
             writer.Append("a", Row((0, 48)));
             writer.Flush();
 
-            RequireThrows("R", domains, HashOf(domains) ^ 1, "другой набор баз");
-            RequireThrows("R", domains + 1, HashOf(domains), "баз");
+            RequireThrows("R", domains, HashOf(domains) ^ 1, "a different set of bases");
+            RequireThrows("R", domains + 1, HashOf(domains), "bases");
         }
 
         [Test]
-        public void База_и_роутер_не_путаются_местами()
+        public void A_base_and_a_router_are_not_mixed_up()
         {
             var domain = BlobchegWriter.Open(_dir, "D");
             domain.Append(new BlobchegRecord("T", "k", 0, "n", new byte[16]));
@@ -180,13 +180,13 @@ namespace Blobcheg.Tests
             router.Append("a", Row((0, 64)));
             router.Flush();
 
-            RequireThrows("D", 2, HashOf(2), "роутер");
+            RequireThrows("D", 2, HashOf(2), "router");
 
             var buffer = BlobchegBuffer.From(Bytes("R"), Allocator.Persistent);
             try
             {
                 var asBase = Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "R"));
-                StringAssert.Contains("базу", asBase.Message);
+                StringAssert.Contains("base", asBase.Message);
             }
             finally
             {
@@ -195,7 +195,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Файл_чужого_роутера_не_поднимается_под_этим_именем()
+        public void A_file_of_a_foreign_router_does_not_load_under_this_name()
         {
             const int domains = 2;
             var hash = HashOf(domains);
@@ -204,15 +204,15 @@ namespace Blobcheg.Tests
             writer.Append("a", Row((0, 48)));
             writer.Flush();
 
-            // Файлы переставили местами: содержимое целое, целостность сходится, а роутер не тот.
+            // The files were swapped: the content is whole, the integrity agrees, and the router is wrong.
             File.Copy(Path.Combine(_dir, BlobchegNaming.FileName("R")),
                 Path.Combine(_dir, BlobchegNaming.FileName("Alien")));
 
-            RequireThrows("Alien", domains, hash, "другого роутера");
+            RequireThrows("Alien", domains, hash, "another router");
         }
 
         [Test]
-        public void Id_чужого_роутера_отбивается_тегом()
+        public void An_id_of_a_foreign_router_is_rejected_by_the_tag()
         {
             const int domains = 2;
             var hash = HashOf(domains);
@@ -230,11 +230,11 @@ namespace Blobcheg.Tests
             try
             {
                 var alien = other.IdAt(0);
-                Assert.That(alien.Index, Is.EqualTo(router.IdAt(0).Index), "строка та же — тег разный");
+                Assert.That(alien.Index, Is.EqualTo(router.IdAt(0).Index), "the row is the same — the tag differs");
                 Assert.That(alien, Is.Not.EqualTo(router.IdAt(0)));
 
                 Assert.Throws<InvalidOperationException>(() => router.Get(alien),
-                    "id соседнего роутера попадает в диапазон этого — отличает их только тег");
+                    "an id of a neighbouring router falls into the range of this one — only the tag tells them apart");
                 Assert.That(router.TryGet(alien, out _), Is.False);
             }
             finally
@@ -245,7 +245,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Дефолтный_id_не_резолвится()
+        public void A_default_id_does_not_resolve()
         {
             const int domains = 2;
             var hash = HashOf(domains);
@@ -254,13 +254,13 @@ namespace Blobcheg.Tests
             writer.Append("a", Row((0, 48)));
             writer.Flush();
 
-            Assert.That(default(BlobchegId).IsValid, Is.False, "нулём инициализированное поле — это «не задано»");
+            Assert.That(default(BlobchegId).IsValid, Is.False, "a zero-initialised field means \"not set\"");
 
             var router = Load("R", domains, hash);
             try
             {
                 Assert.Throws<InvalidOperationException>(() => router.Get(default),
-                    "иначе забытое поле молча приводило бы к первой ноде роутера");
+                    "otherwise a forgotten field would quietly lead to the first node of the router");
                 Assert.That(router.TryGet(default, out _), Is.False);
             }
             finally
@@ -270,7 +270,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Одинаковое_содержимое_не_переписывает_файл()
+        public void Identical_content_does_not_rewrite_the_file()
         {
             const int domains = 2;
             var hash = HashOf(domains);
@@ -278,17 +278,17 @@ namespace Blobcheg.Tests
             var first = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
             first.Append("a", Row((0, 48)));
             first.Flush();
-            Assert.That(first.FileChanged, Is.True, "файла ещё не было");
+            Assert.That(first.FileChanged, Is.True, "there was no file yet");
 
             var again = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
             again.Append("a", Row((0, 48)));
             again.Flush();
-            Assert.That(again.FileChanged, Is.False, "то же содержимое — файл не трогаем, иначе всё перепечётся");
+            Assert.That(again.FileChanged, Is.False, "the same content means the file is not touched, otherwise everything gets rebaked");
             Assert.That(again.ContentHash, Is.EqualTo(first.ContentHash));
         }
 
         [Test]
-        public void Дважды_указанная_база_и_бит_за_потолком_бросают()
+        public void A_base_named_twice_and_a_bit_past_the_ceiling_both_throw()
         {
             var writer = BlobchegRouterWriter.Open(_dir, "R", 4, HashOf(4));
 
@@ -298,22 +298,22 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Отладочный_контур_называет_ноду_по_id()
+        public void The_debug_contour_names_the_node_by_id()
         {
             const int domains = 2;
             var hash = HashOf(domains);
 
             var writer = BlobchegRouterWriter.Open(_dir, "R", domains, hash);
-            writer.Append("Пистолет", Row((0, 48)));
-            writer.Append("Броня", Row((1, 64)));
+            writer.Append("Pistol", Row((0, 48)));
+            writer.Append("Armor", Row((1, 64)));
             writer.Flush(true);
 
             var router = Load("R", domains, hash);
             try
             {
                 Assert.That(router.HasDebug, Is.True);
-                Assert.That(router.Describe(router.IdAt(0)), Is.EqualTo("Пистолет"));
-                Assert.That(router.Describe(router.IdAt(1)), Is.EqualTo("Броня"));
+                Assert.That(router.Describe(router.IdAt(0)), Is.EqualTo("Pistol"));
+                Assert.That(router.Describe(router.IdAt(1)), Is.EqualTo("Armor"));
             }
             finally
             {

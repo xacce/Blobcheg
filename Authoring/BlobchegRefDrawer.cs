@@ -8,12 +8,14 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Драйвер поля-обёртки. Тип поля держит компилятор, а этот слой не даёт положить в
-    /// <c>BlobchegRef&lt;GunData&gt;</c> ассет чужой записи — ни пикером, ни перетаскиванием.
-    /// Пустое поле и чужая запись подсвечиваются: молча нулевой оффсет не поедет.
+    /// The drawer for a wrapper field. The field type is held by the compiler, and this layer does not
+    /// let the asset of a foreign record be put into a <c>BlobchegRef&lt;GunData&gt;</c> — neither by
+    /// the picker nor by dragging. An empty field and a foreign record are highlighted: a zero offset
+    /// will not travel silently.
     ///
-    /// Поле рисуется своё, а не <c>EditorGUI.ObjectField</c>: нативный пикер фильтрует только по
-    /// типу ассета, а ассет-тип у нас один на всю систему — в списке лежали бы записи всех доменов.
+    /// The field is drawn by us and not by <c>EditorGUI.ObjectField</c>: the native picker filters only
+    /// by asset type, and we have one asset type for the whole system — the records of every domain
+    /// would lie in the list.
     /// </summary>
     [CustomPropertyDrawer(typeof(BlobchegRef<>), true)]
     [CustomPropertyDrawer(typeof(BlobchegRawRef), true)]
@@ -69,24 +71,25 @@ namespace Blobcheg.Authoring
         static GUIContent Caption(BlobchegRefSo current, Type expected)
         {
             if (current == null)
-                return new GUIContent("Нет ссылки (" + (expected == null ? "сырая запись" : expected.Name) + ")");
+                return new GUIContent("No reference (" + (expected == null ? "raw record" : expected.Name) + ")");
 
             return new GUIContent(current.name, AssetPreview.GetMiniThumbnail(current));
         }
 
         static void OpenPicker(Rect field, SerializedProperty property, Type expected, BlobchegRefSo current)
         {
-            // SerializedProperty живёт до конца кадра, а пикер отвечает позже — поэтому запоминаем
-            // объект и путь, а свойство ищем заново в момент выбора.
+            // A SerializedProperty lives until the end of the frame while the picker answers later —
+            // that is why the object and the path are remembered and the property is looked up again at
+            // the moment of the choice.
             var serialized = property.serializedObject;
             var path = property.propertyPath;
 
             var candidates = BlobchegRefCatalog.Candidates(expected).ConvertAll(r => (ScriptableObject)r);
 
             BlobchegRefPickerWindow.Open(field,
-                expected == null ? "Сырые записи" : expected.Name,
-                "Записей этого типа в проекте нет. Нода, которая его пишет, ещё не создана — " +
-                "или пересборка не дошла до ref-ассетов.",
+                expected == null ? "Raw records" : expected.Name,
+                "There are no records of this type in the project. The node that writes it has not been " +
+                "created yet — or the rebuild never reached the ref assets.",
                 candidates,
                 current,
                 asset => "offset " + ((BlobchegRefSo)asset).offset,
@@ -131,16 +134,16 @@ namespace Blobcheg.Authoring
         {
             var asset = property.FindPropertyRelative("asset").objectReferenceValue as BlobchegRefSo;
             if (asset == null)
-                return "запись не назначена";
+                return "no record is assigned";
 
             var expected = ExpectedRecordType(fieldInfo);
             if (!BlobchegRefCatalog.Matches(asset, expected))
-                return $"чужая запись: '{asset.RecordType}' вместо '{expected?.FullName}'";
+                return $"foreign record: '{asset.RecordType}' instead of '{expected?.FullName}'";
 
             return null;
         }
 
-        /// <summary>Тип записи из параметра поля. <c>null</c> — сырой ref, проверять нечего.</summary>
+        /// <summary>The record type from the field parameter. <c>null</c> means a raw ref, nothing to check.</summary>
         static Type ExpectedRecordType(FieldInfo field)
         {
             var type = field.FieldType;

@@ -5,9 +5,10 @@ using System.Text;
 namespace Blobcheg
 {
     /// <summary>
-    /// Байтовая мелочь, общая писателю базы и писателю роутера: little-endian примитивы, печать
-    /// header'а и атомарная запись файла. Держится в одном месте, потому что два файла пакета
-    /// обязаны иметь побайтово одинаковый header — разъедутся, и читатель поймёт это уже в рантайме.
+    /// Byte-level odds and ends shared by the base writer and the router writer: little-endian
+    /// primitives, stamping the header and writing a file atomically. Kept in one place because the
+    /// two files of the package must have a byte-identical header — let them drift apart and the
+    /// reader only finds out at runtime.
     /// </summary>
     public static class BlobchegBytes
     {
@@ -31,7 +32,7 @@ namespace Blobcheg
             WriteU32(to, at + 4, (uint)(value >> 32));
         }
 
-        /// <summary>Маска фиксированной ширины 1/2/4/8 байт.</summary>
+        /// <summary>A fixed-width mask of 1/2/4/8 bytes.</summary>
         public static void WriteMask(byte[] to, int at, ulong value, int width)
         {
             switch (width)
@@ -49,7 +50,7 @@ namespace Blobcheg
                     WriteU64(to, at, value);
                     return;
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(width), $"Blobcheg: ширина маски {width} Б");
+                    throw new ArgumentOutOfRangeException(nameof(width), $"Blobcheg: mask width {width} B");
             }
         }
 
@@ -60,12 +61,12 @@ namespace Blobcheg
 
         public static ulong ReadU64(byte[] from, int at) => ReadU32(from, at) | ((ulong)ReadU32(from, at + 4) << 32);
 
-        /// <summary>Строка длиной-префиксом в UTF8 — так лежат имена и в debug-секции базы, и у роутера.</summary>
+        /// <summary>A length-prefixed UTF8 string — that is how names lie both in the base debug section and in the router.</summary>
         public static void WriteString(Stream stream, string value)
         {
             var bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
             if (bytes.Length > ushort.MaxValue)
-                throw new InvalidOperationException($"Blobcheg: имя длиной {bytes.Length} Б не лезет в debug-секцию");
+                throw new InvalidOperationException($"Blobcheg: a name of {bytes.Length} B does not fit into the debug section");
 
             stream.WriteByte((byte)(bytes.Length & 0xFF));
             stream.WriteByte((byte)(bytes.Length >> 8));
@@ -73,9 +74,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Печатает header поверх собранного тела и возвращает хеш содержимого. Личность файла
-        /// (<paramref name="nameHash"/>) приходит снаружи: писатель базы и писатель роутера знают
-        /// своё имя, а байты — нет.
+        /// Stamps the header over the assembled body and returns the content hash. The identity of
+        /// the file (<paramref name="nameHash"/>) comes from the outside: the base writer and the
+        /// router writer know their own name, the bytes do not.
         /// </summary>
         public static ulong Seal(byte[] file, ushort flags, uint debugOffset, ulong nameHash)
         {
@@ -93,8 +94,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Пишет файл, если содержимое отличается от лежащего на диске. Возвращает, тронут ли файл:
-        /// нетронутый файл не будит импорт, а значит не перепекает то, что от него зависит.
+        /// Writes the file if the content differs from what lies on disk. Returns whether the file
+        /// was touched: an untouched file does not wake the importer, and so does not rebake what
+        /// depends on it.
         /// </summary>
         public static bool WriteIfChanged(string directory, string path, byte[] file, ulong contentHash)
         {
@@ -110,12 +112,14 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Подмена файла с повторами. Собранный файл лежит в StreamingAssets, то есть его импортирует
-        /// Unity, а импорт в Unity 6 идёт отдельными процессами-воркерами — в момент подмены файл
-        /// может быть открыт ими, и обмен падает с «не удаётся удалить заменяемый файл».
+        /// Swapping the file with retries. The assembled file lies in StreamingAssets, so Unity
+        /// imports it, and in Unity 6 the import runs in separate worker processes — at the moment
+        /// of the swap the file may be open in one of them, and the exchange fails with "cannot
+        /// delete the file being replaced".
         ///
-        /// Ждать тут можно и нужно: держат файл миллисекунды. Молча писать поверх нельзя — на этом
-        /// месте оборванная запись оставила бы полублоб, который выглядит рабочим и врёт.
+        /// Waiting here is allowed and necessary: they hold the file for milliseconds. Writing over
+        /// it silently is not an option — right here a torn write would leave half a blob that looks
+        /// alive and lies.
         /// </summary>
         static void Swap(string temp, string path)
         {

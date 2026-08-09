@@ -4,17 +4,18 @@ using Unity.Entities;
 namespace Blobcheg
 {
     /// <summary>
-    /// Проход патча по миру для того, кто только что поднял базу — первый раз или заново.
-    /// Слоты сущностей, приехавших раньше базы, после него становятся адресами; слоты, смотревшие
-    /// в прежний буфер, переезжают на новый через отставные поколения <see cref="BlobchegBases"/>.
+    /// A patch pass over the world for whoever has just loaded a base — for the first time or again.
+    /// After it, the slots of entities that arrived before the base become addresses; the slots that
+    /// looked into the previous buffer move onto the new one through the retired generations of
+    /// <see cref="BlobchegBases"/>.
     ///
-    /// Сама работа живёт в Blobcheg.Entities.Patch — сборке необязательной, поэтому здесь только
-    /// место, куда она себя кладёт (это делает <c>BlobchegPatchInstall</c>). Патча в проекте нет —
-    /// адресных слотов в мире не бывает, и звать нечего.
+    /// The work itself lives in Blobcheg.Entities.Patch, an optional assembly, so all that is here is
+    /// the place it puts itself into (that is done by <c>BlobchegPatchInstall</c>). If the project has
+    /// no patch, there are no address slots in the world and nothing to call.
     /// </summary>
     public static class BlobchegSweep
     {
-        /// <summary>Ставится установкой патча. Не поставлен — прохода нет и не нужно.</summary>
+        /// <summary>Set by installing the patch. Not set — there is no pass and none is needed.</summary>
         public static Action<EntityManager> Hook;
 
         public static void Run(EntityManager entityManager) => Hook?.Invoke(entityManager);

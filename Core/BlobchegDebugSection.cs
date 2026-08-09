@@ -4,9 +4,9 @@ using System.Runtime.InteropServices;
 namespace Blobcheg
 {
     /// <summary>
-    /// Запись debug-секции. В редакторе она есть всегда — на ней стоит проверка типа при чтении и
-    /// <c>Describe</c> у инструментов. В релизный плеер она не едет: там имена типов и нод не нужны,
-    /// а что лежит внутри бинарника — снова вопрос доверия.
+    /// An entry of the debug section. In the editor it is always there — the type check on read and
+    /// the tools' <c>Describe</c> stand on it. It does not travel into a release player: type and node
+    /// names are not needed there, and what lies inside the binary is once again a question of trust.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct BlobchegDebugEntry
@@ -14,26 +14,26 @@ namespace Blobcheg
         public uint Offset;
         public uint Size;
 
-        /// <summary>BurstRuntime.GetHashCode32 типа записи, 0 — сырые байты.</summary>
+        /// <summary>BurstRuntime.GetHashCode32 of the record type, 0 means raw bytes.</summary>
         public uint TypeHash;
 
-        /// <summary>Абсолютный оффсет пары строк «тип, нода» в файле.</summary>
+        /// <summary>The absolute offset of the "type, node" string pair in the file.</summary>
         public uint NameOffset;
     }
 
     public static class BlobchegDebugSection
     {
-        /// <summary>'BDBG' в порядке байтов файла.</summary>
+        /// <summary>'BDBG' in the byte order of the file.</summary>
         public const uint Magic = 0x47424442;
 
-        /// <summary>magic + count перед массивом записей.</summary>
+        /// <summary>magic + count ahead of the entry array.</summary>
         public const int PrologSize = 8;
 
         public const int EntrySize = 16;
 
         /// <summary>
-        /// Ищет запись по её оффсету двоичным поиском. Записи в секции отсортированы по Offset,
-        /// как и сами записи в файле.
+        /// Finds an entry by its offset with a binary search. Entries in the section are sorted by
+        /// Offset, just like the records themselves in the file.
         /// </summary>
         public static unsafe BlobchegDebugEntry* Find(byte* file, uint debugOffset, uint recordOffset)
         {
@@ -58,7 +58,7 @@ namespace Blobcheg
             return null;
         }
 
-        /// <summary>Имена типа и ноды по записи — managed-путь, только для инструментов едитора.</summary>
+        /// <summary>Type and node names for an entry — the managed path, for editor tools only.</summary>
         public static unsafe void ReadNames(byte* file, in BlobchegDebugEntry entry,
             out string typeName, out string nodeName)
         {
@@ -80,7 +80,7 @@ namespace Blobcheg
         {
             if (magic != Magic)
                 throw new InvalidOperationException(
-                    $"Blobcheg: debug-секция не там, где обещал header (magic {magic:X8})");
+                    $"Blobcheg: the debug section is not where the header promised (magic {magic:X8})");
         }
     }
 }

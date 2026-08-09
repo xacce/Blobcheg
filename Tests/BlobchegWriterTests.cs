@@ -6,8 +6,8 @@ using NUnit.Framework;
 namespace Blobcheg.Tests
 {
     /// <summary>
-    /// Раскладка и писатель. Главное свойство, которое тут доказывается: порядок обхода на файл не
-    /// влияет, а правка значения не двигает оффсеты.
+    /// The layout and the writer. The main property proven here: the traversal order does not affect
+    /// the file, and editing a value does not move the offsets.
     /// </summary>
     public sealed class BlobchegWriterTests
     {
@@ -40,7 +40,7 @@ namespace Blobcheg.Tests
             => new BlobchegRecord(type, key, 0, "node-" + key, Payload(fill, size));
 
         [Test]
-        public void Записи_группируются_по_типу_и_выровнены_на_16()
+        public void Records_are_grouped_by_type_and_aligned_to_16()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var shield = writer.Append(Rec("Shield", "b", 2));
@@ -48,16 +48,16 @@ namespace Blobcheg.Tests
             var gunA = writer.Append(Rec("Gun", "a", 3));
             writer.Flush();
 
-            Assert.That(writer.OffsetOf(gunA), Is.EqualTo(BlobchegFormat.HeaderSize), "первым идёт тип Gun, внутри — ключ 'a'");
+            Assert.That(writer.OffsetOf(gunA), Is.EqualTo(BlobchegFormat.HeaderSize), "the Gun type comes first, and inside it the key 'a'");
             Assert.That(writer.OffsetOf(gunB), Is.GreaterThan(writer.OffsetOf(gunA)));
-            Assert.That(writer.OffsetOf(shield), Is.GreaterThan(writer.OffsetOf(gunB)), "Shield по FullName идёт после Gun");
+            Assert.That(writer.OffsetOf(shield), Is.GreaterThan(writer.OffsetOf(gunB)), "by FullName Shield comes after Gun");
 
             foreach (var offset in new[] { writer.OffsetOf(gunA), writer.OffsetOf(gunB), writer.OffsetOf(shield) })
-                Assert.That(offset % BlobchegFormat.RecordAlign, Is.Zero, "старт записи выровнен на 16");
+                Assert.That(offset % BlobchegFormat.RecordAlign, Is.Zero, "the start of a record is aligned to 16");
         }
 
         [Test]
-        public void Порядок_обхода_на_файл_не_влияет()
+        public void The_traversal_order_does_not_affect_the_file()
         {
             var straight = BlobchegWriter.Open(_dir, "Straight");
             straight.Append(Rec("Gun", "a", 1));
@@ -78,7 +78,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Сырые_записи_ложатся_в_хвост()
+        public void Raw_records_land_in_the_tail()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var raw = writer.Append(new BlobchegRecord(null, "a", 0, "raw", Payload(9, 5)));
@@ -86,11 +86,11 @@ namespace Blobcheg.Tests
             writer.Flush();
 
             Assert.That(writer.OffsetOf(raw), Is.GreaterThan(writer.OffsetOf(typed)),
-                "сырые блоки переменной длины не должны таскать за собой типизированные");
+                "raw blocks of variable length must not drag the typed ones along with them");
         }
 
         [Test]
-        public void Правка_значения_не_двигает_оффсеты()
+        public void Editing_a_value_does_not_move_the_offsets()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(Rec("Gun", "a", 1));
@@ -104,12 +104,12 @@ namespace Blobcheg.Tests
 
             Assert.That(after.OffsetOf(a2), Is.EqualTo(before.OffsetOf(a)));
             Assert.That(after.OffsetOf(b2), Is.EqualTo(before.OffsetOf(b)));
-            Assert.That(after.RevisionOf(a2), Is.Not.EqualTo(before.RevisionOf(a)), "ревизия обязана заметить правку");
-            Assert.That(after.RevisionOf(b2), Is.EqualTo(before.RevisionOf(b)), "нетронутая нода — та же ревизия");
+            Assert.That(after.RevisionOf(a2), Is.Not.EqualTo(before.RevisionOf(a)), "the revision is obliged to notice the edit");
+            Assert.That(after.RevisionOf(b2), Is.EqualTo(before.RevisionOf(b)), "an untouched node keeps the same revision");
         }
 
         [Test]
-        public void Неизменное_содержимое_файл_не_переписывает()
+        public void Unchanged_content_does_not_rewrite_the_file()
         {
             var first = BlobchegWriter.Open(_dir, "Domain");
             first.Append(Rec("Gun", "a", 1));
@@ -119,11 +119,11 @@ namespace Blobcheg.Tests
             var second = BlobchegWriter.Open(_dir, "Domain");
             second.Append(Rec("Gun", "a", 1));
             second.Flush();
-            Assert.That(second.FileChanged, Is.False, "то же содержимое — файл не трогаем, иначе перепечётся всё");
+            Assert.That(second.FileChanged, Is.False, "the same content means the file is not touched, otherwise everything gets rebaked");
         }
 
         [Test]
-        public void Заявленный_адрес_остаётся_за_записью_а_новая_садится_в_хвост()
+        public void A_claimed_address_stays_with_its_record_and_a_new_one_settles_into_the_tail()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var only = before.Append(Rec("Gun", "b", 1));
@@ -136,13 +136,13 @@ namespace Blobcheg.Tests
             after.Claim(old, kept);
             after.Flush();
 
-            Assert.That(after.OffsetOf(old), Is.EqualTo(kept), "прежний адрес обязан остаться за прежней записью");
+            Assert.That(after.OffsetOf(old), Is.EqualTo(kept), "the previous address is obliged to stay with the previous record");
             Assert.That(after.OffsetOf(newcomer), Is.GreaterThan(kept),
-                "новая запись садится в хвост, хотя по ключу шла бы первой — иначе она сдвинет чужой адрес");
+                "the new record settles into the tail although by key it would come first — otherwise it shifts someone else's address");
         }
 
         [Test]
-        public void Удалённая_запись_оставляет_дырку_а_соседи_не_едут()
+        public void A_deleted_record_leaves_a_hole_and_the_neighbours_do_not_move()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(Rec("Gun", "a", 1));
@@ -161,15 +161,16 @@ namespace Blobcheg.Tests
             after.Flush();
 
             Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA));
-            Assert.That(after.OffsetOf(c2), Is.EqualTo(keptC), "дырка от удалённой записи не подтягивает следующую");
+            Assert.That(after.OffsetOf(c2), Is.EqualTo(keptC), "the hole left by a deleted record does not pull the next one in");
         }
 
-        // Премиса этого теста развернулась вместе с правилом. Раньше выросшая запись оставалась на
-        // месте, а место теряла СОСЕДКА — на базе с массивами один выросший массив выселял бы
-        // десятки чужих нод. Теперь заявку теряет тот, кто перестал влезать до чужого адреса:
-        // двигается ровно та запись, которую правили, и перепекаются только её потребители.
+        // The premise of this test turned around together with the rule. A record that grew used to stay
+        // in place while the NEIGHBOUR lost its spot — in a base with arrays one grown array would evict
+        // dozens of other people's nodes. Now the claim is lost by whoever stopped fitting up to
+        // someone else's address: the record that moves is exactly the one that was edited, and only its
+        // consumers get rebaked.
         [Test]
-        public void Выросшая_заявка_отдаёт_место_соседке_и_уезжает_сама()
+        public void A_grown_claim_gives_the_spot_to_the_neighbour_and_moves_away_itself()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
@@ -178,7 +179,7 @@ namespace Blobcheg.Tests
             var keptA = before.OffsetOf(a);
             var keptB = before.OffsetOf(b);
 
-            // Запись выросла до чужого заявленного адреса: место теряет она, а не соседка.
+            // The record grew into someone else's claimed address: it loses the spot, not the neighbour.
             var after = BlobchegWriter.Open(_dir, "Domain");
             var a2 = after.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
             var b2 = after.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
@@ -186,13 +187,13 @@ namespace Blobcheg.Tests
             after.Claim(b2, keptB);
             after.Flush();
 
-            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB), "соседка не двигается: её никто не правил");
+            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB), "the neighbour does not move: nobody edited it");
             Assert.That(after.OffsetOf(a2), Is.GreaterThanOrEqualTo(keptB + 8),
-                "выросшая запись теряет заявку и уезжает — наложения в файле быть не может");
+                "the grown record loses its claim and moves away — there can be no overlap in the file");
         }
 
         [Test]
-        public void Выросшая_заявка_остаётся_если_впереди_есть_место()
+        public void A_grown_claim_stays_if_there_is_room_ahead()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var a = writer.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
@@ -202,12 +203,12 @@ namespace Blobcheg.Tests
             writer.Flush();
 
             Assert.That(writer.OffsetOf(a), Is.EqualTo(BlobchegFormat.HeaderSize),
-                "до чужого адреса 64 байта, запись в 40 влезает — не двигается никто");
+                "there are 64 bytes up to someone else's address, a 40-byte record fits — nobody moves");
             Assert.That(writer.OffsetOf(b), Is.EqualTo(BlobchegFormat.HeaderSize + 64));
         }
 
         [Test]
-        public void Ужавшаяся_заявка_держит_свой_адрес()
+        public void A_shrunk_claim_keeps_its_address()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 40)));
@@ -223,12 +224,12 @@ namespace Blobcheg.Tests
             after.Claim(b2, keptB);
             after.Flush();
 
-            Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA), "ужавшаяся запись остаётся, остаток лежит мёртвыми байтами");
+            Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA), "the shrunk record stays, the remainder lies as dead bytes");
             Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB));
         }
 
         [Test]
-        public void Последняя_заявка_растёт_свободно()
+        public void The_last_claim_grows_freely()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
@@ -245,11 +246,11 @@ namespace Blobcheg.Tests
             after.Flush();
 
             Assert.That(after.OffsetOf(a2), Is.EqualTo(keptA));
-            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB), "за последней заявкой только хвост — границы нет");
+            Assert.That(after.OffsetOf(b2), Is.EqualTo(keptB), "past the last claim there is only the tail — no boundary");
         }
 
         [Test]
-        public void Новая_запись_садится_в_дырку_удалённой()
+        public void A_new_record_settles_into_the_hole_of_a_deleted_one()
         {
             var before = BlobchegWriter.Open(_dir, "Domain");
             var a = before.Append(Rec("Gun", "a", 1));
@@ -261,7 +262,7 @@ namespace Blobcheg.Tests
             var keptC = before.OffsetOf(c);
             var lengthBefore = new FileInfo(Path.Combine(_dir, "Domain.bcheg")).Length;
 
-            // Нода b удалена, на её место просится новая d того же размера.
+            // Node b is deleted, and a new d of the same size asks for its place.
             var after = BlobchegWriter.Open(_dir, "Domain");
             var a2 = after.Append(Rec("Gun", "a", 1));
             var c2 = after.Append(Rec("Gun", "c", 3));
@@ -270,17 +271,17 @@ namespace Blobcheg.Tests
             after.Claim(c2, keptC);
             after.Flush();
 
-            Assert.That(after.OffsetOf(d), Is.EqualTo(freed), "дырка от удалённой записи переиспользуется");
+            Assert.That(after.OffsetOf(d), Is.EqualTo(freed), "the hole from a deleted record is reused");
             Assert.That(new FileInfo(Path.Combine(_dir, "Domain.bcheg")).Length, Is.EqualTo(lengthBefore),
-                "файл не растёт: новая запись легла в дырку, а не в хвост");
+                "the file does not grow: the new record landed in the hole and not in the tail");
         }
 
         [Test]
-        public void Десять_правок_длины_не_растят_файл_линейно()
+        public void Ten_length_edits_do_not_grow_the_file_linearly()
         {
-            // Запись мечется между 8 и 40 байтами; сосед стоит заявкой сразу за ней. Каждая правка
-            // без переиспользования дырок оставляла бы брошенный кусок, и файл рос бы на сумму всех
-            // промежуточных версий.
+            // The record swings between 8 and 40 bytes; a neighbour stands as a claim right behind it.
+            // Without reusing the holes, every edit would leave an abandoned chunk and the file would
+            // grow by the sum of all the intermediate versions.
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var a = writer.Append(new BlobchegRecord(null, "a", 0, "raw-a", Payload(1, 8)));
             var b = writer.Append(new BlobchegRecord(null, "b", 0, "raw-b", Payload(2, 8)));
@@ -306,13 +307,13 @@ namespace Blobcheg.Tests
 
             for (var i = 4; i < lengths.Length; i++)
                 Assert.That(lengths[i], Is.EqualTo(lengths[i - 2]),
-                    "раскладка обязана выйти на устойчивый цикл, а не расти с каждой правкой");
+                    "the layout is obliged to settle into a stable cycle rather than grow with every edit");
         }
 
         [Test]
-        public void Порядок_обхода_не_влияет_на_файл_с_дырками()
+        public void The_traversal_order_does_not_affect_a_file_with_holes()
         {
-            // Дырка и садящаяся в неё новая запись не должны сломать детерминизм раскладки.
+            // A hole and a new record settling into it must not break the determinism of the layout.
             var straightBefore = BlobchegWriter.Open(_dir, "Straight");
             var sa = straightBefore.Append(Rec("Gun", "a", 1));
             var sb = straightBefore.Append(Rec("Gun", "b", 2));
@@ -343,10 +344,10 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Без_заявок_дырок_нет()
+        public void Without_claims_there_are_no_holes()
         {
-            // Первая сборка и компакт: заявок нет, записи лежат встык с выравниванием — ровно та
-            // раскладка, что была всегда.
+            // A first build and a compaction: there are no claims, the records lie back to back with
+            // alignment — exactly the layout that always was.
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var a = writer.Append(Rec("Gun", "a", 1));
             var b = writer.Append(Rec("Gun", "b", 2));
@@ -359,7 +360,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Мусорная_заявка_раскладку_не_ломает()
+        public void A_garbage_claim_does_not_break_the_layout()
         {
             var plain = BlobchegWriter.Open(_dir, "Plain");
             var expected = plain.Append(Rec("Gun", "a", 1));
@@ -371,11 +372,11 @@ namespace Blobcheg.Tests
             claimed.Flush();
 
             Assert.That(claimed.OffsetOf(ticket), Is.EqualTo(plain.OffsetOf(expected)),
-                "адрес не по выравниванию — не адрес; запись получает место как новая");
+                "an address off the alignment is not an address; the record gets a place like a new one");
         }
 
         [Test]
-        public void Claim_после_Flush_бросает()
+        public void Claim_after_Flush_throws()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var ticket = writer.Append(Rec("Gun", "a", 1));
@@ -384,7 +385,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Две_записи_одной_ноды_в_домен_бросают()
+        public void Two_records_from_one_node_into_a_domain_throw()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             writer.Append(Rec("Gun", "a", 1));
@@ -392,7 +393,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Оффсет_до_Flush_бросает()
+        public void An_offset_before_Flush_throws()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             var ticket = writer.Append(Rec("Gun", "a", 1));
@@ -401,7 +402,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Append_после_Flush_бросает()
+        public void Append_after_Flush_throws()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             writer.Append(Rec("Gun", "a", 1));
@@ -410,7 +411,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пустой_домен_даёт_файл_из_одного_хедера()
+        public void An_empty_domain_gives_a_file_of_one_header()
         {
             var writer = BlobchegWriter.Open(_dir, "Empty");
             writer.Flush();
@@ -420,7 +421,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Имя_файла_собирается_из_имени_домена()
+        public void The_file_name_is_assembled_from_the_domain_name()
         {
             Assert.That(BlobchegNaming.FileName("IHotPathCombatData"), Is.EqualTo("IHotPathCombatData.bcheg"));
             Assert.Throws<ArgumentException>(() => BlobchegNaming.FileName(""));
@@ -435,10 +436,10 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Debug_секция_несёт_имена_типа_и_ноды()
+        public void The_debug_section_carries_the_type_and_node_names()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
-            writer.Append(new BlobchegRecord("Ns.Gun", "a", 0xDEAD, "СуперПушка", Payload(1)));
+            writer.Append(new BlobchegRecord("Ns.Gun", "a", 0xDEAD, "SuperGun", Payload(1)));
             writer.Flush(withDebug: true);
 
             var file = File.ReadAllBytes(Path.Combine(_dir, "Domain.bcheg"));
@@ -458,7 +459,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Без_дефайна_секции_в_файле_нет()
+        public void Without_the_define_there_is_no_section_in_the_file()
         {
             var writer = BlobchegWriter.Open(_dir, "Domain");
             writer.Append(Rec("Gun", "a", 1));

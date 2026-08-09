@@ -3,45 +3,45 @@ using NUnit.Framework;
 namespace Blobcheg.Tests
 {
     /// <summary>
-    /// Счётчик пересборок файла — то, по чему поднявший базу узнаёт, что его файл переписали.
-    /// Набор маленький, потому что обещаний ровно три: незнакомый файл — ноль; спросивший получает
-    /// «да» один раз; чужой файл на чужой вопрос не отвечает.
+    /// The counter of file rebuilds — what whoever loaded a base learns from that their file was
+    /// rewritten. The set is small because there are exactly three promises: an unknown file gives
+    /// zero; the asker gets a "yes" once; a foreign file does not answer someone else's question.
     /// </summary>
     public sealed class BlobchegFileVersionsTests
     {
         [Test]
-        public void Файл_который_никто_не_переписывал_остаётся_нулём()
+        public void A_file_nobody_rewrote_stays_zero()
         {
             var seen = 0;
 
-            Assert.That(BlobchegFileVersions.Of("нетронутый.bcheg"), Is.EqualTo(0));
-            Assert.That(BlobchegFileVersions.Changed("нетронутый.bcheg", ref seen), Is.False);
+            Assert.That(BlobchegFileVersions.Of("untouched.bcheg"), Is.EqualTo(0));
+            Assert.That(BlobchegFileVersions.Changed("untouched.bcheg", ref seen), Is.False);
         }
 
         [Test]
-        public void Спросивший_получает_да_ровно_один_раз()
+        public void The_asker_gets_a_yes_exactly_once()
         {
-            var file = "однажды-" + TestContext.CurrentContext.Test.ID + ".bcheg";
+            var file = "once-" + TestContext.CurrentContext.Test.ID + ".bcheg";
             var seen = BlobchegFileVersions.Of(file);
 
             BlobchegFileVersions.Bump(file);
 
-            Assert.That(BlobchegFileVersions.Changed(file, ref seen), Is.True, "файл переписан");
+            Assert.That(BlobchegFileVersions.Changed(file, ref seen), Is.True, "the file was rewritten");
             Assert.That(BlobchegFileVersions.Changed(file, ref seen), Is.False,
-                "второй раз подряд — уже нет: иначе база перечитывалась бы каждый кадр");
+                "not the second time in a row: otherwise the base would be re-read every frame");
         }
 
         [Test]
-        public void Пересборка_соседнего_файла_чужую_базу_не_будит()
+        public void A_rebuild_of_a_neighbouring_file_does_not_wake_a_foreign_base()
         {
-            var mine = "моя-" + TestContext.CurrentContext.Test.ID + ".bcheg";
-            var other = "чужая-" + TestContext.CurrentContext.Test.ID + ".bcheg";
+            var mine = "mine-" + TestContext.CurrentContext.Test.ID + ".bcheg";
+            var other = "other-" + TestContext.CurrentContext.Test.ID + ".bcheg";
             var seen = BlobchegFileVersions.Of(mine);
 
             BlobchegFileVersions.Bump(other);
 
             Assert.That(BlobchegFileVersions.Changed(mine, ref seen), Is.False,
-                "перечитывать базу из-за того, что переписали соседнюю, — это лишнее переселение слотов на ровном месте");
+                "re-reading a base because a neighbouring one was rewritten is a pointless migration of slots");
         }
     }
 }

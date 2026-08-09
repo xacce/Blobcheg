@@ -4,19 +4,19 @@ using System.IO;
 
 namespace Blobcheg
 {
-    /// <summary>Одна запись на входе писателя. Тип нужен раскладке, имя ноды — только debug-секции.</summary>
+    /// <summary>One record at the writer's input. The type is needed by the layout, the node name only by the debug section.</summary>
     public readonly struct BlobchegRecord
     {
-        /// <summary>Полное имя типа записи. <c>null</c> — сырой блок, такие ложатся в хвост файла.</summary>
+        /// <summary>The full name of the record type. <c>null</c> means a raw block, those go into the tail of the file.</summary>
         public readonly string TypeName;
 
-        /// <summary>Стабильный ключ порядка внутри типа. Пайплайн передаёт GUID ассета ноды.</summary>
+        /// <summary>A stable ordering key within the type. The pipeline passes the GUID of the node asset.</summary>
         public readonly string SortKey;
 
-        /// <summary>BurstRuntime.GetHashCode32 типа, 0 для сырых. Едет только в debug-секцию.</summary>
+        /// <summary>BurstRuntime.GetHashCode32 of the type, 0 for raw ones. Travels into the debug section only.</summary>
         public readonly uint TypeHash;
 
-        /// <summary>Имя ноды для debug-секции.</summary>
+        /// <summary>The node name for the debug section.</summary>
         public readonly string NodeName;
 
         public readonly byte[] Bytes;
@@ -34,9 +34,10 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Писатель базы: обычный C# на <see cref="System.IO"/>, ничего от Unity не хочет.
-    /// Оффсет не выдаётся в момент <see cref="Append"/> — раскладка зависит от полного набора
-    /// записей, поэтому Append возвращает тикет, а <see cref="Flush"/> меняет тикеты на оффсеты.
+    /// The base writer: ordinary C# on <see cref="System.IO"/>, it wants nothing from Unity.
+    /// The offset is not handed out at the moment of <see cref="Append"/> — the layout depends on the
+    /// full set of records, so Append returns a ticket and <see cref="Flush"/> exchanges tickets for
+    /// offsets.
     /// </summary>
     public sealed class BlobchegWriter
     {
@@ -59,10 +60,10 @@ namespace Blobcheg
         public string DomainName { get; }
         public string FilePath { get; }
 
-        /// <summary>Хеш содержимого последней раскладки. До <see cref="Flush"/> — ошибка.</summary>
+        /// <summary>The content hash of the last layout. Before <see cref="Flush"/> — an error.</summary>
         public ulong ContentHash { get; private set; }
 
-        /// <summary>Файл на диске отличался от собранного и был переписан.</summary>
+        /// <summary>The file on disk differed from the assembled one and was rewritten.</summary>
         public bool FileChanged { get; private set; }
 
         public int RecordCount => _records.Count;
@@ -70,29 +71,30 @@ namespace Blobcheg
         public static BlobchegWriter Open(string directory, string domainName)
             => new BlobchegWriter(directory, domainName);
 
-        /// <summary>Кладёт запись в очередь и возвращает тикет. Байты копируются вызывающим заранее.</summary>
+        /// <summary>Puts a record into the queue and returns a ticket. The bytes are copied by the caller beforehand.</summary>
         public int Append(in BlobchegRecord record)
         {
             if (_flushed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: Append в домен '{DomainName}' после Flush — раскладка уже посчитана");
+                    $"Blobcheg: Append into domain '{DomainName}' after Flush — the layout is already computed");
 
             var key = (record.TypeName ?? string.Empty) + " " + record.SortKey;
             if (!_keys.Add(key))
                 throw new InvalidOperationException(
-                    $"Blobcheg: в домене '{DomainName}' две записи типа '{record.TypeName}' с одним ключом " +
-                    $"'{record.SortKey}' — одна нода пишет в базу ровно одну запись");
+                    $"Blobcheg: domain '{DomainName}' holds two records of type '{record.TypeName}' with the same key " +
+                    $"'{record.SortKey}' — one node writes exactly one record into a base");
 
             _records.Add(record);
             return _records.Count - 1;
         }
 
         /// <summary>
-        /// Пачка записей за один вызов. Тикеты идут подряд от текущего конца, поэтому позиция
-        /// записи в пачке — это и есть её тикет.
+        /// A batch of records in one call. The tickets run consecutively from the current end, so the
+        /// position of a record in the batch is exactly its ticket.
         ///
-        /// Существует ради цены вызова: в едиторном рантайме один заход через границу сборки стоит
-        /// ощутимо дороже самой работы внутри, а записей на пересборку — по одной на ноду в домене.
+        /// It exists for the price of the call: in the editor runtime one crossing of an assembly
+        /// boundary costs noticeably more than the work inside it, and a rebuild carries one record per
+        /// node in the domain.
         /// </summary>
         public int AppendAll(List<BlobchegRecord> records)
         {
@@ -105,25 +107,26 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Адрес, который эта запись уже получила прошлой пересборкой. Источник — носитель ноды,
-        /// поэтому журнал адресов живёт в гите вместе с нодой и переживает чекаут без .bcheg.
+        /// The address this record already received in the previous rebuild. The source is the carrier
+        /// of the node, so the journal of addresses lives in git next to the node and survives a
+        /// checkout without a .bcheg.
         ///
-        /// Заявка — это просьба, а не приказ: запись, выросшая до чужого заявленного адреса,
-        /// теряет заявку сама и уезжает в хвост, а соседка остаётся на месте. Двигается ровно та
-        /// запись, которую правили, — её потребители перепекутся в любом случае.
+        /// A claim is a request, not an order: a record that grew into someone else's claimed address
+        /// loses its own claim and moves to the tail, while the neighbour stays put. The record that
+        /// moves is exactly the one that was edited — its consumers get rebaked either way.
         /// </summary>
         public void Claim(int ticket, uint offset)
         {
             if (_flushed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: Claim в домен '{DomainName}' после Flush — раскладка уже посчитана");
+                    $"Blobcheg: Claim into domain '{DomainName}' after Flush — the layout is already computed");
 
             if (ticket < 0 || ticket >= _records.Count)
                 throw new ArgumentOutOfRangeException(nameof(ticket),
-                    $"Blobcheg: домен '{DomainName}' — заявка на тикет {ticket}, а записей {_records.Count}");
+                    $"Blobcheg: domain '{DomainName}' — a claim on ticket {ticket}, while there are {_records.Count} records");
 
-            // Мусорный адрес — не повод разложить файл криво: заявка просто не учитывается, запись
-            // получит место в хвосте, а носитель — новый адрес.
+            // A garbage address is no reason to lay the file out crooked: the claim is simply ignored,
+            // the record gets a place in the tail and the carrier gets a new address.
             if (offset < BlobchegFormat.HeaderSize || offset % BlobchegFormat.RecordAlign != 0)
                 return;
 
@@ -131,16 +134,17 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Раскладывает записи группами по конечному типу, считает оффсеты и целостность, пишет
-        /// файл атомарно. Если содержимое совпало с тем, что уже лежит на диске, файл не трогается.
+        /// Lays the records out in groups by final type, computes the offsets and the integrity, writes
+        /// the file atomically. If the content matches what already lies on disk, the file is not
+        /// touched.
         /// </summary>
         public void Flush(bool withDebug = false)
         {
             if (_flushed)
-                throw new InvalidOperationException($"Blobcheg: повторный Flush домена '{DomainName}'");
+                throw new InvalidOperationException($"Blobcheg: a repeated Flush of domain '{DomainName}'");
 
-            // Пустой базе описывать нечего, а секция из нуля записей сделала бы её длиннее header'а
-            // и утащила бы за собой смысл «в базе не осталось ни одной ноды».
+            // An empty base has nothing to describe, and a section of zero entries would make it longer
+            // than the header and drag away the meaning of "not a single node is left in the base".
             withDebug &= _records.Count > 0;
 
             var order = BuildOrder();
@@ -159,14 +163,14 @@ namespace Blobcheg
             FileChanged = BlobchegBytes.WriteIfChanged(Directory, FilePath, file, ContentHash);
         }
 
-        /// <summary>Адрес записи. Единственное, что вообще существует; до Flush — ошибка.</summary>
+        /// <summary>The address of a record. The only thing that exists at all; before Flush — an error.</summary>
         public uint OffsetOf(int ticket)
         {
             RequireFlushed(nameof(OffsetOf));
             return _offsets[ticket];
         }
 
-        /// <summary>Ревизия записи — хеш её байтов. Ключ инкрементальности; до Flush — ошибка.</summary>
+        /// <summary>The revision of a record — the hash of its bytes. The key to incrementality; before Flush — an error.</summary>
         public ulong RevisionOf(int ticket)
         {
             RequireFlushed(nameof(RevisionOf));
@@ -177,12 +181,13 @@ namespace Blobcheg
         {
             if (!_flushed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: {what} до Flush домена '{DomainName}' — раскладка ещё не посчитана");
+                    $"Blobcheg: {what} before the Flush of domain '{DomainName}' — the layout is not computed yet");
         }
 
         /// <summary>
-        /// Порядок не зависит от порядка обхода: типы по FullName, внутри типа по ключу ноды,
-        /// сырые блоки переменной длины — в хвост, чтобы не таскать за собой типизированные.
+        /// The order does not depend on the order of traversal: types by FullName, inside a type by the
+        /// node key, raw blocks of variable length go to the tail so that they do not drag the typed
+        /// ones along with them.
         /// </summary>
         int[] BuildOrder()
         {
@@ -214,17 +219,17 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Заявленные адреса занимают свои места, всё остальное ложится за ними в хвост. Дырка от
-        /// удалённой ноды остаётся нулями: подвинуть соседей — значит сдвинуть чужие адреса, а на
-        /// них через DependsOn завязаны уже запечённые субсцены.
+        /// Claimed addresses take their own places, everything else lands behind them in the tail. The
+        /// hole left by a deleted node stays as zeroes: moving the neighbours means shifting someone
+        /// else's addresses, and already baked subscenes are tied to those through DependsOn.
         ///
-        /// Запись, выросшая до чужой заявки, теряет свою и уезжает сама — соседи не двигаются.
-        /// Ужавшаяся остаётся на месте, мёртвый остаток лежит нулями. Неразмещённые записи сперва
-        /// садятся в дырки между заявками и только потом в хвост — это и держит базу от разбухания
-        /// под активной правкой длин.
+        /// A record that grew into someone else's claim loses its own and moves away itself — the
+        /// neighbours do not budge. One that shrank stays in place, the dead remainder lies as zeroes.
+        /// Unplaced records first settle into the holes between claims and only then into the tail —
+        /// that is what keeps the base from swelling under active editing of lengths.
         ///
-        /// Заявок нет вовсе (первая сборка, компакт) — раскладка ровно та же, что была всегда:
-        /// группами по типу, сырые в хвост.
+        /// When there are no claims at all (a first build, a compaction) the layout is exactly the one
+        /// it always was: groups by type, raw ones in the tail.
         /// </summary>
         byte[] Layout(int[] order, bool withDebug, out uint[] offsets)
         {
@@ -233,9 +238,9 @@ namespace Blobcheg
 
             var position = BlobchegFormat.HeaderSize;
 
-            // Дырки между размещёнными заявками, по возрастанию адреса. Без них каждая правка
-            // длины оставляла бы за собой брошенный кусок, и база росла бы на сумму всех
-            // промежуточных версий записи.
+            // Holes between placed claims, by ascending address. Without them every edit of a length
+            // would leave an abandoned chunk behind, and the base would grow by the sum of all the
+            // intermediate versions of the record.
             var holes = new List<(int start, int end)>();
 
             if (_claims.Count > 0)
@@ -244,8 +249,8 @@ namespace Blobcheg
                 for (var i = 0; i < order.Length; i++)
                     rank[order[i]] = i;
 
-                // По возрастанию адреса: наложение видно только в этом порядке. Одинаковые адреса
-                // (склонированный носитель) разводит прежний детерминированный порядок.
+                // By ascending address: an overlap is only visible in that order. Identical addresses
+                // (a cloned carrier) are separated by the previous deterministic order.
                 var claimed = new List<int>(_claims.Keys);
                 claimed.Sort((a, b) => _claims[a] != _claims[b]
                     ? _claims[a].CompareTo(_claims[b])
@@ -257,11 +262,12 @@ namespace Blobcheg
                     if (claim < position)
                         continue;
 
-                    // Граница роста — ближайший строго больший заявленный адрес: до него запись
-                    // имеет право расти, дальше начинается чужое место. Не влезла — заявку теряет
-                    // ОНА, а не соседка: двигается ровно та запись, которую правили, и перепекаются
-                    // только её потребители. Равные адреса (склонированный носитель) друг другу не
-                    // граница — их разводит проверка `claim < position` выше.
+                    // The growth boundary is the nearest strictly greater claimed address: up to it the
+                    // record has the right to grow, past it someone else's place begins. If it does not
+                    // fit, the claim is lost by IT, not by the neighbour: the record that moves is
+                    // exactly the one that was edited, and only its consumers get rebaked. Equal
+                    // addresses (a cloned carrier) are no boundary to each other — the `claim <
+                    // position` check above separates them.
                     if (claim + SpanOf(ticket) > BoundaryOf(claimed, claim))
                         continue;
 
@@ -274,9 +280,9 @@ namespace Blobcheg
                 }
             }
 
-            // Неразмещённая запись берёт первую дырку, куда влезает с выравниванием, и только
-            // потом хвост. Порядок дырок — по возрастанию адреса, порядок записей — прежний
-            // BuildOrder, поэтому раскладка остаётся детерминированной.
+            // An unplaced record takes the first hole it fits into with alignment, and only then the
+            // tail. The order of the holes is by ascending address, the order of the records is the
+            // previous BuildOrder, so the layout stays deterministic.
             for (var i = 0; i < order.Length; i++)
             {
                 var ticket = order[i];
@@ -294,7 +300,7 @@ namespace Blobcheg
 
                     at = start;
 
-                    // Занятая часть отрезается, остаток остаётся дыркой.
+                    // The taken part is cut off, the remainder stays a hole.
                     if (start + span < holes[h].end)
                         holes[h] = (start + span, holes[h].end);
                     else
@@ -338,9 +344,10 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Сколько места запись занимает в раскладке. Запись нулевой длины занимает байт, а не ноль:
-        /// иначе позиция после неё не двигается, следующее выравнивание возвращает тот же адрес, и
-        /// две разные записи получают ОДИН адрес — а адрес и есть единственная личность записи.
+        /// How much room a record takes in the layout. A record of zero length takes one byte, not
+        /// zero: otherwise the position after it does not move, the next alignment returns the same
+        /// address, and two different records get ONE address — and the address is the only identity a
+        /// record has.
         /// </summary>
         int SpanOf(int ticket)
         {
@@ -349,9 +356,9 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Ближайший строго больший заявленный адрес — граница, до которой запись имеет право
-        /// вырасти, не тронув чужого места. За последней заявкой лежит только хвост, там граница
-        /// бесконечна. Список пришёл отсортированным по адресу, поэтому поиск двоичный.
+        /// The nearest strictly greater claimed address — the boundary up to which a record may grow
+        /// without touching someone else's place. Past the last claim lies only the tail, and there the
+        /// boundary is infinite. The list arrived sorted by address, so the search is binary.
         /// </summary>
         int BoundaryOf(List<int> claimed, int claim)
         {
@@ -380,9 +387,9 @@ namespace Blobcheg
         uint DebugOffset { get; set; }
 
         /// <summary>
-        /// Записи секции идут по возрастанию оффсета: <see cref="BlobchegDebugSection.Find"/> ищет
-        /// двоичным поиском. Порядок раскладки для этого больше не годится — заявленный адрес
-        /// ставит запись куда угодно, а не следом за предыдущей.
+        /// The entries of the section run by ascending offset: <see cref="BlobchegDebugSection.Find"/>
+        /// searches with a binary search. The layout order is no longer good for that — a claimed
+        /// address puts a record anywhere, not right after the previous one.
         /// </summary>
         byte[] BuildDebugSection(int[] layoutOrder, uint[] offsets, uint sectionOffset)
         {

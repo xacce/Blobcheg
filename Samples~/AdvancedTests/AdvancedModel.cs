@@ -4,39 +4,39 @@ using UnityEngine;
 
 namespace Blobcheg.AdvancedTests
 {
-    // ------------------------------------------------------------------ домены
+    // ------------------------------------------------------------------ domains
     //
-    // Четыре домена и два роутера. Два роутера нужны затем, что один из главных вопросов набора —
-    // «а что будет, если подсунуть id, выданный ДРУГИМ роутером»; с одним роутером этот вопрос не
-    // задать. Роутер у каждой базы назван явно: в сборке их два, и правило «единственный роутер
-    // сборки» здесь не работает.
+    // Four domains and two routers. Two routers are needed because one of the main questions of the set
+    // is "and what happens if an id handed out by ANOTHER router is slipped in"; with one router that
+    // question cannot be asked. The router of every base is named explicitly: the assembly holds two of
+    // them, and the rule "the single router of the assembly" does not work here.
 
-    /// <summary>Боевая база: в роутере AdvRouter, член «combat».</summary>
+    /// <summary>The combat base: in the AdvRouter router, member "combat".</summary>
     public interface IAdvCombat
     {
     }
 
-    /// <summary>Холодная база: в роутере AdvRouter, член «cold».</summary>
+    /// <summary>The cold base: in the AdvRouter router, member "cold".</summary>
     public interface IAdvCold
     {
     }
 
-    /// <summary>База вне роутеров — у её нод BlobchegId не бывает вовсе.</summary>
+    /// <summary>A base outside any router — its nodes never have a BlobchegId at all.</summary>
     public interface IAdvLoose
     {
     }
 
-    /// <summary>База ЧУЖОГО роутера AdvAlienRouter.</summary>
+    /// <summary>A base of the FOREIGN router AdvAlienRouter.</summary>
     public interface IAdvOther
     {
     }
 
-    /// <summary>Домен, который не объявлен ни одной базой. Нода, назвавшая его, обязана падать.</summary>
+    /// <summary>A domain declared by no base. A node that named it is obliged to fail.</summary>
     public interface IAdvUndeclared
     {
     }
 
-    // ------------------------------------------------------------------ записи
+    // ------------------------------------------------------------------ records
 
     public struct AdvGun : IAdvCombat
     {
@@ -44,14 +44,14 @@ namespace Blobcheg.AdvancedTests
         public int Rpm;
     }
 
-    /// <summary>Близнец <see cref="AdvGun"/>: тот же размер, другой тип. Ловушка реинтерпретации.</summary>
+    /// <summary>A twin of <see cref="AdvGun"/>: the same size, a different type. The reinterpretation trap.</summary>
     public struct AdvGunTwin : IAdvCombat
     {
         public float Ammo;
         public int Rpm;
     }
 
-    /// <summary>Имя типа сортируется ПЕРЕД AdvGun — добавление такой ноды двигает оффсеты пушек.</summary>
+    /// <summary>The type name sorts BEFORE AdvGun — adding such a node moves the offsets of the guns.</summary>
     public struct AdvArmor : IAdvCombat
     {
         public float Hp;
@@ -64,7 +64,7 @@ namespace Blobcheg.AdvancedTests
         High = 200,
     }
 
-    /// <summary>Смесь bool, enum и выравнивания — round-trip обязан быть побайтовым.</summary>
+    /// <summary>A mix of bool, enum and alignment — the round trip is obliged to be byte for byte.</summary>
     public struct AdvMixed : IAdvCombat
     {
         public bool Flag;
@@ -75,12 +75,12 @@ namespace Blobcheg.AdvancedTests
 
     public struct AdvColdInfo : IAdvCold
     {
-        /// <summary>Свой id, положенный нодой в саму запись: он известен ДО записи.</summary>
+        /// <summary>Its own id, put by the node into the record itself: it is known BEFORE the write.</summary>
         public uint SelfId;
 
         public int Tier;
 
-        /// <summary>Id соседней ноды — так одна запись ссылается на другую.</summary>
+        /// <summary>The id of a neighbouring node — that is how one record references another.</summary>
         public uint LinkId;
     }
 
@@ -95,44 +95,44 @@ namespace Blobcheg.AdvancedTests
         public int V;
     }
 
-    /// <summary>Запись без единого поля. В C# такая всё равно весит байт — вопрос, что сделает раскладка.</summary>
+    /// <summary>A record without a single field. In C# such a thing still weighs a byte — the question is what the layout does with it.</summary>
     public struct AdvEmptyRecord : IAdvLoose
     {
     }
 
-    /// <summary>Запись с сырым указателем внутри. Формально unmanaged, по смыслу — мусор в файле.</summary>
+    /// <summary>A record with a raw pointer inside. Formally unmanaged, in meaning garbage in the file.</summary>
     public unsafe struct AdvPointerRecord : IAdvLoose
     {
         public byte* Ptr;
         public long Tag;
     }
 
-    /// <summary>Указатель не на виду, а в поле-структуре: IntPtr ничем не лучше <c>byte*</c>.</summary>
+    /// <summary>A pointer not in plain sight but inside a struct field: an IntPtr is no better than a <c>byte*</c>.</summary>
     public struct AdvPointerHolder
     {
         public IntPtr Handle;
     }
 
-    /// <summary>Запись, у которой указатель лежит на второй ступени вложенности.</summary>
+    /// <summary>A record whose pointer lies at the second level of nesting.</summary>
     public struct AdvNestedPointerRecord : IAdvLoose
     {
         public long Head;
         public AdvPointerHolder Inner;
     }
 
-    /// <summary>Четверть толстой записи — 64 Б.</summary>
+    /// <summary>A quarter of the fat record — 64 B.</summary>
     public struct AdvChunk
     {
         public double A, B, C, D, E, F, G, H;
     }
 
-    /// <summary>Толстая запись: 512 Б одним типом. Проверяет и первый её байт, и последний.</summary>
+    /// <summary>A fat record: 512 B in one type. Both its first byte and its last one are checked.</summary>
     public struct AdvFat : IAdvCombat
     {
         public AdvChunk C0, C1, C2, C3, C4, C5, C6, C7;
     }
 
-    // ------------------------------------------------------------------ базы и роутеры
+    // ------------------------------------------------------------------ bases and routers
 
     [Blobcheg(typeof(IAdvCombat), "combat", Router = typeof(AdvRouter))]
     public partial struct AdvCombatDb
@@ -155,8 +155,8 @@ namespace Blobcheg.AdvancedTests
     }
 
     /// <summary>
-    /// Вторая база НАД ТЕМ ЖЕ доменом. Абсурд по постановке: два фасада, один файл. Существует
-    /// затем, чтобы проверить, что пакет либо это запрещает, либо оба фасада читают одно и то же.
+    /// A second base OVER THE SAME domain. Absurd by construction: two facades, one file. It exists to
+    /// check that the package either forbids that or both facades read one and the same thing.
     /// </summary>
     [Blobcheg(typeof(IAdvLoose))]
     public partial struct AdvLooseTwinDb
@@ -173,16 +173,16 @@ namespace Blobcheg.AdvancedTests
     {
     }
 
-    // ------------------------------------------------------------------ ноды
+    // ------------------------------------------------------------------ nodes
 
-    /// <summary>Нода в обеих базах роутера: строка с двумя битами.</summary>
+    /// <summary>A node in both bases of the router: a row with two bits.</summary>
     public sealed class AdvComboNodeSo : BlobchegNodeSo
     {
         public float ammo = 30f;
         public int rpm = 600;
         public int tier = 3;
 
-        /// <summary>Сосед, чей id уедет в запись. Может указывать и на эту же ноду.</summary>
+        /// <summary>The neighbour whose id travels into the record. It may point at this same node.</summary>
         public BlobchegNodeSo link;
 
         public override Type[] OutTypes => new[] { typeof(IAdvCombat), typeof(IAdvCold) };
@@ -199,7 +199,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Нода только в холодной базе: строка с дыркой на месте боевого бита.</summary>
+    /// <summary>A node only in the cold base: a row with a hole where the combat bit would be.</summary>
     public sealed class AdvColdOnlyNodeSo : BlobchegNodeSo
     {
         public int tier = 9;
@@ -219,7 +219,7 @@ namespace Blobcheg.AdvancedTests
         public override void Write(ref BlobchegNodeWriter w) => w.Add(new AdvArmor { Hp = hp });
     }
 
-    /// <summary>Пишет близнеца пушки: те же байты, другой тип.</summary>
+    /// <summary>Writes the twin of the gun: the same bytes, a different type.</summary>
     public sealed class AdvTwinNodeSo : BlobchegNodeSo
     {
         public float ammo = 7f;
@@ -269,7 +269,7 @@ namespace Blobcheg.AdvancedTests
         public override void Write(ref BlobchegNodeWriter w) => w.Add(new AdvLooseBlock { A = a, B = b });
     }
 
-    /// <summary>Сырая запись произвольной длины, в том числе нулевой.</summary>
+    /// <summary>A raw record of arbitrary length, zero included.</summary>
     public sealed class AdvRawNodeSo : BlobchegNodeSo
     {
         public int size;
@@ -296,7 +296,7 @@ namespace Blobcheg.AdvancedTests
         public override void Write(ref BlobchegNodeWriter w) => w.Add(new AdvOtherInfo { V = v });
     }
 
-    /// <summary>Нода сразу в двух роутерах: <c>w.Id</c> у неё не бывает, только <c>IdIn</c>.</summary>
+    /// <summary>A node in two routers at once: it never has a <c>w.Id</c>, only an <c>IdIn</c>.</summary>
     public sealed class AdvBothRoutersNodeSo : BlobchegNodeSo
     {
         public bool askSingleId;
@@ -310,7 +310,7 @@ namespace Blobcheg.AdvancedTests
         {
             if (askSingleId)
             {
-                // Спрашиваем «свой единственный id» у ноды, у которой их два. Обязано падать.
+                // We ask for "the one and only id" of a node that has two. It is obliged to fail.
                 LastMain = w.Id.Value;
             }
 
@@ -322,7 +322,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Объявила домен и ничего в него не написала.</summary>
+    /// <summary>It declared a domain and wrote nothing into it.</summary>
     public sealed class AdvSilentNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvCombat) };
@@ -332,7 +332,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Пишет в домен, которого нет в её OutTypes.</summary>
+    /// <summary>It writes into a domain that is not in its OutTypes.</summary>
     public sealed class AdvStrayNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvCold) };
@@ -344,7 +344,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Пишет в один домен дважды.</summary>
+    /// <summary>It writes into one domain twice.</summary>
     public sealed class AdvDoubleNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvCombat) };
@@ -356,7 +356,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Не объявила ни одного домена.</summary>
+    /// <summary>It declared no domain at all.</summary>
     public sealed class AdvNoOutTypesNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => Array.Empty<Type>();
@@ -366,7 +366,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Назвала домен, который не объявлен ни одной базой.</summary>
+    /// <summary>It named a domain that is declared by no base.</summary>
     public sealed class AdvUndeclaredNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvUndeclared) };
@@ -376,7 +376,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Роняет пересборку из середины <c>Write</c>.</summary>
+    /// <summary>It fails the rebuild from the middle of <c>Write</c>.</summary>
     public sealed class AdvThrowNodeSo : BlobchegNodeSo
     {
         public bool armed = true;
@@ -388,25 +388,25 @@ namespace Blobcheg.AdvancedTests
             w.Add(new AdvGun { Ammo = 3f, Rpm = 3 });
 
             if (armed)
-                throw new InvalidOperationException("AdvThrowNodeSo: нарочно роняем пересборку");
+                throw new InvalidOperationException("AdvThrowNodeSo: failing the rebuild on purpose");
         }
     }
 
     /// <summary>
-    /// Зовёт пересборку из <c>Write</c> — то есть из середины пересборки. Глубина ограничена САМОЙ
-    /// нодой, а не пакетом: без этого ограничителя тест уронил бы редактор переполнением стека, и
-    /// отчёта не осталось бы вовсе.
+    /// It calls the rebuild from <c>Write</c> — that is, from the middle of a rebuild. The depth is
+    /// limited by the NODE itself and not by the package: without that limiter the test would crash the
+    /// editor with a stack overflow and no report would be left at all.
     /// </summary>
     public sealed class AdvReentrantNodeSo : BlobchegNodeSo
     {
-        /// <summary>Сколько раз пересборка вошла сама в себя. Ноль — пакет реентранс отбил.</summary>
+        /// <summary>How many times the rebuild entered itself. Zero means the package rejected the reentrancy.</summary>
         public static int Reentered;
 
         static int _depth;
 
         /// <summary>
-        /// Зваться <c>Reset</c> ей нельзя: у ScriptableObject это магическое имя, и Unity зовёт его
-        /// сама при создании экземпляра — на статическом методе это ошибка в консоли на каждый
+        /// It must not be called <c>Reset</c>: on a ScriptableObject that is a magic name, and Unity calls
+        /// it itself when an instance is created — on a static method that is a console error on every
         /// CreateInstance.
         /// </summary>
         public static void Forget()
@@ -429,7 +429,7 @@ namespace Blobcheg.AdvancedTests
                 }
                 catch (Exception)
                 {
-                    // Пакет отбил вложенную пересборку — это и есть ожидаемое поведение.
+                    // The package rejected the nested rebuild — that is the expected behaviour.
                 }
                 finally
                 {
@@ -441,7 +441,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Кладёт в файл сырой указатель.</summary>
+    /// <summary>It puts a raw pointer into the file.</summary>
     public sealed class AdvPointerNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
@@ -450,7 +450,7 @@ namespace Blobcheg.AdvancedTests
             => w.Add(new AdvPointerRecord { Ptr = (byte*)0xDEADBEEF, Tag = 42 });
     }
 
-    /// <summary>Кладёт в файл указатель, спрятанный на второй ступени вложенности.</summary>
+    /// <summary>It puts into the file a pointer hidden at the second level of nesting.</summary>
     public sealed class AdvNestedPointerNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
@@ -459,7 +459,7 @@ namespace Blobcheg.AdvancedTests
             => w.Add(new AdvNestedPointerRecord { Head = 1, Inner = new AdvPointerHolder { Handle = new IntPtr(0x1234) } });
     }
 
-    /// <summary>Запись без полей.</summary>
+    /// <summary>A record without fields.</summary>
     public sealed class AdvEmptyRecordNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
@@ -467,7 +467,7 @@ namespace Blobcheg.AdvancedTests
         public override void Write(ref BlobchegNodeWriter w) => w.Add(new AdvEmptyRecord());
     }
 
-    /// <summary>Одна запись на мегабайты.</summary>
+    /// <summary>One record of megabytes.</summary>
     public sealed class AdvHugeNodeSo : BlobchegNodeSo
     {
         public int megabytes = 2;
@@ -485,16 +485,16 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    // ------------------------------------------------------------------ массивы в записи
+    // ------------------------------------------------------------------ arrays inside a record
 
-    /// <summary>Запись с массивом переменной длины.</summary>
+    /// <summary>A record with a variable-length array.</summary>
     public struct AdvWeights : IAdvLoose
     {
         public int Rolls;
         public BlobchegArray<float> Weights;
     }
 
-    /// <summary>Массив спрятан на второй ступени вложенности — литерал обязан отбиваться и так.</summary>
+    /// <summary>The array is hidden at the second level of nesting — a literal is obliged to be rejected that way too.</summary>
     public struct AdvDeepArrayHolder
     {
         public BlobchegArray<int> Cells;
@@ -506,7 +506,7 @@ namespace Blobcheg.AdvancedTests
         public AdvDeepArrayHolder Inner;
     }
 
-    /// <summary>Элемент дерева: несёт массив элементов СВОЕГО ЖЕ типа. Рекурсия по постановке.</summary>
+    /// <summary>A tree element: it carries an array of elements of ITS OWN type. Recursion by construction.</summary>
     public struct AdvTreeNode
     {
         public int Value;
@@ -518,13 +518,13 @@ namespace Blobcheg.AdvancedTests
         public BlobchegArray<AdvTreeNode> Roots;
     }
 
-    /// <summary>Запись, у которой из массива в холодный домен нет ничего, кроме массива.</summary>
+    /// <summary>A record that has nothing in the cold domain except the array.</summary>
     public struct AdvColdCells : IAdvCold
     {
         public BlobchegArray<int> Cells;
     }
 
-    /// <summary>Массив задаваемой длины — ручка для правок длины и объёма.</summary>
+    /// <summary>An array of settable length — the knob for edits of length and volume.</summary>
     public sealed class AdvWeightsNodeSo : BlobchegNodeSo
     {
         public int count = 3;
@@ -544,7 +544,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Запись с массивом структ-литералом. Обязана отбиваться, даже с пустым массивом.</summary>
+    /// <summary>A record with an array written as a struct literal. It is obliged to be rejected, even with an empty array.</summary>
     public sealed class AdvArrayLiteralNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
@@ -553,7 +553,7 @@ namespace Blobcheg.AdvancedTests
             => w.Add(new AdvDeepArrayRecord { Head = 1 });
     }
 
-    /// <summary>Пишет в окно массива ПОСЛЕ End — по опыту других билдеров это «ещё можно».</summary>
+    /// <summary>It writes into an array window AFTER End — by the experience of other builders that is "still allowed".</summary>
     public sealed class AdvLateWindowNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
@@ -565,15 +565,15 @@ namespace Blobcheg.AdvancedTests
             weights[0] = 1f;
             b.End();
 
-            // Память чанков уже освобождена — эта строка обязана бросить, а не писать в неё.
+            // The chunk memory is already freed — this line is obliged to throw rather than write into it.
             weights[1] = 2f;
         }
     }
 
-    /// <summary>Write падает между Begin и End: до базы обязана доехать ЕГО ошибка.</summary>
-    public sealed class AdvThrowingBuilderNodeSo : BlobchegNodeSo
+    /// <summary>Write fails between Begin and End: ITS error is the one obliged to reach the base.</summary>
+public sealed class AdvThrowingBuilderNodeSo : BlobchegNodeSo
     {
-        public const string Cry = "нарочно упал посреди массива";
+        public const string Cry = "failed in the middle of the array on purpose";
 
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
 
@@ -585,7 +585,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Поле одного билдера скармливается Allocate другого. Записи-то разные.</summary>
+    /// <summary>A field of one builder is fed into the Allocate of another. The records are different, after all.</summary>
     public sealed class AdvCrossBuilderNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose), typeof(IAdvCold) };
@@ -595,12 +595,12 @@ namespace Blobcheg.AdvancedTests
             var loose = w.Begin<AdvWeights>();
             var cold = w.Begin<AdvColdCells>();
 
-            // Поле из ЧУЖОЙ записи: оффсет между двумя разными блоками не значит ничего.
+            // A field from a FOREIGN record: an offset between two different blocks means nothing.
             cold.Allocate(ref loose.Root.Weights, 1);
         }
     }
 
-    /// <summary>Билдер без единого Allocate: забытое поле-массив обязано читаться пустым.</summary>
+    /// <summary>A builder without a single Allocate: a forgotten array field is obliged to read as empty.</summary>
     public sealed class AdvForgottenAllocateNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };
@@ -613,7 +613,7 @@ namespace Blobcheg.AdvancedTests
         }
     }
 
-    /// <summary>Двухуровневое дерево на рекурсивном типе элемента.</summary>
+    /// <summary>A two-level tree over a recursive element type.</summary>
     public sealed class AdvTreeNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(IAdvLoose) };

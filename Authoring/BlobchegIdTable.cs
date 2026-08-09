@@ -5,24 +5,25 @@ using System.Linq;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Раздача <see cref="BlobchegId"/> на одну пересборку. Считается ДО записи: роутеры ноды
-    /// выводятся из её <c>OutTypes</c>, а это декларация — поэтому второго прохода по <c>Write</c> не
-    /// нужно, id уже на руках у первого.
+    /// Handing out <see cref="BlobchegId"/>s for one rebuild. Computed BEFORE the write: the routers of
+    /// a node are derived from its <c>OutTypes</c>, and that is a declaration — so no second pass over
+    /// <c>Write</c> is needed, the first one already has the id in hand.
     ///
-    /// Выданный однажды id остаётся за нодой навсегда: он лежит на её носителе
-    /// <see cref="BlobchegIdSo"/> и оттуда же читается следующей пересборкой. Новая нода получает
-    /// id в хвосте, удалённая оставляет дырку — пустую строку в файле роутера. Пересчитывать
-    /// позиции заново нельзя: id уезжает в чужие сейвы и в запечённые субсцены, и сдвиг там
-    /// молча приводит к другой ноде.
+    /// An id handed out once stays with the node forever: it lies on its <see cref="BlobchegIdSo"/>
+    /// carrier and is read back from there by the next rebuild. A new node gets an id in the tail, a
+    /// deleted one leaves a hole — an empty row in the router file. Recomputing the positions from
+    /// scratch is not allowed: an id travels into other people's saves and into baked subscenes, and a
+    /// shift there quietly leads to a different node.
     ///
-    /// Старший байт id — тег роутера (<see cref="BlobchegNaming.TagOf"/>): по нему чужой id
-    /// отбивается на лукапе, а нулём инициализированное поле не притворяется первой нодой.
+    /// The high byte of an id is the router tag (<see cref="BlobchegNaming.TagOf"/>): by it a foreign id
+    /// is rejected at lookup, and a zero-initialised field does not pretend to be the first node.
     ///
-    /// Порядок GUID остался только для новичков — чтобы две пересборки подряд раздали одно и то же.
+    /// The GUID order is left only for the newcomers — so that two rebuilds in a row hand out the same
+    /// thing.
     ///
-    /// Роутер с <c>FixedIndex</c> живёт иначе: номер строки объявляет нода
-    /// (<see cref="IBlobchegIndexed"/>), носители не спрашиваются, и «потерять» номер вместе с
-    /// носителем нельзя — его негде терять.
+    /// A router with <c>FixedIndex</c> lives differently: the row number is declared by the node
+    /// (<see cref="IBlobchegIndexed"/>), the carriers are not asked, and "losing" a number together with
+    /// its carrier is impossible — there is nowhere to lose it.
     /// </summary>
     sealed class BlobchegIdTable
     {
@@ -65,8 +66,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Обычный роутер: номер наследуется с носителя, новичок садится в хвост по порядку GUID.
-        /// Это журнал — и он же то, что теряется вместе с носителем, не доехавшим до гита.
+        /// An ordinary router: the number is inherited from the carrier, a newcomer settles into the tail
+        /// in GUID order. This is the journal — and also what gets lost together with a carrier that
+        /// never made it into git.
         /// </summary>
         static void HandedOut(List<BlobchegNodeSo> members, BlobchegCarriers carriers, string routerName,
             byte tag, Dictionary<BlobchegNodeSo, uint> ids, Dictionary<uint, BlobchegNodeSo> taken)
@@ -77,14 +79,16 @@ namespace Blobcheg.Authoring
                 if (carrier == null)
                     continue;
 
-                // Тег чужой — значит носитель приехал от другого роутера (или из времён, когда
-                // роутер звался иначе). Такой id не наследуется: нода получит новый, в хвосте.
+                // A foreign tag means the carrier came from another router (or from the times when the
+                // router was named differently). Such an id is not inherited: the node gets a new one,
+                // in the tail.
                 var was = new BlobchegId(carrier.id);
                 if (!was.IsValid || was.Tag != tag)
                     continue;
 
-                // Двое на одном id — так бывает после копии ноды вместе с носителем. Место
-                // остаётся за тем, кто раньше по GUID, второй уезжает в хвост как новичок.
+                // Two on one id — that happens after a node is copied together with its carrier. The
+                // place stays with whoever comes first by GUID, the second one moves into the tail as a
+                // newcomer.
                 if (taken.ContainsKey(was.Index))
                     continue;
 
@@ -101,8 +105,8 @@ namespace Blobcheg.Authoring
 
                 if (next > BlobchegId.MaxIndex)
                     throw new InvalidOperationException(
-                        $"Blobcheg: в роутере '{routerName}' кончились строки — потолок " +
-                        $"{BlobchegId.MaxIndex}. Компакт вернёт дырки от удалённых нод");
+                        $"Blobcheg: router '{routerName}' ran out of rows — the ceiling is " +
+                        $"{BlobchegId.MaxIndex}. A compaction will reclaim the holes left by deleted nodes");
 
                 ids.Add(node, BlobchegId.Make(tag, next).Value);
                 taken.Add(next, node);
@@ -111,12 +115,12 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Детерминированный роутер: номер строки объявляет нода. Носители тут не спрашиваются
-        /// вовсе — ни на обычной пересборке, ни на компакте, — и в этом вся гарантия: снеси все
-        /// носители, пересобери, и id вернутся те же самые.
+        /// A deterministic router: the row number is declared by the node. The carriers are not asked
+        /// here at all — neither on an ordinary rebuild nor on a compaction — and that is the whole
+        /// guarantee: wipe every carrier, rebuild, and the same ids come back.
         ///
-        /// Порядок обхода — по GUID, как и у обычного роутера, но на результат он не влияет: место
-        /// каждой ноды названо ею самой.
+        /// The traversal order is by GUID, as in an ordinary router, but it does not affect the result:
+        /// the place of every node is named by the node itself.
         /// </summary>
         static void Declared(List<BlobchegNodeSo> members, string routerName, byte tag,
             Dictionary<BlobchegNodeSo, uint> ids, Dictionary<uint, BlobchegNodeSo> taken)
@@ -125,28 +129,28 @@ namespace Blobcheg.Authoring
             {
                 if (!(node is IBlobchegIndexed indexed))
                     throw new InvalidOperationException(
-                        $"Blobcheg: нода '{node.name}' пишет в роутер '{routerName}', у которого " +
-                        $"FixedIndex — номера строк там объявляют ноды. Реализуй IBlobchegIndexed " +
-                        $"у '{node.GetType().Name}': сам роутер номеров не раздаёт");
+                        $"Blobcheg: node '{node.name}' writes into router '{routerName}', which has " +
+                        $"FixedIndex — row numbers there are declared by the nodes. Implement IBlobchegIndexed " +
+                        $"on '{node.GetType().Name}': the router itself hands out no numbers");
 
                 var index = indexed.Index;
 
                 if (index > BlobchegId.MaxIndex)
                     throw new InvalidOperationException(
-                        $"Blobcheg: нода '{node.name}' объявила строку {index} в роутере " +
-                        $"'{routerName}' — потолок {BlobchegId.MaxIndex}");
+                        $"Blobcheg: node '{node.name}' declared row {index} in router " +
+                        $"'{routerName}' — the ceiling is {BlobchegId.MaxIndex}");
 
                 if (taken.TryGetValue(index, out var already))
                     throw new InvalidOperationException(
-                        $"Blobcheg: ноды '{already.name}' и '{node.name}' объявили одну строку " +
-                        $"{index} в роутере '{routerName}' — номер принадлежит одной ноде");
+                        $"Blobcheg: nodes '{already.name}' and '{node.name}' declared the same row " +
+                        $"{index} in router '{routerName}' — a number belongs to one node");
 
                 taken.Add(index, node);
                 ids.Add(node, BlobchegId.Make(tag, index).Value);
             }
         }
 
-        /// <summary>Строк в файле — по последний занятый номер включительно.</summary>
+        /// <summary>Rows in the file — up to and including the last taken number.</summary>
         static uint RowCount(Dictionary<uint, BlobchegNodeSo> taken)
         {
             var count = 0u;
@@ -160,8 +164,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Строки роутера по id — он же индекс в массиве. <c>null</c> — дырка от удалённой ноды:
-        /// строка в файле есть, но пустая, и id за ней больше никому не выдаётся.
+        /// The rows of a router by id — which is also the index in the array. <c>null</c> is a hole from
+        /// a deleted node: the row is in the file but empty, and its id is never handed out to anyone
+        /// again.
         /// </summary>
         public IReadOnlyList<BlobchegNodeSo> NodesOf(Type router)
             => _rows.TryGetValue(router, out var found) ? found : Array.Empty<BlobchegNodeSo>();
@@ -170,16 +175,16 @@ namespace Blobcheg.Authoring
         {
             if (!_ids.TryGetValue(router, out var ids))
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{router.Name}' не помечен [BlobchegRouter] — id в нём не бывает");
+                    $"Blobcheg: '{router.Name}' is not marked [BlobchegRouter] — there are no ids in it");
 
             if (!ids.TryGetValue(node, out var id))
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' не пишет ни в одну базу роутера '{router.Name}' — id у неё там нет");
+                    $"Blobcheg: node '{node.name}' writes into no base of router '{router.Name}' — it has no id there");
 
             return new BlobchegId(id);
         }
 
-        /// <summary>Id ноды, если он у неё в этом роутере есть. Спрашивает кеш, а не потребитель.</summary>
+        /// <summary>The id of a node, if it has one in this router. The cache asks it, not the consumer.</summary>
         public bool TryOf(BlobchegNodeSo node, Type router, out BlobchegId id)
         {
             id = BlobchegId.None;
@@ -191,20 +196,20 @@ namespace Blobcheg.Authoring
             return true;
         }
 
-        /// <summary>Id ноды, когда роутер у неё один. Ноль или несколько — ошибка, а не догадка.</summary>
+        /// <summary>The id of a node when it has one router. Zero or several is an error, not a guess.</summary>
         public BlobchegId Single(BlobchegNodeSo node)
         {
             var routers = BlobchegRouters.RoutersOf(node);
 
             if (routers.Count == 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' не пишет ни в одну базу роутера — id у неё нет. " +
-                    "Роутер базы объявляется именем члена в [Blobcheg(typeof(...), \"имя\")]");
+                    $"Blobcheg: node '{node.name}' writes into no base of any router — it has no id. " +
+                    "The router of a base is declared by the member name in [Blobcheg(typeof(...), \"name\")]");
 
             if (routers.Count > 1)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' входит сразу в роутеры " +
-                    $"{string.Join(", ", routers.Select(r => r.Name))} — спрашивай IdIn<T>()");
+                    $"Blobcheg: node '{node.name}' belongs to routers " +
+                    $"{string.Join(", ", routers.Select(r => r.Name))} at once — ask IdIn<T>()");
 
             return Of(node, routers[0]);
         }

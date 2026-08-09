@@ -7,8 +7,9 @@ using Unity.Collections;
 namespace Blobcheg.Tests
 {
     /// <summary>
-    /// Билдер записи сам по себе: раскладка хвоста, само-относительные оффсеты, лимиты. Полный
-    /// круг — собранные билдером байты поднимаются базой и читаются через <see cref="BlobchegArray{T}"/>.
+    /// The record builder on its own: the layout of the tail, the self-relative offsets, the limits. The
+    /// full circle — the bytes assembled by the builder are loaded by a base and read through a
+    /// <see cref="BlobchegArray{T}"/>.
     /// </summary>
     public sealed class BlobchegBuilderTests
     {
@@ -32,7 +33,7 @@ namespace Blobcheg.Tests
             => new BlobchegBuilder<T>("node", sink);
 
         [Test]
-        public void Оффсет_считается_от_адреса_поля()
+        public void The_offset_is_measured_from_the_field_address()
         {
             byte[] built = null;
             var b = Open<TestCurve>(bytes => built = bytes);
@@ -43,7 +44,7 @@ namespace Blobcheg.Tests
             values[2] = 3.5f;
             b.End();
 
-            // Голова 12 байт, хвост float'ов с 12; поле массива лежит на 4 → оффсет 8.
+            // The head is 12 bytes, the float tail starts at 12; the array field sits at 4 → offset 8.
             Assert.That(built.Length, Is.EqualTo(24));
             Assert.That(BitConverter.ToInt32(built, 0), Is.EqualTo(7));
             Assert.That(BitConverter.ToInt32(built, 4), Is.EqualTo(8));
@@ -53,20 +54,20 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пустой_массив_оставляет_поле_нулём_и_не_растит_запись()
+        public void An_empty_array_leaves_the_field_zero_and_does_not_grow_the_record()
         {
             byte[] built = null;
             var b = Open<TestCurve>(bytes => built = bytes);
             b.Allocate(ref b.Root.Values, 0);
             b.End();
 
-            Assert.That(built.Length, Is.EqualTo(12), "чанка под пустоту нет");
+            Assert.That(built.Length, Is.EqualTo(12), "there is no chunk for emptiness");
             Assert.That(BitConverter.ToInt32(built, 4), Is.Zero);
             Assert.That(BitConverter.ToInt32(built, 8), Is.Zero);
         }
 
         [Test]
-        public void Собранная_билдером_запись_читается_базой()
+        public void A_record_assembled_by_the_builder_is_read_by_a_base()
         {
             byte[] built = null;
             var b = Open<TestTable>(bytes => built = bytes);
@@ -99,21 +100,21 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Окно_массива_живёт_через_соседний_Allocate()
+        public void An_array_window_survives_a_neighbouring_Allocate()
         {
             byte[] built = null;
             var b = Open<TestTable>(bytes => built = bytes);
             var rows = b.Allocate(ref b.Root.Rows, 1);
             b.Allocate(ref rows[0].Cells, 1)[0] = 5;
 
-            // Чанки не переезжают: окно rows обязано остаться живым после Allocate соседа.
+            // The chunks do not move: the rows window is obliged to stay alive after a neighbour's Allocate.
             Assert.That(rows.Length, Is.EqualTo(1));
             b.End();
             Assert.That(built, Is.Not.Null);
         }
 
         [Test]
-        public void Отрицательная_длина_бросает()
+        public void A_negative_length_throws()
         {
             var b = Open<TestCurve>(_ => { });
             Assert.Throws<ArgumentOutOfRangeException>(() => b.Allocate(ref b.Root.Values, -1));
@@ -121,27 +122,27 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Чужое_поле_бросает()
+        public void A_foreign_field_throws()
         {
             var b = Open<TestCurve>(_ => { });
             var foreign = new TestCurve();
             var thrown = Assert.Throws<InvalidOperationException>(() => b.Allocate(ref foreign.Values, 1));
-            StringAssert.Contains("не из этой записи", thrown.Message);
+            StringAssert.Contains("not from this record", thrown.Message);
             b.Abandon();
         }
 
         [Test]
-        public void Повторный_Allocate_в_то_же_поле_бросает()
+        public void A_repeated_Allocate_into_the_same_field_throws()
         {
             var b = Open<TestCurve>(_ => { });
             b.Allocate(ref b.Root.Values, 2);
             var thrown = Assert.Throws<InvalidOperationException>(() => b.Allocate(ref b.Root.Values, 3));
-            StringAssert.Contains("Values", thrown.Message, "ошибка обязана назвать поле");
+            StringAssert.Contains("Values", thrown.Message, "the error is obliged to name the field");
             b.Abandon();
         }
 
         [Test]
-        public void Работа_после_End_бросает()
+        public void Working_after_End_throws()
         {
             byte[] built = null;
             var b = Open<TestCurve>(bytes => built = bytes);
@@ -151,16 +152,16 @@ namespace Blobcheg.Tests
             Assert.Throws<InvalidOperationException>(() => _ = b.Root.Levels);
             Assert.Throws<InvalidOperationException>(() => b.Allocate(ref foreign.Values, 1));
             Assert.Throws<InvalidOperationException>(() => b.End());
-            Assert.That(built, Is.Not.Null, "первый End при этом собрал запись");
+            Assert.That(built, Is.Not.Null, "the first End did assemble the record");
         }
 
         [Test]
-        public void Индекс_за_границей_окна_бросает()
+        public void An_index_past_the_window_bounds_throws()
         {
             var b = Open<TestCurve>(_ => { });
             var values = b.Allocate(ref b.Root.Values, 2);
 
-            // ref struct в лямбду не захватывается — ловим руками.
+            // A ref struct cannot be captured into a lambda — we catch it by hand.
             var caught = false;
             try
             {

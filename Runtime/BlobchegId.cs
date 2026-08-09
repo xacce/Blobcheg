@@ -3,31 +3,33 @@ using System;
 namespace Blobcheg
 {
     /// <summary>
-    /// Имя ноды, общее для всех баз роутера. Один <c>uint</c> из двух частей: старший байт — тег
-    /// роутера, младшие три — позиция строки ноды в его файле.
+    /// The name of a node, shared by every base of a router. One <c>uint</c> of two parts: the high
+    /// byte is the router tag, the low three are the position of the node's row in its file.
     ///
-    /// Позиция, а не хеш: адрес строки — <c>array[index]</c>, без таблиц, коллизий и пробирования.
-    /// Отсюда свойства — правка значений id не двигает, двигают только появление и удаление ноды.
+    /// A position, not a hash: the address of a row is <c>array[index]</c>, with no tables, collisions
+    /// or probing. Hence the properties — editing values does not move an id, only the appearance and
+    /// the deletion of a node do.
     ///
-    /// Тег нужен затем, что голое число родства не помнит: id, выданный ДРУГИМ роутером, попадал бы
-    /// в диапазон этого и отдавал чужую строку молча. Тег заодно закрывает и вторую дыру: тег ноль
-    /// зарезервирован, поэтому <c>default(BlobchegId)</c> — это «не назначен», а не первая нода базы.
+    /// The tag is needed because a bare number remembers no kinship: an id handed out by ANOTHER router
+    /// would fall into the range of this one and quietly return someone else's row. The tag also closes
+    /// the second hole: tag zero is reserved, so <c>default(BlobchegId)</c> means "not assigned" and
+    /// not the first node of a base.
     ///
-    /// Цена — потолок в 16 777 216 нод на роутер. Столько нод не бывает; столько ассетов не
-    /// открывается.
+    /// The price is a ceiling of 16,777,216 nodes per router. There is no such thing as that many
+    /// nodes; that many assets do not open.
     /// </summary>
     [Serializable]
     public readonly struct BlobchegId : IEquatable<BlobchegId>
     {
-        /// <summary>Сколько младших бит занимает позиция строки.</summary>
+        /// <summary>How many low bits the row position takes.</summary>
         public const int IndexBits = 24;
 
         public const uint IndexMask = (1u << IndexBits) - 1;
 
-        /// <summary>Строк в одном роутере не больше этого.</summary>
+        /// <summary>There are no more rows in one router than this.</summary>
         public const uint MaxIndex = IndexMask;
 
-        /// <summary>«Id не назначен». Это же значение у любого нулём инициализированного поля.</summary>
+        /// <summary>"Id not assigned". The same value any zero-initialised field carries.</summary>
         public const uint NoneValue = 0;
 
         public readonly uint Value;
@@ -36,31 +38,31 @@ namespace Blobcheg
 
         public static BlobchegId None => default;
 
-        /// <summary>Тег роутера, выдавшего id. Ноль — id не выдавали.</summary>
+        /// <summary>The tag of the router that handed out the id. Zero means no id was handed out.</summary>
         public byte Tag => (byte)(Value >> IndexBits);
 
-        /// <summary>Позиция строки в файле роутера.</summary>
+        /// <summary>The position of the row in the router file.</summary>
         public uint Index => Value & IndexMask;
 
         public bool IsValid => (Value >> IndexBits) != 0;
 
-        /// <summary>Собрать id из тега и позиции. Тег ноль и позиция за потолком — ошибка.</summary>
+        /// <summary>Assemble an id from a tag and a position. A zero tag and a position past the ceiling are errors.</summary>
         public static BlobchegId Make(byte tag, uint index)
         {
             if (tag == 0)
                 throw new ArgumentOutOfRangeException(nameof(tag),
-                    "Blobcheg: тег роутера ноль зарезервирован под «id не назначен»");
+                    "Blobcheg: router tag zero is reserved for \"id not assigned\"");
 
             if (index > MaxIndex)
                 throw new ArgumentOutOfRangeException(nameof(index),
-                    $"Blobcheg: строка {index} за потолком роутера {MaxIndex}");
+                    $"Blobcheg: row {index} is past the router ceiling of {MaxIndex}");
 
             return new BlobchegId(((uint)tag << IndexBits) | index);
         }
 
         /// <summary>
-        /// Id строки по имени роутера — путь инструментов и тестов. Потребитель id не собирает: он
-        /// берёт его с носителя или из сейва.
+        /// The id of a row by the router name — the path of tools and tests. A consumer does not
+        /// assemble an id: it takes it from a carrier or from a save.
         /// </summary>
         public static BlobchegId In(string routerName, uint index)
             => Make(BlobchegNaming.TagOf(routerName), index);
@@ -79,13 +81,13 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Реализуется кодогеном на каждой структуре роутера. Нужен ровно затем, чтобы поле
-    /// <see cref="BlobchegIdRef{TRouter}"/> умело спросить у своего параметра имя роутера и отбить
-    /// ассет чужого.
+    /// Implemented by the codegen on every router struct. It exists for exactly one reason: so that a
+    /// <see cref="BlobchegIdRef{TRouter}"/> field can ask its type parameter for the router name and
+    /// reject the asset of a foreign one.
     /// </summary>
     public interface IBlobchegRouter
     {
-        /// <summary>Имя роутера, оно же имя его файла.</summary>
+        /// <summary>The name of the router, also the name of its file.</summary>
         string Name { get; }
     }
 }

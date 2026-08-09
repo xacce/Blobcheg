@@ -11,32 +11,32 @@ using UnityEngine.TestTools;
 
 namespace Blobcheg.Tests
 {
-    /// <summary>Домен детерминированного роутера. Свой, чтобы не смешиваться с обычным.</summary>
+    /// <summary>The domain of the deterministic router. Its own, so as not to mix with the ordinary one.</summary>
     public interface ITestGridData
     {
     }
 
     public struct TestGridInfo : ITestGridData
     {
-        /// <summary>Свой id, положенный нодой в запись: он известен до записи и здесь тоже.</summary>
+        /// <summary>Its own id, put by the node into the record: it is known before the write here too.</summary>
         public uint SelfId;
 
         public int Tier;
     }
 
-    /// <summary>Имя члена — <c>grid</c>, а не <c>fixed</c>: из имени члена кодоген делает поле строки.</summary>
+    /// <summary>The member name is <c>grid</c> and not <c>fixed</c>: the codegen makes a row field out of the member name.</summary>
     [Blobcheg(typeof(ITestGridData), "grid", Router = typeof(TestFixedRouter))]
     public partial struct TestGridDb
     {
     }
 
-    /// <summary>Роутер, чьи номера строк объявляют ноды.</summary>
+    /// <summary>The router whose row numbers are declared by the nodes.</summary>
     [BlobchegRouter(FixedIndex = true)]
     public partial struct TestFixedRouter
     {
     }
 
-    /// <summary>Нода, объявляющая свой номер полем.</summary>
+    /// <summary>A node that declares its number with a field.</summary>
     public sealed class TestFixedNodeSo : BlobchegNodeSo, IBlobchegIndexed
     {
         public uint index;
@@ -50,7 +50,7 @@ namespace Blobcheg.Tests
             => writer.Add(new TestGridInfo { SelfId = writer.Id.Value, Tier = tier });
     }
 
-    /// <summary>Нода того же домена, но без интерфейса — на ней проверяется отказ.</summary>
+    /// <summary>A node of the same domain but without the interface — the refusal is checked on it.</summary>
     public sealed class TestBlindNodeSo : BlobchegNodeSo
     {
         public override Type[] OutTypes => new[] { typeof(ITestGridData) };
@@ -60,8 +60,8 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Детерминированный роутер: номер строки объявляет нода, пересборка его только собирает и
-    /// проверяет. Носитель id при этом производный, а не источник правды.
+    /// A deterministic router: the row number is declared by the node, the rebuild only collects and
+    /// checks it. The id carrier is derived and not the source of truth.
     /// </summary>
     public sealed class BlobchegFixedIndexTests
     {
@@ -70,8 +70,8 @@ namespace Blobcheg.Tests
         [SetUp]
         public void SetUp()
         {
-            // Папка своя на каждый тест: удаление ассетов отложенное, и переиспользованное имя
-            // съедает ассет, созданный в ещё не удалённой папке.
+            // A folder of its own per test: asset deletion is deferred, and a reused name swallows an
+            // asset created in a folder that has not been deleted yet.
             var name = "BlobchegFixedTemp_" + Guid.NewGuid().ToString("N");
             _folder = "Assets/" + name;
             AssetDatabase.CreateFolder("Assets", name);
@@ -92,7 +92,7 @@ namespace Blobcheg.Tests
             AssetDatabase.CreateAsset(created, path);
 
             var asset = AssetDatabase.LoadAssetAtPath<TestFixedNodeSo>(path);
-            Assert.That(asset, Is.Not.Null, $"ассет '{path}' не создался — дальше проверять нечего");
+            Assert.That(asset, Is.Not.Null, $"asset '{path}' was not created — there is nothing further to check");
             return asset;
         }
 
@@ -107,7 +107,7 @@ namespace Blobcheg.Tests
         static TestFixedRouter LoadRouter()
         {
             var path = Path.Combine(BlobchegBuild.OutputDirectory, TestFixedRouter.FileName);
-            Assert.That(File.Exists(path), Is.True, "файл роутера должен лечь в StreamingAssets");
+            Assert.That(File.Exists(path), Is.True, "the router file must land in StreamingAssets");
             return new TestFixedRouter(BlobchegBuffer.From(File.ReadAllBytes(path), Allocator.Persistent));
         }
 
@@ -120,16 +120,16 @@ namespace Blobcheg.Tests
                 Allocator.Persistent));
 
         [Test]
-        public void Реестр_знает_какой_роутер_детерминированный()
+        public void The_registry_knows_which_router_is_deterministic()
         {
             Assert.That(BlobchegRouters.IsFixed(typeof(TestFixedRouter)), Is.True);
             Assert.That(BlobchegRouters.IsFixed(typeof(TestGameRouter)), Is.False);
             Assert.DoesNotThrow(() => BlobchegRouters.RequireCodeGenAgrees(typeof(TestFixedRouter)),
-                "кодоген аргументов [BlobchegRouter] не читает — LayoutHash от флага не зависит");
+                "the codegen does not read the arguments of [BlobchegRouter] — LayoutHash does not depend on the flag");
         }
 
         [Test]
-        public void Объявленный_номер_становится_строкой_id()
+        public void A_declared_number_becomes_the_row_of_the_id()
         {
             var third = Node("Third", 3);
             var seventh = Node("Seventh", 7);
@@ -141,15 +141,15 @@ namespace Blobcheg.Tests
 
             Assert.That(IdOf(third).Index, Is.EqualTo(3u));
             Assert.That(IdOf(seventh).Index, Is.EqualTo(7u));
-            Assert.That(IdOf(third).Tag, Is.EqualTo(tag), "тег остаётся роутерным — его никто не объявляет");
+            Assert.That(IdOf(third).Tag, Is.EqualTo(tag), "the tag stays the router's — nobody declares it");
 
             var router = LoadRouter();
             var grid = LoadGrid();
             try
             {
-                Assert.That(router.Count, Is.EqualTo(8u), "строк ровно по последний объявленный номер");
+                Assert.That(router.Count, Is.EqualTo(8u), "rows up to and including the last declared number");
                 Assert.That(grid.Read<TestGridInfo>(router.Get(IdOf(seventh)).grid).SelfId,
-                    Is.EqualTo(IdOf(seventh).Value), "нода положила объявленный id в запись");
+                    Is.EqualTo(IdOf(seventh).Value), "the node put the declared id into the record");
             }
             finally
             {
@@ -159,7 +159,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Разрежённые_номера_дают_пустые_строки()
+        public void Sparse_numbers_give_empty_rows()
         {
             Node("Zero", 0);
             Node("Far", 1000);
@@ -170,10 +170,10 @@ namespace Blobcheg.Tests
             var router = LoadRouter();
             try
             {
-                Assert.That(router.Count, Is.EqualTo(1001u), "дырка между семьями — это пустые строки");
+                Assert.That(router.Count, Is.EqualTo(1001u), "the gap between the families is empty rows");
 
                 var hole = BlobchegId.In(TestFixedRouter.RouterName, 500);
-                Assert.That(router.Get(hole).HasGrid, Is.False, "строка есть, но пустая");
+                Assert.That(router.Get(hole).HasGrid, Is.False, "the row is there but empty");
                 Assert.That(router.TryGetGrid(hole, out _), Is.False);
             }
             finally
@@ -183,7 +183,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Снос_носителей_возвращает_те_же_id()
+        public void Wiping_the_carriers_brings_back_the_same_ids()
         {
             var node = Node("Stable", 12);
             AssetDatabase.SaveAssets();
@@ -191,7 +191,7 @@ namespace Blobcheg.Tests
 
             var before = IdOf(node);
             Assert.That(before.Index, Is.EqualTo(12u),
-                "номер объявлен: раздача посадила бы единственную ноду в строку ноль");
+                "the number is declared: handing them out would seat the only node in row zero");
 
             foreach (var carrier in BlobchegBuild.IdsOf(node).ToList())
             {
@@ -205,17 +205,18 @@ namespace Blobcheg.Tests
             BlobchegBuild.RebuildFull();
 
             Assert.That(IdOf(node), Is.EqualTo(before),
-                "носитель производный: журнал снесли, а номер объявлен нодой");
+                "the carrier is derived: the journal was wiped while the number is declared by the node");
         }
 
         [Test]
-        public void Носитель_не_спрашивается_а_переезд_считается_и_логируется()
+        public void The_carrier_is_not_asked_and_the_move_is_counted_and_logged()
         {
             var node = Node("Moved", 4);
             AssetDatabase.SaveAssets();
             BlobchegBuild.RebuildAll();
 
-            // Носитель подменён вручную: так выглядит роутер, раздавший номера до включения флага.
+            // The carrier was swapped by hand: that is what a router that handed out numbers before the
+            // flag was switched on looks like.
             var carrier = BlobchegBuild.IdsOf(node).Single(c => c.RouterName == TestFixedRouter.RouterName);
             carrier.id = BlobchegId.In(TestFixedRouter.RouterName, 100).Value;
             EditorUtility.SetDirty(carrier);
@@ -225,12 +226,12 @@ namespace Blobcheg.Tests
 
             var report = BlobchegBuild.RebuildFull();
 
-            Assert.That(IdOf(node).Index, Is.EqualTo(4u), "объявление сильнее журнала");
-            Assert.That(report.MovedIds, Is.EqualTo(1), "переезд обязан быть посчитан, а не молча случиться");
+            Assert.That(IdOf(node).Index, Is.EqualTo(4u), "the declaration is stronger than the journal");
+            Assert.That(report.MovedIds, Is.EqualTo(1), "the move is obliged to be counted, not to happen silently");
         }
 
         [Test]
-        public void Компакт_не_двигает_объявленные_строки_но_пережимает_оффсеты()
+        public void A_compaction_does_not_move_declared_rows_but_re_packs_the_offsets()
         {
             var head = Node("Head", 0);
             var tail = Node("Tail", 9);
@@ -239,8 +240,9 @@ namespace Blobcheg.Tests
 
             Assert.That(IdOf(tail).Index, Is.EqualTo(9u));
 
-            // Дырку в базе оставляет только запись, лежащая раньше соседа, а порядок записей решает
-            // BuildOrder — поэтому кого удалить, решает замер, а не порядок создания в тесте.
+            // Only a record lying ahead of its neighbour leaves a hole in the base, and the order of the
+            // records is decided by BuildOrder — so which one to delete is decided by a measurement and
+            // not by the creation order in the test.
             var earlier = OffsetOf(head) < OffsetOf(tail);
             var victim = earlier ? (BlobchegNodeSo)head : tail;
             var survivor = earlier ? (BlobchegNodeSo)tail : head;
@@ -250,18 +252,18 @@ namespace Blobcheg.Tests
             BlobchegBuild.RebuildAll();
 
             var offsetBefore = OffsetOf(survivor);
-            Assert.That(offsetBefore, Is.GreaterThan(0u), "впереди осталась дырка от удалённой записи");
+            Assert.That(offsetBefore, Is.GreaterThan(0u), "a hole from the deleted record is left ahead");
 
             BlobchegBuild.Compact();
 
             Assert.That(IdOf(survivor), Is.EqualTo(keep),
-                "компакт не спрашивает носителей этого роутера — и двигать ему нечего");
+                "a compaction does not ask the carriers of this router — and has nothing to move");
 
             var router = LoadRouter();
             try
             {
                 Assert.That(router.Count, Is.EqualTo(keep.Index + 1),
-                    "строки объявлены, и дырки в них — тоже объявление");
+                    "the rows are declared, and the holes in them are a declaration too");
             }
             finally
             {
@@ -269,11 +271,11 @@ namespace Blobcheg.Tests
             }
 
             Assert.That(OffsetOf(survivor), Is.LessThan(offsetBefore),
-                "а оффсеты компакт пережал, как и всегда");
+                "while the compaction re-packed the offsets, as it always does");
         }
 
         [Test]
-        public void Две_ноды_на_одном_номере_бросают()
+        public void Two_nodes_on_one_number_throw()
         {
             var first = Node("Alpha", 5);
             var second = Node("Beta", 5);
@@ -281,15 +283,15 @@ namespace Blobcheg.Tests
 
             var error = Assert.Throws<InvalidOperationException>(() => BlobchegBuild.RebuildAll());
             Assert.That(error.Message, Does.Contain("Alpha").And.Contain("Beta").And.Contain("5"),
-                "в тексте обязаны быть оба имени и номер — чинить придётся в одной из нод");
+                "the text is obliged to carry both names and the number — the fix goes into one of the nodes");
 
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(second));
-            Assert.DoesNotThrow(() => BlobchegBuild.RebuildAll(), "конфликт снят — пересборка снова идёт");
+            Assert.DoesNotThrow(() => BlobchegBuild.RebuildAll(), "the conflict is gone — the rebuild runs again");
             Assert.That(IdOf(first).Index, Is.EqualTo(5u));
         }
 
         [Test]
-        public void Нода_без_интерфейса_бросает()
+        public void A_node_without_the_interface_throws()
         {
             var blind = ScriptableObject.CreateInstance<TestBlindNodeSo>();
             AssetDatabase.CreateAsset(blind, _folder + "/Blind.asset");
@@ -304,7 +306,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Номер_за_потолком_бросает()
+        public void A_number_past_the_ceiling_throws()
         {
             var node = Node("Beyond", BlobchegId.MaxIndex + 1);
             AssetDatabase.SaveAssets();

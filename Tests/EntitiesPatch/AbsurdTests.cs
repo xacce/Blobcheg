@@ -6,17 +6,17 @@ using Unity.Entities;
 namespace Blobcheg.PatchTests
 {
     /// <summary>
-    /// Сценарии, которых не бывает. Именно они и вскрывают неявные допущения: там, где разумный
-    /// разработчик не пройдёт, допущение никто не проверял.
+    /// Scenarios that do not happen. They are exactly what uncovers the implicit assumptions: where a
+    /// reasonable developer will not walk, nobody checked the assumption.
     /// </summary>
     public sealed unsafe class AbsurdTests : PatchFixture
     {
         [Test]
-        public void Патч_не_имеет_права_тронуть_ни_байта_внутри_самой_базы()
+        public void The_patch_has_no_right_to_touch_a_single_byte_inside_the_base_itself()
         {
-            // В ФАЙЛЕ лежит запись, которая сама состоит из ссылки. Если патч ходит не только по
-            // памяти компонентов, но и по содержимому записей, он испортит базу — и испортит её
-            // для всех, кто читает старым путём.
+            // The FILE holds a record that itself consists of a reference. If the patch walks not only
+            // the memory of components but the content of records as well, it spoils the base — and
+            // spoils it for everyone who reads by the old path.
             var file = Domain(nameof(IPatchHot))
                 .Add("gun", new PatchGun { Ammo = 1f, Rpm = 1 })
                 .Add("holder", new PatchRefRecord
@@ -46,21 +46,21 @@ namespace Blobcheg.PatchTests
                 UnsafeUtility.MemCpy(dst, (byte*)hot.Ptr, hot.Length);
 
             CollectionAssert.AreEqual(before, after,
-                "патч изменил байты самой базы: он обязан ходить по памяти компонентов, а содержимое " +
-                "записей — вопрос доверия, как и у любого другого чтения");
+                "the patch changed the bytes of the base itself: it is obliged to walk the memory of components, " +
+                "while the content of records is a question of trust, as with any other read");
 
-            // И слот компонента при этом пропатчен, а вложенная в запись ссылка — нет.
+            // And the component slot is patched while the reference nested in the record is not.
             Assert.That(EM.GetComponentData<RecordRef>(entity).Record.Data.Value,
                 Is.EqualTo(hot.AddressOf(file["holder"])));
 
             var record = Copy(EM.GetComponentData<RecordRef>(entity).Record.Value);
             Assert.That(record.Tag, Is.EqualTo(0x0BAD_F00D));
             Assert.That(record.Inner.Data.Value, Is.EqualTo((ulong)BlobchegFormat.HeaderSize),
-                "ссылка ВНУТРИ записи так и осталась оффсетом — патч в базу не лезет");
+                "the reference INSIDE the record stayed an offset — the patch does not climb into the base");
         }
 
         [Test]
-        public void База_зарегистрированная_по_адресу_чужой_записи_отвечает_детерминированно()
+        public void A_base_registered_at_the_address_of_a_foreign_record_answers_deterministically()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -69,25 +69,25 @@ namespace Blobcheg.PatchTests
             Patch();
             var address = SlotOf(entity);
 
-            // Абсурд: регистрируем ВТОРОЙ домен по адресу записи внутри первого. Реестр про
-            // пересечение буферов ничего не знает — вопрос в том, кто теперь владелец адреса.
+            // Absurd: we register a SECOND domain at the address of a record inside the first one. The
+            // registry knows nothing about overlapping buffers — the question is who owns the address now.
             var parasite = BlobchegNaming.NameHash("IPatchParasite");
             BlobchegBases.Register(parasite, (byte*)address, BlobchegFormat.HeaderSize * 2);
 
             try
             {
-                // Слот несёт СВОЙ домен, поэтому свёртка обязана считаться от своей базы, а не от
-                // того, кто зарегистрировался последним.
+                // The slot carries ITS OWN domain, so the folding is obliged to be computed from its own
+                // base and not from whoever registered last.
                 Assert.That(BlobchegBases.TryUnresolve(hot.Key, address, out var mine),
                     Is.EqualTo(BlobchegRebase.Patched));
                 Assert.That(mine, Is.EqualTo((ulong)file["gun"]),
-                    "оффсет обязан считаться от базы своего домена, а не от последнего зарегистрированного");
+                    "the offset is obliged to be computed from the base of its own domain and not from the last registered one");
 
                 Assert.That(BlobchegBases.TryUnresolve(parasite, address, out var theirs),
                     Is.EqualTo(BlobchegRebase.Patched));
-                Assert.That(theirs, Is.Zero, "для паразита тот же адрес — начало его собственного буфера");
+                Assert.That(theirs, Is.Zero, "for the parasite the same address is the start of its own buffer");
 
-                // Обещание при этом держится: обратный проход мира отдаёт оффсет своей базы.
+                // The promise holds all the same: the reverse pass of the world hands out the offset of its own base.
                 var bytes = Save();
                 Assert.That(Contains(bytes, address), Is.False);
             }
@@ -97,20 +97,22 @@ namespace Blobcheg.PatchTests
             }
         }
 
-        // План (строка 48) допускал ровно два исхода: «ЛИБО явный отказ при установке/патче, ЛИБО
-        // патчится как всё остальное». Реализация выбрала первый. Обход типов теперь берёт в
-        // кандидаты и ISharedComponentData — не чтобы регистрировать, а чтобы заметить в нём слот:
-        // тип не регистрируется, а беда уходит строкой в BlobchegPatchTableBuilder.Diagnostics.
+        // The plan (line 48) allowed exactly two outcomes: "EITHER an explicit refusal at
+        // installation/patch time, OR it is patched like everything else". The implementation chose the
+        // first. The type walk now takes ISharedComponentData into the candidates as well — not to
+        // register it but to notice a slot in it: the type is not registered, and the trouble leaves as a
+        // line in BlobchegPatchTableBuilder.Diagnostics.
         //
-        // В лог она не уходит намеренно: обход видит все типы процесса, включая эту фикстуру, и
-        // Debug.LogError на установке означал бы error в консоли потребителя сразу после установки
-        // пакета — про тест самого пакета. Отказ звучит там, где он важен: на чтении Value.
+        // It does not go into the log on purpose: the walk sees every type in the process, this fixture
+        // included, and a Debug.LogError at installation time would mean an error in the consumer's
+        // console right after installing the package — about a test of the package itself. The refusal
+        // sounds where it matters: on reading Value.
         //
-        // Недопустимая середина плана — «молча пропущен и затем сериализован адресом процесса» —
-        // при этом закрыта с двух сторон: раз слот не патчится вовсе, адресу процесса неоткуда
-        // взяться в файле, и обратный проход тут ничего не портит.
+        // The inadmissible middle of the plan — "silently skipped and then serialised as a process
+        // address" — is closed from both sides: since the slot is not patched at all, there is nowhere
+        // for a process address to come from in the file, and the reverse pass spoils nothing here.
         [Test]
-        public void Слот_в_общем_компоненте_либо_патчится_либо_отбивается_вслух()
+        public void A_slot_in_a_shared_component_is_either_patched_or_rejected_out_loud()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -122,11 +124,11 @@ namespace Blobcheg.PatchTests
                     complaint = diagnostic;
 
             Assert.That(complaint, Is.Not.Null,
-                "сборка таблицы обязана заметить слот в общем компоненте и назвать причину: без этой " +
-                "строки «не патчится» и «такого типа вообще нет» неотличимы, и разбираться будет не с чем");
+                "the table build is obliged to notice a slot in a shared component and name the cause: without " +
+                "that line \"not patched\" and \"there is no such type at all\" are indistinguishable, and there will be nothing to investigate with");
 
             Assert.That(complaint, Does.Contain("BlobchegReference"),
-                "и назвать, что именно в этом типе патчу недоступно");
+                "and to name what exactly in this type is out of the patch's reach");
 
             var entity = EM.CreateEntity();
             EM.AddSharedComponent(entity, new SharedRef { Gun = new BlobchegReference<PatchGun>(offset) });
@@ -136,22 +138,23 @@ namespace Blobcheg.PatchTests
             var shared = EM.GetSharedComponent<SharedRef>(entity);
 
             Assert.That(shared.Gun.Data.Value, Is.EqualTo((ulong)offset),
-                "патч общие компоненты не обходит — и раз он об этом сказал, слот обязан остаться " +
-                "ровно тем оффсетом, что в него положили");
+                "the patch does not walk shared components — and since it said so, the slot is obliged to stay " +
+                "exactly the offset that was put into it");
             Assert.That(shared.Gun.IsResolved, Is.False,
-                "и не врать, будто он разрешён");
+                "and not to lie that it is resolved");
 
-            // Главное из плана: адрес процесса в файл не уезжает. Он туда и не может попасть —
-            // патча не было, в слоте по-прежнему оффсет.
+            // The main point of the plan: a process address does not travel into the file. It cannot get
+            // there either — there was no patch and the slot still holds an offset.
             var bytes = Save();
             Assert.That(Contains(bytes, hot.AddressOf(offset)), Is.False);
         }
 
         [Test]
-        public void Один_чанк_с_двумя_поколениями_сразу()
+        public void One_chunk_with_two_generations_at_once()
         {
-            // Ровно то, что даёт живой путь: часть сущностей чанка уже прошла патч, часть приехала
-            // чейнджсетом сырой, а база между этими двумя событиями пересобралась.
+            // Exactly what the live path produces: some of the chunk's entities have already been through
+            // the patch, some arrived raw with a change set, and the base was rebuilt between those two
+            // events.
             var first = HotFile(ammo: 1f, rpm: 11);
             Raise(first);
             var offset = first["gun"];
@@ -165,20 +168,20 @@ namespace Blobcheg.PatchTests
             Patch();
 
             Assert.That(SlotOf(old), Is.EqualTo(gen2.AddressOf(offset)),
-                "старая сущность обязана переехать на новое поколение");
+                "the old entity is obliged to move over onto the new generation");
             Assert.That(SlotOf(fresh), Is.EqualTo(gen2.AddressOf(offset)),
-                "новая — разрешиться в него же");
+                "and the new one to resolve into the same one");
 
             Assert.That(Copy(EM.GetComponentData<GunRef>(old).Gun.Value).Rpm, Is.EqualTo(22));
             Assert.That(Copy(EM.GetComponentData<GunRef>(fresh).Gun.Value).Rpm, Is.EqualTo(22));
         }
 
         [Test]
-        public void Адрес_поднятой_базы_положенный_в_слот_руками()
+        public void The_address_of_a_loaded_base_put_into_a_slot_by_hand()
         {
-            // Разработчик прочитал, что после патча в слоте лежит адрес, и решил положить его туда
-            // сам — на бейке, из значения, добытого в редакторе. В файл такой мир уехать не должен
-            // никак: адрес процесса не переживает даже перезапуск редактора.
+            // A developer read that after the patch the slot holds an address and decided to put it there
+            // themselves — at bake time, from a value obtained in the editor. Such a world must not travel
+            // into a file at all: a process address does not survive even a restart of the editor.
             var file = HotFile();
             var hot = Raise(file);
             var address = hot.AddressOf(file["gun"]);
@@ -189,34 +192,35 @@ namespace Blobcheg.PatchTests
                 Gun = new BlobchegReference<PatchGun> { Data = new BlobchegReferenceData { Value = address } },
             });
 
-            Assert.DoesNotThrow(() => Patch(), "адрес живой базы в слоте — уже валидное состояние, патч его не трогает");
+            Assert.DoesNotThrow(() => Patch(), "the address of a live base in a slot is already a valid state, the patch does not touch it");
             Assert.That(SlotOf(entity), Is.EqualTo(address));
 
             var bytes = Save();
             Assert.That(Contains(bytes, address), Is.False,
-                "и в файл он всё равно обязан уехать оффсетом");
+                "and it is obliged to travel into the file as an offset all the same");
         }
 
         [Test]
-        public void Мир_с_сущностью_на_каждый_байт_записи()
+        public void A_world_with_an_entity_for_every_byte_of_a_record()
         {
-            // Абсурд по постановке: сущности со ссылками на КАЖДЫЙ байт записи, включая середину.
-            // Проверяется не смысл, а то, что ни один из них не даёт недетерминированного ответа.
+            // Absurd by construction: entities with references to EVERY byte of a record, the middle
+            // included. What is checked is not the meaning but that none of them gives a
+            // non-deterministic answer.
             //
-            // План (строка 10, «Оффсет мимо выравнивания обязан отбиться») требует от каждого
-            // невыровненного оффсета явной ошибки — значит из восьми байт записи адресом имеет
-            // право стать ровно один, её собственное начало. Реализация так и отвечает: BadOffset
-            // на семи остальных. Детерминированность от этого не страдает, а усиливается:
-            // единственный принятый ответ — единственный законный.
+            // The plan (line 10, "An offset off the alignment is obliged to be rejected") demands an
+            // explicit error from every unaligned offset — so out of the eight bytes of a record exactly
+            // one has the right to become an address, its own start. The implementation answers exactly
+            // that way: BadOffset on the other seven. Determinism does not suffer from that but grows
+            // stronger: the only accepted answer is the only lawful one.
             var file = HotFile();
             var hot = Raise(file);
             var start = file["gun"];
 
             Assume.That(start % BlobchegFormat.RecordAlign, Is.Zero,
-                "начало записи не выровнено — тест проверяет не ту границу");
+                "the start of the record is not aligned — the test is checking the wrong boundary");
 
-            // Выровненная сущность создаётся ПОСЛЕДНЕЙ: если бы провал первого же байта глотал
-            // остальных, она осталась бы непропатченной, и это было бы видно.
+            // The aligned entity is created LAST: if the failure of the very first byte swallowed the
+            // rest, it would be left unpatched and that would be visible.
             var broken = new Entity[8];
             for (var i = 1u; i < 8; i++)
                 broken[i] = Gun(start + i);
@@ -224,25 +228,25 @@ namespace Blobcheg.PatchTests
             var whole = Gun(start);
 
             var error = Assert.Throws<InvalidOperationException>(() => Patch(),
-                "семь байт из восьми — не начало записи, и каждый обязан отбиться");
+                "seven bytes out of eight are not the start of a record, and each is obliged to be rejected");
 
             Assert.That(error.Message, Does.Contain(nameof(GunRef)));
 
             Assert.That(SlotOf(whole), Is.EqualTo(hot.AddressOf(start)),
-                "выровненное начало записи — единственный из восьми, кто обязан пройти, и провал " +
-                "соседей не имеет права его проглотить");
+                "the aligned start of the record is the only one of the eight obliged to pass, and the failure " +
+                "of its neighbours has no right to swallow it");
 
             for (var i = 1u; i < 8; i++)
                 Assert.That(SlotOf(broken[i]), Is.EqualTo((ulong)(start + i)),
-                    $"байт {i} отбит — слот обязан остаться тем числом, что в нём было, а не " +
-                    "превратиться в адрес середины записи");
+                    $"byte {i} was rejected — the slot is obliged to stay the number that was in it and not " +
+                    "to turn into the address of the middle of a record");
         }
 
         [Test]
-        public void Патч_мира_без_единого_поднятого_домена_и_без_ссылок()
+        public void Patching_a_world_without_a_single_loaded_domain_and_without_references()
         {
-            // Ни базы, ни ссылок, ни сущностей — и всё равно ни одного исключения: живой путь
-            // зовётся на КАЖДЫЙ применённый чейнджсет, в том числе в проектах без Blobcheg вовсе.
+            // No base, no references, no entities — and still not a single exception: the live path is
+            // called for EVERY applied change set, in projects without Blobcheg at all included.
             Assert.DoesNotThrow(() => Patch());
             Assert.That(BlobchegPatchErrors.HasAny, Is.False);
 
@@ -251,19 +255,21 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Ссылка_на_запись_прямо_поверх_отладочного_контура()
+        public void A_reference_to_a_record_right_on_top_of_the_debug_contour()
         {
-            // Ещё один адрес, которого не бывает: оффсет самой debug-секции. Он выровнен, он за
-            // header'ом и он внутри буфера — по границам от записи неотличим. Отбить его может
-            // только сам контур, и план (строка 19) ровно этого и требует: «в границах — отбой по
-            // типу записи (отладочный контур). Никогда — молчаливое чтение чужих байт».
+            // One more address that does not happen: the offset of the debug section itself. It is
+            // aligned, it is past the header and it is inside the buffer — by the bounds it is
+            // indistinguishable from a record. Only the contour itself can reject it, and the plan
+            // (line 19) demands exactly that: "inside the bounds — a rejection by record type (the debug
+            // contour). Never a silent read of someone else's bytes."
             //
-            // Реализация теперь так и делает: патч, получив адрес, спрашивает контур, начинается ли
-            // по нему запись объявленного типа, и валится кодом WrongRecord. Проверка, которая
-            // раньше жила только на старом пути (BlobchegBlob.Read), доехала до нового.
+            // The implementation now does exactly that: having got the address, the patch asks the
+            // contour whether a record of the declared type starts there and fails with the WrongRecord
+            // code. The check that used to live only on the old path (BlobchegBlob.Read) made it to the
+            // new one.
             var file = HotFile();
             var hot = Raise(file);
-            Assert.That(hot.Blob.HasDebug, Is.True, "контур не записан — тест проверяет не то");
+            Assert.That(hot.Blob.HasDebug, Is.True, "the contour was not written — the test is checking the wrong thing");
 
             var contour = BlobchegFormat.AlignUp((uint)hot.Length - 1);
             if (contour >= (uint)hot.Length)
@@ -274,13 +280,13 @@ namespace Blobcheg.PatchTests
             Gun(contour);
 
             var error = Assert.Throws<InvalidOperationException>(() => Patch(),
-                "по этому оффсету записи нет, и патч обязан это увидеть");
+                "there is no record at this offset, and the patch is obliged to see that");
 
             Assert.That(error.Message, Does.Contain(nameof(GunRef)));
 
-            // Старый путь на том же адресе отказывается ровно так же — оба пути говорят одно.
+            // The old path refuses at the same address in exactly the same way — both paths say one thing.
             Assert.Throws<InvalidOperationException>(() => Copy(hot.Blob.Read<PatchGun>(contour)),
-                "Read знает, что записи по этому оффсету нет");
+                "Read knows that there is no record at this offset");
         }
     }
 }

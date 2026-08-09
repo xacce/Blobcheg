@@ -6,25 +6,26 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace Blobcheg.Authoring
 {
-    /// <summary>Открытый билдер глазами коллектора: закрыть брошенный и освободить память.</summary>
+    /// <summary>An open builder as the collector sees it: close an abandoned one and free the memory.</summary>
     interface IBlobchegOpenBuilder
     {
         bool Closed { get; }
 
         string RecordTypeName { get; }
 
-        /// <summary>Освобождает чанки без сборки записи — путь упавшего или забывшего End Write.</summary>
+        /// <summary>Frees the chunks without assembling the record — the path of a Write that failed or forgot End.</summary>
         void Abandon();
     }
 
     /// <summary>
-    /// Сборщик записи с массивами. Размер записи известен только после всех
-    /// <see cref="Allocate{T}"/>, поэтому структ-литерал не годится: билдер держит голову и по
-    /// чанку unmanaged-памяти на массив, а <see cref="End"/> раскладывает чанки хвостом за головой,
-    /// заполняет само-относительные оффсеты и отдаёт байты коллектору тем же маршрутом, что Add.
+    /// The assembler of a record with arrays. The size of the record is known only after all the
+    /// <see cref="Allocate{T}"/> calls, so a struct literal will not do: the builder holds the head and
+    /// one chunk of unmanaged memory per array, and <see cref="End"/> lays the chunks out as a tail
+    /// behind the head, fills the self-relative offsets and hands the bytes to the collector by the
+    /// same route as Add.
     ///
-    /// Чанки не переезжают до End, поэтому <see cref="BlobchegBuilderArray{T}"/> соседнего массива
-    /// можно держать через Allocate следующего.
+    /// The chunks do not move before End, so a <see cref="BlobchegBuilderArray{T}"/> of a neighbouring
+    /// array may be held across the Allocate of the next one.
     /// </summary>
     public sealed unsafe class BlobchegBuilder<TRoot> : IBlobchegOpenBuilder where TRoot : unmanaged
     {
@@ -64,8 +65,9 @@ namespace Blobcheg.Authoring
                 Align = BlobchegFormat.RecordAlign,
             };
 
-            // Нули, а не мусор аллокатора: незаполненное поле обязано читаться как ноль и пустой
-            // массив, и падинги обязаны быть детерминированными — на байтах записи стоит ревизия.
+            // Zeroes and not allocator garbage: an unfilled field is obliged to read as zero and as an
+            // empty array, and the padding is obliged to be deterministic — the revision stands on the
+            // bytes of the record.
             UnsafeUtility.MemClear(head.Ptr, head.Bytes);
             _chunks.Add(head);
         }
@@ -74,7 +76,7 @@ namespace Blobcheg.Authoring
 
         public string RecordTypeName => typeof(TRoot).FullName;
 
-        /// <summary>Голова записи; поля заполняются как обычно. После End — ошибка.</summary>
+        /// <summary>The head of the record; the fields are filled as usual. After End — an error.</summary>
         public ref TRoot Root
         {
             get
@@ -85,8 +87,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Резервирует место под массив и привязывает его к полю. Поле обязано лежать в этой же
-        /// записи — в голове или в элементе уже выделенного массива (так строится вложенность).
+        /// Reserves room for an array and binds it to a field. The field is obliged to lie in this same
+        /// record — in the head or in an element of an already allocated array (that is how nesting is
+        /// built).
         /// </summary>
         public BlobchegBuilderArray<T> Allocate<T>(ref BlobchegArray<T> field, int length) where T : unmanaged
         {
@@ -94,27 +97,28 @@ namespace Blobcheg.Authoring
 
             if (length < 0)
                 throw new ArgumentOutOfRangeException(nameof(length),
-                    $"Blobcheg: нода '{_nodeName}' просит массив '{typeof(T).Name}' отрицательной длины {length}");
+                    $"Blobcheg: node '{_nodeName}' asks for an array of '{typeof(T).Name}' of negative length {length}");
 
             if (UnsafeUtility.AlignOf<T>() > BlobchegFormat.RecordAlign)
                 throw new InvalidOperationException(
-                    $"Blobcheg: у элемента '{typeof(T).FullName}' выравнивание {UnsafeUtility.AlignOf<T>()} " +
-                    $"больше выравнивания записи {BlobchegFormat.RecordAlign} — внутри записи его не обеспечить");
+                    $"Blobcheg: element '{typeof(T).FullName}' has alignment {UnsafeUtility.AlignOf<T>()}, " +
+                    $"greater than the record alignment {BlobchegFormat.RecordAlign} — it cannot be provided inside a record");
 
             var fieldAddress = (byte*)UnsafeUtility.AddressOf(ref field);
             var owner = OwnerOf(fieldAddress);
             if (owner < 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{_nodeName}' привязывает массив к полю не из этой записи — " +
-                    $"ref обязан указывать в Root или в элемент уже выделенного массива '{typeof(TRoot).Name}'");
+                    $"Blobcheg: node '{_nodeName}' binds an array to a field that is not from this record — " +
+                    $"the ref is obliged to point into Root or into an element of an already allocated array of '{typeof(TRoot).Name}'");
 
             var fieldOffset = (int)(fieldAddress - _chunks[owner].Ptr);
             if (!_boundFields.Add((long)owner << 32 | (uint)fieldOffset))
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{_nodeName}' выделяет массив в поле " +
-                    $"'{FieldNameAt(owner, fieldOffset)}' второй раз — второй Allocate осиротил бы первый");
+                    $"Blobcheg: node '{_nodeName}' allocates an array in field " +
+                    $"'{FieldNameAt(owner, fieldOffset)}' a second time — a second Allocate would orphan the first");
 
-            // Пустой массив легален: поле остаётся нулём, чанка нет, чтение — без разыменования.
+            // An empty array is legal: the field stays zero, there is no chunk, and the read happens
+            // without dereferencing.
             if (length == 0)
             {
                 *(int*)fieldAddress = 0;
@@ -144,9 +148,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Считает раскладку: чанки ложатся за головой в порядке Allocate, каждый выровнен на
-        /// AlignOf своего элемента от начала записи. Заполняет оффсеты, собирает байты, отдаёт их
-        /// коллектору и освобождает память.
+        /// Computes the layout: the chunks land behind the head in Allocate order, each aligned to the
+        /// AlignOf of its element from the start of the record. It fills the offsets, assembles the
+        /// bytes, hands them to the collector and frees the memory.
         /// </summary>
         public void End()
         {
@@ -195,7 +199,7 @@ namespace Blobcheg.Authoring
         {
             if (_closed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: {what} у ноды '{_nodeName}' после End — запись '{typeof(TRoot).Name}' уже собрана");
+                    $"Blobcheg: {what} on node '{_nodeName}' after End — record '{typeof(TRoot).Name}' is already assembled");
         }
 
         int OwnerOf(byte* fieldAddress)
@@ -210,11 +214,11 @@ namespace Blobcheg.Authoring
             return -1;
         }
 
-        /// <summary>Имя поля по смещению в чанке — для текста ошибки. Не нашлось — само смещение.</summary>
+        /// <summary>The field name by its offset in a chunk — for the error text. If not found, the offset itself.</summary>
         string FieldNameAt(int chunkIndex, int fieldOffset)
         {
-            // У головы тип — TRoot; у чанка массива тип элемента восстанавливается по патчу,
-            // который этот чанк завёл.
+            // The head's type is TRoot; for an array chunk the element type is recovered from the patch
+            // that created that chunk.
             var type = typeof(TRoot);
             if (chunkIndex > 0)
             {
@@ -236,7 +240,8 @@ namespace Blobcheg.Authoring
 
         Type ElementTypeOf(Patch patch)
         {
-            // Тип элемента чанка в патчах не хранится: восстанавливается по полю-владельцу.
+            // The element type of a chunk is not stored in the patches: it is recovered from the owning
+            // field.
             var ownerType = patch.OwnerChunk == 0 ? typeof(TRoot) : null;
             if (ownerType == null)
                 return null;
@@ -269,9 +274,9 @@ namespace Blobcheg.Authoring
     }
 
     /// <summary>
-    /// Окно записи в выделенный массив: указатель и длина. ref struct — жить дольше Write ему
-    /// незачем, а чанки билдера до End не переезжают, поэтому держать окно через соседний Allocate
-    /// можно.
+    /// A window for writing into an allocated array: a pointer and a length. A ref struct — it has no
+    /// reason to live longer than Write, and the builder's chunks do not move before End, so the window
+    /// may be held across a neighbouring Allocate.
     /// </summary>
     public unsafe ref struct BlobchegBuilderArray<T> where T : unmanaged
     {
@@ -294,16 +299,16 @@ namespace Blobcheg.Authoring
         {
             get
             {
-                // Окно, пережившее End, указывает в освобождённую память — писать туда нельзя ни
-                // при каких обстоятельствах, и молчать об этом тоже.
+                // A window that outlived End points into freed memory — writing there is not allowed
+                // under any circumstances, and neither is staying silent about it.
                 if (_owner.Closed)
                     throw new InvalidOperationException(
-                        $"Blobcheg: нода '{_nodeName}' пишет в окно массива после End — запись уже " +
-                        "собрана, память чанков освобождена. Заполняйте массив до End");
+                        $"Blobcheg: node '{_nodeName}' writes into an array window after End — the record is " +
+                        "already assembled and the chunk memory is freed. Fill the array before End");
 
                 if ((uint)index >= (uint)_length)
                     throw new IndexOutOfRangeException(
-                        $"Blobcheg: нода '{_nodeName}' пишет в элемент {index} массива длины {_length}");
+                        $"Blobcheg: node '{_nodeName}' writes into element {index} of an array of length {_length}");
 
                 return ref _ptr[index];
             }

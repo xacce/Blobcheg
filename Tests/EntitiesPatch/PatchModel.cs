@@ -3,26 +3,27 @@ using Unity.Entities;
 
 namespace Blobcheg.PatchTests
 {
-    // ------------------------------------------------------------------ домены
+    // ------------------------------------------------------------------ domains
     //
-    // Три домена. Горячий и холодный нужны затем, что половина набора — про «а если оффсет из
-    // ЧУЖОЙ базы»; с одним доменом этот вопрос не задать. Третий, призрачный, объявлен базой, но в
-    // тестах не поднимается никогда: на нём проверяется обещание «домен не поднят — явная ошибка».
+    // Three domains. The hot and the cold one exist because half the set is about "and what if the
+    // offset comes from a FOREIGN base"; with one domain that question cannot be asked. The third, the
+    // ghost one, is declared by a base but is never loaded in the tests: the promise "the domain is not
+    // loaded means an explicit error" is checked on it.
     //
-    // Домен обязан быть объявлен через [Blobcheg] — иначе BlobchegPatchTableBuilder про него не
-    // узнает и уронит сборку таблицы на первой же ссылке в него.
+    // A domain is obliged to be declared through [Blobcheg] — otherwise BlobchegPatchTableBuilder never
+    // learns about it and fails the table build on the very first reference into it.
 
-    /// <summary>Горячая база. Поднимается почти в каждом тесте.</summary>
+    /// <summary>The hot base. Loaded in almost every test.</summary>
     public interface IPatchHot
     {
     }
 
-    /// <summary>Холодная база. Источник ЧУЖИХ оффсетов.</summary>
+    /// <summary>The cold base. The source of FOREIGN offsets.</summary>
     public interface IPatchCold
     {
     }
 
-    /// <summary>Домен, база которого не поднимается никогда.</summary>
+    /// <summary>A domain whose base is never loaded.</summary>
     public interface IPatchGhost
     {
     }
@@ -42,7 +43,7 @@ namespace Blobcheg.PatchTests
     {
     }
 
-    // ------------------------------------------------------------------ записи
+    // ------------------------------------------------------------------ records
 
     public struct PatchGun : IPatchHot
     {
@@ -51,8 +52,9 @@ namespace Blobcheg.PatchTests
     }
 
     /// <summary>
-    /// Близнец пушки: тот же размер, другой тип. На нём проверяется, ловит ли новый путь чтение
-    /// записи чужим типом так же, как ловит старый (<c>Read&lt;T&gt;</c> через отладочный контур).
+    /// A twin of the gun: the same size, a different type. It is used to check whether the new path
+    /// catches reading a record with a foreign type the way the old one does (<c>Read&lt;T&gt;</c>
+    /// through the debug contour).
     /// </summary>
     public struct PatchArmor : IPatchHot
     {
@@ -72,24 +74,25 @@ namespace Blobcheg.PatchTests
     }
 
     /// <summary>
-    /// Запись, не входящая ни в один домен. Компонента со ссылкой на неё в сборке НЕТ и быть не
-    /// может: сборка таблицы патча падает на такой ссылке целиком, то есть выключила бы патч всему
-    /// проекту. Проверяется рефлексией — см. <c>DomainTests</c>.
+    /// A record that belongs to no domain. There is NO component with a reference to it in the assembly
+    /// and there cannot be: the build of the patch table fails on such a reference entirely, that is, it
+    /// would switch the patch off for the whole project. It is checked by reflection — see
+    /// <c>DomainTests</c>.
     /// </summary>
     public struct PatchLoose
     {
         public int V;
     }
 
-    /// <summary>Запись сразу в двух доменах. Компоненты со ссылкой на неё — по той же причине нет.</summary>
+    /// <summary>A record in two domains at once. There is no component referencing it, for the same reason.</summary>
     public struct PatchBoth : IPatchHot, IPatchCold
     {
         public int V;
     }
 
     /// <summary>
-    /// Запись, ВНУТРИ которой лежит слот. Абсурд по постановке: ссылка на ссылку. Существует
-    /// затем, чтобы проверить, что патч ходит по памяти компонентов и не лезет внутрь самой базы.
+    /// A record with a slot INSIDE it. Absurd by construction: a reference to a reference. It exists to
+    /// check that the patch walks the memory of components and does not climb inside the base itself.
     /// </summary>
     public struct PatchRefRecord : IPatchHot
     {
@@ -97,14 +100,14 @@ namespace Blobcheg.PatchTests
         public long Tag;
     }
 
-    // ------------------------------------------------------------------ компоненты
+    // ------------------------------------------------------------------ components
 
     public struct GunRef : IComponentData
     {
         public BlobchegReference<PatchGun> Gun;
     }
 
-    /// <summary>Второй тип компонента с тем же слотом — под «один оффсет в двух компонентах».</summary>
+    /// <summary>A second component type with the same slot — for "one offset in two components".</summary>
     public struct GunRefTwin : IComponentData
     {
         public BlobchegReference<PatchGun> Gun;
@@ -120,29 +123,30 @@ namespace Blobcheg.PatchTests
         public BlobchegReference<PatchNote> Note;
     }
 
-    /// <summary>Ссылка в домен, база которого не поднимается.</summary>
+    /// <summary>A reference into a domain whose base is not loaded.</summary>
     public struct GhostRef : IComponentData
     {
         public BlobchegReference<PatchGhostRecord> Ghost;
     }
 
-    /// <summary>Два слота разных типов записи в одном компоненте — перепутать их нельзя.</summary>
+    /// <summary>Two slots of different record types in one component — they must not be mixed up.</summary>
     public struct PairRef : IComponentData
     {
         public BlobchegReference<PatchGun> Gun;
         public BlobchegReference<PatchArmor> Armor;
     }
 
-    /// <summary>Компонент без единого слота: патч обязан его не заметить.</summary>
+    /// <summary>A component without a single slot: the patch is obliged not to notice it.</summary>
     public struct PlainData : IComponentData
     {
         public int Value;
     }
 
     /// <summary>
-    /// Слот вторым полем после невыровненного байта. При <c>Pack = 1</c> он лежит по байтовому
-    /// оффсету 1, то есть обход обязан отдать 1, а патч — записать восемь байт по невыровненному
-    /// адресу. Хвостовой байт стоит затем, чтобы было видно, если патч залез за край слота.
+    /// A slot as the second field after an unaligned byte. With <c>Pack = 1</c> it lies at byte offset
+    /// 1, that is, the walk is obliged to return 1 and the patch to write eight bytes at an unaligned
+    /// address. The trailing byte is there so that it is visible if the patch climbed past the edge of
+    /// the slot.
     /// </summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct PackedRef : IComponentData
@@ -164,37 +168,37 @@ namespace Blobcheg.PatchTests
         public NestOne Inner;
     }
 
-    /// <summary>Слот на второй ступени вложенности.</summary>
+    /// <summary>A slot at the second level of nesting.</summary>
     public struct ShallowNestRef : IComponentData
     {
         public int Head;
         public NestOne Inner;
     }
 
-    /// <summary>Слот на третьей ступени вложенности.</summary>
+    /// <summary>A slot at the third level of nesting.</summary>
     public struct DeepNestRef : IComponentData
     {
         public long Head;
         public NestTwo Inner;
     }
 
-    /// <summary>Элемент буфера со слотом — патчится поэлементно.</summary>
+    /// <summary>A buffer element with a slot — patched element by element.</summary>
     public struct RefElement : IBufferElementData
     {
         public BlobchegReference<PatchGun> Gun;
         public int Marker;
     }
 
-    /// <summary>Ссылка на запись, которая сама состоит из ссылки.</summary>
+    /// <summary>A reference to a record that itself consists of a reference.</summary>
     public struct RecordRef : IComponentData
     {
         public BlobchegReference<PatchRefRecord> Record;
     }
 
     /// <summary>
-    /// Тот же слот, но в ОБЩЕМ компоненте. <c>ISharedComponentData</c> не наследует
-    /// <c>IComponentData</c>, поэтому обход типов его не видит — вопрос в том, узнает ли об этом
-    /// разработчик хоть как-нибудь.
+    /// The same slot, but in a SHARED component. <c>ISharedComponentData</c> does not inherit
+    /// <c>IComponentData</c>, so the type walk does not see it — the question is whether the developer
+    /// finds out about that in any way at all.
     /// </summary>
     public struct SharedRef : ISharedComponentData
     {

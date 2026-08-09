@@ -2,7 +2,7 @@
   "name": "com.xacce.blobcheg",
   "version": "0.1.0",
   "displayName": "Blobcheg",
-  "description": "Сепарированная блоб-БД поверх бинарных файлов: свой буфер, чтение реинтерпретацией по оффсету, без BlobAssetReference.",
+  "description": "A separated blob database over binary files: its own buffer, reads by reinterpretation at an offset, no BlobAssetReference.",
   "unity": "6000.3",
   "dependencies": {
     "com.unity.burst": "1.8.29",
@@ -11,8 +11,8 @@
   },
   "samples": [
     {
-      "displayName": "Деструктивные тесты (core dev)",
-      "description": "Сквозной набор, который ломает пакет от ассета до байта в файле. В компиляцию не попадает, пока его не импортируешь: это инструмент разработчика пакета, а не потребителя.",
+      "displayName": "Destructive tests (core dev)",
+      "description": "An end-to-end set that breaks the package from the asset down to a byte in the file. It does not enter the compilation until you import it: this is a tool for the package developer and not for the consumer.",
       "path": "Samples~/AdvancedTests"
     }
   ]

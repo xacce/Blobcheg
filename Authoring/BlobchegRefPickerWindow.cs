@@ -6,12 +6,13 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Пикер поля-ссылки. Свой, а не нативный: нативный умеет фильтровать только по типу ассета, а
-    /// ассет-тип у нас один на всю систему — в списке оказались бы записи всех доменов сразу.
-    /// Здесь список собран заранее (по типу записи или по роутеру), поэтому положить чужое нечем.
+    /// The picker for a reference field. Our own and not the native one: the native one can only filter
+    /// by asset type, and we have one asset type for the whole system — the records of every domain
+    /// would end up in the list at once. Here the list is gathered beforehand (by record type or by
+    /// router), so there is nothing to put something foreign in with.
     ///
-    /// Список приходит готовым, а не собирается внутри: окно одно и на записи, и на носители id, и
-    /// знать про них обоих ему незачем.
+    /// The list arrives ready-made rather than being gathered inside: there is one window both for
+    /// records and for id carriers, and it has no business knowing about either of them.
     /// </summary>
     sealed class BlobchegRefPickerWindow : EditorWindow
     {
@@ -66,7 +67,7 @@ namespace Blobcheg.Authoring
             if (_focused)
                 return;
 
-            // Фокус ставится один раз: каждый кадр — и в поле не набрать ничего.
+            // The focus is set once: do it every frame and nothing can be typed into the field.
             EditorGUI.FocusTextInControl("blobcheg-search");
             _focused = true;
         }
@@ -93,7 +94,7 @@ namespace Blobcheg.Authoring
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
-            if (Row("Нет ссылки", null, _hot < 0))
+            if (Row("No reference", null, _hot < 0))
                 picked = true;
 
             var selected = Selected();
@@ -107,11 +108,11 @@ namespace Blobcheg.Authoring
             }
 
             if (_shown.Count == 0)
-                EditorGUILayout.HelpBox(_all.Count == 0 ? _empty : "По запросу ничего не нашлось.", MessageType.Info);
+                EditorGUILayout.HelpBox(_all.Count == 0 ? _empty : "Nothing was found for that query.", MessageType.Info);
 
             EditorGUILayout.EndScrollView();
 
-            // Закрываться только после EndScrollView: выход из середины layout'а роняет GUI.
+            // Close only after EndScrollView: leaving from the middle of a layout breaks the GUI.
             if (!picked)
                 return;
 

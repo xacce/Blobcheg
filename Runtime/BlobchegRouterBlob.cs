@@ -6,14 +6,15 @@ using Unity.Mathematics;
 namespace Blobcheg
 {
     /// <summary>
-    /// Строка роутера: одна нода во всех базах сразу. Маска говорит, в каких базах она есть,
-    /// оффсеты лежат подряд без дырок — отсюда <c>flag → index</c> это popcount младших бит.
+    /// A router row: one node across all bases at once. The mask says which bases it is in, the offsets
+    /// lie one after another with no holes — hence <c>flag → index</c> is the popcount of the lower
+    /// bits.
     ///
-    /// Сообщения исключений — литералы: под Бёрстом интерполяция не компилируется.
+    /// The exception messages are literals: interpolation does not compile under Burst.
     /// </summary>
     public readonly unsafe struct BlobchegRouterRow
     {
-        // Указатель в чужом буфере: строка живёт ровно столько, сколько поднятый роутер.
+        // A pointer into someone else's buffer: a row lives exactly as long as the loaded router.
         [NativeDisableUnsafePtrRestriction]
         readonly uint* _offsets;
 
@@ -25,22 +26,23 @@ namespace Blobcheg
             _mask = mask;
         }
 
-        /// <summary>Битовая маска баз, в которых нода есть. Кодоген отдаёт её своим enum'ом.</summary>
+        /// <summary>The bit mask of the bases the node is in. The codegen hands it out as its own enum.</summary>
         public ulong Mask => _mask;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Has(int bit) => (_mask & (1ul << bit)) != 0;
 
         /// <summary>
-        /// Оффсет записи в базе <paramref name="bit"/>. Записи нет — бросает: сентинела «нет записи»
-        /// в пакете не существует, молчаливый ноль поехал бы в <c>Read</c> и лёг бы в чужие байты.
+        /// The offset of the record in base <paramref name="bit"/>. If there is no record it throws:
+        /// there is no "no record" sentinel in the package, and a silent zero would travel into
+        /// <c>Read</c> and land in someone else's bytes.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public uint Offset(int bit)
         {
             if (!Has(bit))
                 throw new InvalidOperationException(
-                    "Blobcheg.Router: у этой ноды нет записи в этой базе — спрашивай Has или TryGet");
+                    "Blobcheg.Router: this node has no record in this base — ask Has or TryGet");
 
             return _offsets[math.countbits(_mask & ((1ul << bit) - 1))];
         }
@@ -60,17 +62,18 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Резидентный буфер роутера. Всю работу делает он; типизированный фасад
-    /// (<c>[BlobchegRouter]</c>-партиал) — тонкая обёртка сверху, знающая номера бит своих баз.
+    /// The resident buffer of a router. It does all the work; the typed facade (the
+    /// <c>[BlobchegRouter]</c> partial) is a thin wrapper on top that knows the bit numbers of its
+    /// bases.
     /// </summary>
     public unsafe struct BlobchegRouterBlob : IDisposable
     {
         BlobchegBuffer _buffer;
 
-        // Три указателя внутрь того же иммутабельного буфера. Метка стоит здесь, а не у читателя:
-        // роутер попадает в джобу полем, и без неё safety-система рубит шедул за сырой указатель —
-        // причём именем поля пакета, до которого потребителю нет дела. Безопасно by construction:
-        // буфер живёт всю сессию и только читается.
+        // Three pointers into that same immutable buffer. The attribute sits here and not on the
+        // reader: a router enters a job as a field, and without it the safety system kills the schedule
+        // over a raw pointer — naming a field of the package the consumer has no business with. Safe by
+        // construction: the buffer lives for the whole session and is only read.
         [NativeDisableUnsafePtrRestriction]
         byte* _masks;
 
@@ -85,11 +88,11 @@ namespace Blobcheg
         uint _debugOffset;
         byte _tag;
 
-        /// <summary>Забирает владение буфером, валидирует header, целостность и пролог.</summary>
+        /// <summary>Takes ownership of the buffer, validates the header, the integrity and the prolog.</summary>
         public BlobchegRouterBlob(BlobchegBuffer buffer, string what, int domainCount, ulong layoutHash)
         {
             if (!buffer.IsCreated)
-                throw new ArgumentException($"Blobcheg: пустой буфер роутера '{what}'", nameof(buffer));
+                throw new ArgumentException($"Blobcheg: an empty buffer for router '{what}'", nameof(buffer));
 
             _buffer = buffer;
             _debugOffset = 0;
@@ -102,7 +105,7 @@ namespace Blobcheg
             header.Validate(what, buffer.Length, contentHash, BlobchegFileKind.Router);
 
             if (buffer.Length < BlobchegRouterFormat.PrologOffset + BlobchegRouterFormat.PrologSize)
-                throw new InvalidOperationException($"Blobcheg: роутер '{what}' короче пролога");
+                throw new InvalidOperationException($"Blobcheg: router '{what}' is shorter than the prolog");
 
             ref var prolog = ref UnsafeUtility.AsRef<BlobchegRouterProlog>(buffer.Ptr + BlobchegRouterFormat.PrologOffset);
             prolog.Validate(what, buffer.Length, domainCount, layoutHash);
@@ -117,7 +120,7 @@ namespace Blobcheg
             {
                 if (*(uint*)(buffer.Ptr + header.DebugOffset) != BlobchegRouterFormat.DebugMagic)
                     throw new InvalidOperationException(
-                        $"Blobcheg: роутер '{what}' — debug-секция не там, где обещал header");
+                        $"Blobcheg: router '{what}' — the debug section is not where the header promised");
 
                 _debugOffset = header.DebugOffset;
             }
@@ -125,35 +128,35 @@ namespace Blobcheg
 
         public bool IsCreated => _buffer.IsCreated;
 
-        /// <summary>Сколько строк, то есть нод. Он же потолок номера строки в валидном id.</summary>
+        /// <summary>How many rows, that is, nodes. Also the ceiling of the row number in a valid id.</summary>
         public int Count => (int)_count;
 
         public bool HasDebug => _debugOffset != 0;
 
-        /// <summary>Тег этого роутера — старший байт id, которые он раздаёт.</summary>
+        /// <summary>The tag of this router — the high byte of the ids it hands out.</summary>
         public byte Tag => _tag;
 
         /// <summary>
-        /// Id строки по её номеру. Диапазон здесь НЕ проверяется — это дело <see cref="Get"/>;
-        /// путь инструментов и тестов, потребитель id не собирает.
+        /// The id of a row by its number. The range is NOT checked here — that is <see cref="Get"/>'s
+        /// business; the path of tools and tests, a consumer does not assemble ids.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public BlobchegId IdAt(uint index) => BlobchegId.Make(_tag, index);
 
         /// <summary>
-        /// Строка ноды. Обе проверки НЕ за дефайном: это два сравнения, а чужой или протухший id в
-        /// билде читал бы чужую память.
+        /// The row of a node. Neither check sits behind a define: they are two comparisons, and a
+        /// foreign or stale id would read foreign memory in a build.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public BlobchegRouterRow Get(BlobchegId id)
         {
             if (id.Tag != _tag)
                 throw new InvalidOperationException(
-                    "Blobcheg.Router: этот id выдан другим роутером — здесь он не значит ничего");
+                    "Blobcheg.Router: this id was handed out by another router — here it means nothing");
 
             if (id.Index >= _count)
                 throw new InvalidOperationException(
-                    "Blobcheg.Router: неизвестный id — строки с таким номером в роутере нет");
+                    "Blobcheg.Router: unknown id — the router has no row with that number");
 
             return new BlobchegRouterRow(_offsets + _rowStart[id.Index], MaskOf(id.Index));
         }
@@ -181,15 +184,15 @@ namespace Blobcheg
             _debugOffset = 0;
         }
 
-        /// <summary>Имя ноды по id — только для инструментов едитора; в релизном плеере секции нет.</summary>
+        /// <summary>The node name by id — for editor tools only; a release player carries no section.</summary>
         public string Describe(BlobchegId id)
         {
             if (_debugOffset == 0)
                 throw new InvalidOperationException(
-                    "Blobcheg.Router.Describe: в файле нет отладочного контура — он собран для релизного плеера");
+                    "Blobcheg.Router.Describe: the file carries no debug contour — it was assembled for a release player");
 
             if (id.Tag != _tag || id.Index >= _count)
-                throw new InvalidOperationException($"Blobcheg.Router.Describe: id {id} при {_count} строках");
+                throw new InvalidOperationException($"Blobcheg.Router.Describe: id {id} with {_count} rows");
 
             var nameOffset = *(uint*)(_buffer.Ptr + _debugOffset + 8 + id.Index * 4);
             var p = _buffer.Ptr + nameOffset;

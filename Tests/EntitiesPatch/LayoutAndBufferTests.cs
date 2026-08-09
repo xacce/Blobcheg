@@ -6,14 +6,14 @@ using Unity.Entities;
 namespace Blobcheg.PatchTests
 {
     /// <summary>
-    /// Где патч ищет слот и находит ли. Обход полей — самая тихая часть фичи: не найденный слот не
-    /// бросает и не логирует, он просто навсегда остаётся оффсетом, и узнают об этом на первом
-    /// <c>Value</c> в джобе в билде.
+    /// Where the patch looks for a slot and whether it finds it. The field walk is the quietest part of
+    /// the feature: a slot that was not found neither throws nor logs, it simply stays an offset forever,
+    /// and that is learned on the first <c>Value</c> in a job in a build.
     /// </summary>
     public sealed unsafe class LayoutAndBufferTests : PatchFixture
     {
         [Test]
-        public void Слот_вторым_полем_после_невыровненного_байта()
+        public void A_slot_as_the_second_field_after_an_unaligned_byte()
         {
             var file = HotFile(ammo: 5f, rpm: 55);
             var hot = Raise(file);
@@ -32,14 +32,14 @@ namespace Blobcheg.PatchTests
             var packed = EM.GetComponentData<PackedRef>(entity);
 
             Assert.That(packed.Gun.Data.Value, Is.EqualTo(hot.AddressOf(offset)),
-                "слот по байтовому оффсету 1 обязан быть найден: обход считает оффсеты полей, а не гадает по выравниванию");
-            Assert.That(packed.Head, Is.EqualTo((byte)0xAB), "патч заехал левее слота");
-            Assert.That(packed.Tail, Is.EqualTo((byte)0xCD), "патч заехал правее слота");
+                "a slot at byte offset 1 is obliged to be found: the walk computes field offsets and does not guess from the alignment");
+            Assert.That(packed.Head, Is.EqualTo((byte)0xAB), "the patch drove to the left of the slot");
+            Assert.That(packed.Tail, Is.EqualTo((byte)0xCD), "the patch drove to the right of the slot");
             Assert.That(Copy(packed.Gun.Value).Rpm, Is.EqualTo(55));
         }
 
         [Test]
-        public void Невыровненный_слот_переживает_и_обратный_проход()
+        public void An_unaligned_slot_outlives_the_reverse_pass_too()
         {
             var file = HotFile();
             Raise(file);
@@ -65,7 +65,7 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Слот_на_второй_ступени_вложенности()
+        public void A_slot_at_the_second_level_of_nesting()
         {
             var file = HotFile(ammo: 6f, rpm: 66);
             var hot = Raise(file);
@@ -87,7 +87,7 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Слот_на_третьей_ступени_вложенности()
+        public void A_slot_at_the_third_level_of_nesting()
         {
             var file = HotFile(ammo: 9f, rpm: 99);
             var hot = Raise(file);
@@ -108,14 +108,14 @@ namespace Blobcheg.PatchTests
 
             var deep = EM.GetComponentData<DeepNestRef>(entity);
             Assert.That(deep.Inner.Inner.Gun.Data.Value, Is.EqualTo(hot.AddressOf(offset)),
-                "обход обязан быть рекурсивным, а не «поля первого уровня»");
+                "the walk is obliged to be recursive and not \"the fields of the first level\"");
             Assert.That(deep.Head, Is.EqualTo(-1));
             Assert.That(deep.Inner.S, Is.EqualTo((short)3));
             Assert.That(Copy(deep.Inner.Inner.Gun.Value).Rpm, Is.EqualTo(99));
         }
 
         [Test]
-        public void Два_слота_разных_типов_записи_в_одном_компоненте_нельзя_перепутать()
+        public void Two_slots_of_different_record_types_in_one_component_cannot_be_mixed_up()
         {
             var file = HotFile(ammo: 10f, rpm: 101, hp: 202f, plates: 4);
             var hot = Raise(file);
@@ -134,14 +134,14 @@ namespace Blobcheg.PatchTests
             Assert.That(pair.Gun.Data.Value, Is.EqualTo(hot.AddressOf(file["gun"])));
             Assert.That(pair.Armor.Data.Value, Is.EqualTo(hot.AddressOf(file["armor"])));
             Assert.That(pair.Gun.Data.Value, Is.Not.EqualTo(pair.Armor.Data.Value),
-                "два слота одного компонента получили один адрес — обход спутал их оффсеты");
+                "two slots of one component got the same address — the walk confused their offsets");
 
             Assert.That(Copy(pair.Gun.Value).Rpm, Is.EqualTo(101));
             Assert.That(Copy(pair.Armor.Value).Plates, Is.EqualTo(4));
         }
 
         [Test]
-        public void Буфер_из_трёх_элементов_патчится_поэлементно()
+        public void A_buffer_of_three_elements_is_patched_element_by_element()
         {
             var file = Domain(nameof(IPatchHot))
                 .Add("g0", new PatchGun { Ammo = 1f, Rpm = 1 })
@@ -164,37 +164,38 @@ namespace Blobcheg.PatchTests
                 var element = patched[i];
 
                 Assert.That(element.Gun.Data.Value, Is.EqualTo(hot.AddressOf(file["g" + i])),
-                    $"элемент {i} обязан доехать до СВОЕЙ записи, а не до первой в буфере");
+                    $"element {i} is obliged to reach ITS OWN record and not the first one in the buffer");
                 Assert.That(Copy(element.Gun.Value).Rpm, Is.EqualTo(i + 1));
                 Assert.That(element.Marker, Is.EqualTo(i));
             }
         }
 
-        // BUG: одна битая ссылка в сцене делает мир незаписываемым
-        // Что происходит: битый элемент патч отбил и оставил как был — ровно как обещано. Но при
-        //   записи мира ОБРАТНЫЙ проход встречает то же самое число ещё раз, отбивает его тем же
-        //   OutOfRange, и конец сериализации поднимает накопленный провал до исключения. Save()
-        //   не возвращает байт вовсе: сцену с одной битой ссылкой нельзя сохранить, чтобы починить
-        //   её потом.
-        // Что должно (план, строка 31): «явная ошибка И состояние согласовано: после неё обратный
-        //   проход возвращает нетронутым элементам их исходные оффсеты. Ни один элемент не остался
-        //   сырым указателем, который уедет на диск адресом». То есть ошибка — на патче, а запись
-        //   мира обязана пройти и вернуть в файл те же три числа, что в нём были.
-        // Корневая причина: асимметрия строгости между двумя направлениями одного прохода.
-        //   BlobchegBases.TryUnresolve отвечает OutOfRange на любое значение, которое не лежит ни в
-        //   текущем поколении, ни в отставных, и при этом не меньше длины буфера, — не различая
-        //   «протухший адрес, который сейчас утечёт на диск» и «плохой оффсет, которого патч уже
-        //   касался и который адресом никогда не был». Второй случай безопасен по построению:
-        //   значение не попадает ни в один известный реестру диапазон, значит указателем оно быть
-        //   не может, и оставить его как есть — точный round-trip. Ради первого случая (план,
-        //   строка 37) эта строгость не нужна: снятый с учёта буфер уходит в отставные поколения, и
-        //   его адрес сворачивается в оффсет штатно — тест
-        //   Сохранение_после_снятия_домена_с_учёта_обязано_отбиться именно так и проходит.
-        //   Наверху же SerializeUtility.SerializeWorldInternal делает провал обратного прохода
-        //   фатальным для всей записи, тогда как прямой проход тот же провал считает бедой одного
-        //   слота и метёт дальше.
+        // BUG: one broken reference in a scene makes the world unsaveable
+        // What happens: the patch rejected the broken element and left it as it was — exactly as promised.
+        //   But while writing the world the REVERSE pass meets that same number again, rejects it with the
+        //   same OutOfRange, and the end of serialisation raises the accumulated failure into an
+        //   exception. Save() returns no bytes at all: a scene with one broken reference cannot be saved
+        //   in order to be repaired later.
+        // What should happen (the plan, line 31): "an explicit error AND a consistent state: after it the
+        //   reverse pass returns their original offsets to the untouched elements. Not a single element
+        //   was left as a raw pointer that travels to disk as an address." That is, the error belongs to
+        //   the patch, while writing the world is obliged to go through and return the same three numbers
+        //   into the file that were in it.
+        // Root cause: an asymmetry of strictness between the two directions of one pass.
+        //   BlobchegBases.TryUnresolve answers OutOfRange for any value that lies neither in the current
+        //   generation nor in the retired ones while being no less than the buffer length — without
+        //   telling "a stale address that is about to leak to disk" from "a bad offset the patch already
+        //   touched and that was never an address". The second case is safe by construction: the value
+        //   falls into no range the registry knows, so it cannot be a pointer, and leaving it as it is
+        //   makes an exact round trip. For the sake of the first case (the plan, line 37) this strictness
+        //   is not needed: a buffer taken off the register moves into the retired generations, and its
+        //   address folds into an offset as it should — the test
+        //   Saving_after_the_domain_was_taken_off_the_register_is_obliged_to_be_rejected passes exactly
+        //   that way. Above, however, SerializeUtility.SerializeWorldInternal makes a failure of the
+        //   reverse pass fatal for the whole write, while the forward pass treats the same failure as the
+        //   trouble of one slot and sweeps on.
         [Test]
-        public void Битый_элемент_в_середине_буфера_не_оставляет_соседей_наполовину_патченными()
+        public void A_broken_element_in_the_middle_of_a_buffer_does_not_leave_the_neighbours_half_patched()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -207,23 +208,23 @@ namespace Blobcheg.PatchTests
             buffer.Add(new RefElement { Gun = new BlobchegReference<PatchGun>(bad), Marker = 1 });
             buffer.Add(new RefElement { Gun = new BlobchegReference<PatchGun>(good), Marker = 2 });
 
-            Assert.Throws<InvalidOperationException>(() => Patch(), "битый элемент обязан быть ошибкой");
+            Assert.Throws<InvalidOperationException>(() => Patch(), "a broken element is obliged to be an error");
 
             var patched = EM.GetBuffer<RefElement>(entity);
 
             Assert.That(patched[0].Gun.Data.Value, Is.EqualTo(hot.AddressOf(good)));
             Assert.That(patched[2].Gun.Data.Value, Is.EqualTo(hot.AddressOf(good)),
-                "элемент ПОСЛЕ битого обязан быть обработан: провал одного не имеет права глотать остальные");
+                "the element AFTER the broken one is obliged to be processed: the failure of one has no right to swallow the rest");
             Assert.That(patched[1].Gun.Data.Value, Is.EqualTo(bad),
-                "битый элемент обязан остаться тем числом, что в нём было, а не превратиться в дикий адрес");
+                "the broken element is obliged to stay the number that was in it and not to turn into a wild address");
 
-            // И состояние обязано быть согласованным: обратный проход по этому буферу не выдаёт
-            // наружу ни одного адреса процесса.
+            // And the state is obliged to be consistent: the reverse pass over this buffer hands out not a
+            // single process address.
             var bytes = Save();
             BlobchegPatchErrors.Clear();
 
             Assert.That(Contains(bytes, hot.AddressOf(good)), Is.False,
-                "в файл уехал адрес процесса — полупропатченный буфер утёк на диск");
+                "a process address travelled into the file — a half-patched buffer leaked to disk");
 
             var loaded = LoadRaw(bytes);
             var stored = loaded.EntityManager.GetBuffer<RefElement>(SingleBuffer<RefElement>(loaded));
@@ -234,7 +235,7 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Буфер_на_сто_тысяч_элементов_патчится_целиком()
+        public void A_buffer_of_a_hundred_thousand_elements_is_patched_whole()
         {
             const int count = 100_000;
 
@@ -256,13 +257,13 @@ namespace Blobcheg.PatchTests
             foreach (var index in new[] { 0, 1, count / 2, count - 2, count - 1 })
             {
                 Assert.That(patched[index].Gun.Data.Value, Is.EqualTo(hot.AddressOf(offset)),
-                    $"элемент {index} остался непропатченным");
+                    $"element {index} was left unpatched");
                 Assert.That(patched[index].Marker, Is.EqualTo(index));
             }
         }
 
         [Test]
-        public void Десять_тысяч_сущностей_со_слотом_патчатся_за_один_проход()
+        public void Ten_thousand_entities_with_a_slot_are_patched_in_one_pass()
         {
             const int count = 10_000;
 
@@ -285,11 +286,11 @@ namespace Blobcheg.PatchTests
 
             entities.Dispose();
 
-            Assert.That(wrong, Is.Zero, "патч обязан накрыть все чанки архетипа, а не первый");
+            Assert.That(wrong, Is.Zero, "the patch is obliged to cover every chunk of the archetype and not the first one");
         }
 
         [Test]
-        public void Слот_в_компоненте_отключённой_сущности_тоже_патчится()
+        public void A_slot_in_a_component_of_a_disabled_entity_is_patched_too()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -300,8 +301,8 @@ namespace Blobcheg.PatchTests
 
             Patch();
 
-            // Отключённая сущность доедет до включения уже в игре, и оффсет в ней к тому моменту
-            // должен быть адресом: второго патча не будет.
+            // A disabled entity reaches its enabling already in the game, and by that moment the offset in
+            // it must be an address: there will be no second patch.
             Assert.That(EM.GetComponentData<GunRef>(entity).Gun.Data.Value, Is.EqualTo(hot.AddressOf(offset)));
         }
     }

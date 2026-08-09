@@ -1,64 +1,66 @@
-# Форк com.unity.entities
+# The com.unity.entities fork
 
-Патч ссылок Blobcheg живёт внутри десериализации сцены — там же, где Unity патчит свои
-`BlobAssetReference`. Дотянуться туда снаружи нечем: `SerializeUtility` не даёт ни события, ни
-виртуального метода. Поэтому пакет вендорится в `Packages/` проекта и правится.
+The Blobcheg reference patch lives inside scene deserialisation — in the same place where Unity patches
+its own `BlobAssetReference`. There is nothing to reach in there from the outside: `SerializeUtility`
+offers neither an event nor a virtual method. That is why the package is vendored into the project's
+`Packages/` and edited.
 
-Правки минимальны и держатся такими намеренно: в форк уехали только точка расширения и её вызовы,
-вся логика патча — в `Blobcheg.Entities.Patch`. Чем меньше диф, тем дешевле бамп версии.
+The edits are minimal and are deliberately kept that way: only the extension point and its calls went
+into the fork, all the logic of the patch lives in `Blobcheg.Entities.Patch`. The smaller the diff, the
+cheaper a version bump.
 
-| файл | что там |
+| file | what is in it |
 |---|---|
-| `Unity.Entities/Serialization/BlobchegPatchHook.cs` | новый: держатель трёх хуков |
-| `Unity.Entities/Serialization/SerializeUtility.cs` | обход чанка `PatchBlobchegRefsInChunk` и три вызова; плюс починка апстримной дыры на пустом мире |
-| `Unity.Scenes/LiveConversionPatcher.cs` | вызов после применения чейнджсета |
+| `Unity.Entities/Serialization/BlobchegPatchHook.cs` | new: the holder of three hooks |
+| `Unity.Entities/Serialization/SerializeUtility.cs` | the chunk walk `PatchBlobchegRefsInChunk` and three calls; plus a fix for an upstream hole on an empty world |
+| `Unity.Scenes/LiveConversionPatcher.cs` | the call after a change set is applied |
 
-## Вендорить с нуля
+## Vendoring from scratch
 
 ```powershell
-./vendor.ps1 -Project <путь к Unity-проекту>
+./vendor.ps1 -Project <path to the Unity project>
 ```
 
-Скрипт берёт чистый пакет из кеша, снимает read-only и накатывает `.patch`.
+The script takes the clean package from the cache, clears read-only and applies the `.patch`.
 
-**Важно про кеш.** Unity выкидывает пакет из `Library/PackageCache` проекта, как только тот
-становится embedded. То есть вендорить надо ДО того, как появилась папка `Packages/com.unity.entities`.
-Если её уже нет и в глобальном кеше тоже — убери embedded-копию, дай Unity разрешить пакет из
-реестра, и запускай снова.
+**Important about the cache.** Unity throws a package out of the project's `Library/PackageCache` as
+soon as it becomes embedded. That is, vendoring has to happen BEFORE the `Packages/com.unity.entities`
+folder appears. If it is already gone from the global cache too — remove the embedded copy, let Unity
+resolve the package from the registry, and run again.
 
-После вендоринга в Player Settings проекта должен стоять дефайн `BLOBCHEG_ENTITIES_PATCH` — им
-включается сборка `Blobcheg.Entities.Patch`. Без него патч не встанет, а всё остальное в пакете
-будет работать по-старому.
+After vendoring, the project's Player Settings must carry the `BLOBCHEG_ENTITIES_PATCH` define — it is
+what switches the `Blobcheg.Entities.Patch` assembly on. Without it the patch does not install, and
+everything else in the package keeps working the old way.
 
-## Накатить патч руками
+## Applying the patch by hand
 
-Из корня проекта, когда пакет уже вендорнут:
+From the root of the project, once the package is vendored:
 
 ```
 git apply --3way Packages/Blobcheg/tools~/entities-patch/com.unity.entities@1.4.8.patch
-git apply --check <тот же путь>     # проверить, не накатывая
+git apply --check <the same path>     # check without applying
 ```
 
-## Бампнуть версию entities
+## Bumping the entities version
 
-1. Пересобрать патч из текущего форка, если он расходился с файлом: `./regen.sh <проект>`.
-2. Вылить новую версию пакета поверх папки.
-3. `git apply --3way` старым патчем. `--3way` разрулит сдвиги строк сам; настоящие конфликты
-   оставит маркерами в файлах.
-4. Разрулить, что осталось, и пересобрать патч под новую версию:
-   `./regen.sh <проект> <коммит с чистой новой версией>`.
+1. Rebuild the patch from the current fork if it drifted apart from the file: `./regen.sh <project>`.
+2. Pour the new version of the package over the folder.
+3. `git apply --3way` with the old patch. `--3way` sorts out line shifts by itself; real conflicts it
+   leaves as markers in the files.
+4. Sort out what is left and rebuild the patch for the new version:
+   `./regen.sh <project> <the commit with the clean new version>`.
 
-Конфликтовать почти нечему: `PatchBlobchegRefsInChunk` — самостоятельный метод, а не вклинивание в
-чужой, а вызовов всего четыре, по строке каждый.
+There is almost nothing to conflict over: `PatchBlobchegRefsInChunk` is a standalone method rather than
+a wedge into someone else's, and there are only four calls, one line each.
 
-## Пересобрать патч
+## Rebuilding the patch
 
 ```bash
-./regen.sh <путь к Unity-проекту> [эталонный-коммит]
+./regen.sh <path to the Unity project> [baseline-commit]
 ```
 
-Эталон — коммит, в котором лежит **чистый** пакет. Без второго аргумента берётся из шапки
-существующего патча.
+The baseline is the commit that holds the **clean** package. Without the second argument it is taken
+from the header of the existing patch.
 
-Bash, а не PowerShell, намеренно: дифф с русскими комментариями надо записать байт в байт, а
-PowerShell перекодирует поток и съедает кириллицу.
+Bash and not PowerShell on purpose: the diff has to be written byte for byte, and PowerShell re-encodes
+the stream.

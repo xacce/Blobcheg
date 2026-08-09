@@ -6,7 +6,7 @@ using UnityEditor;
 
 namespace Blobcheg.Authoring
 {
-    /// <summary>Что нода отдала в домен: тикет писателя плюс всё, что нужно ref-ассету.</summary>
+    /// <summary>What a node handed into a domain: the writer's ticket plus everything a ref asset needs.</summary>
     sealed class BlobchegEntry
     {
         public BlobchegNodeSo Node;
@@ -14,15 +14,15 @@ namespace Blobcheg.Authoring
         public int Ticket;
         public string RecordType;
 
-        /// <summary>Байты записи и хеш типа — их же кладёт в кеш пересборка, чтобы не звать Write.</summary>
+        /// <summary>The record bytes and the type hash — the rebuild puts the same ones into the cache so as not to call Write.</summary>
         public byte[] Bytes;
 
         public uint TypeHash;
     }
 
     /// <summary>
-    /// Набор открытых писателей на одну пересборку. Прослойки-коллектора между нодой и писателем
-    /// нет: Authoring — editor-only сборка и зовёт <see cref="BlobchegWriter"/> напрямую.
+    /// The set of open writers for one rebuild. There is no collector layer between the node and the
+    /// writer: Authoring is an editor-only assembly and calls <see cref="BlobchegWriter"/> directly.
     /// </summary>
     sealed class BlobchegCollector
     {
@@ -30,15 +30,16 @@ namespace Blobcheg.Authoring
         readonly Dictionary<Type, BlobchegWriter> _writers = new Dictionary<Type, BlobchegWriter>();
         readonly HashSet<string> _written = new HashSet<string>(StringComparer.Ordinal);
 
-        // Про ноду всё спрашивается один раз за пересборку. GUID и имя — нативные вызовы в базу
-        // ассетов, OutTypes у обычной ноды собирает массив заново на каждый спрос, а спрашивают их
-        // на КАЖДУЮ запись: на 10 000 нод это десятки тысяч вызовов ради трёх неизменных значений.
+        // Everything about a node is asked once per rebuild. The GUID and the name are native calls into
+        // the asset database, an ordinary node's OutTypes builds the array anew on every ask, and they
+        // are asked for EVERY record: on 10,000 nodes that is tens of thousands of calls for the sake of
+        // three unchanging values.
         readonly Dictionary<BlobchegNodeSo, About> _about = new Dictionary<BlobchegNodeSo, About>();
 
         readonly Dictionary<Type, List<BlobchegRecord>> _pending = new Dictionary<Type, List<BlobchegRecord>>();
 
-        // Открытые билдеры пересборки. Владеет ими коллектор: он раздаёт их через Begin и после
-        // Write ноды закрывает брошенные — и на нормальном выходе, и на исключении.
+        // The open builders of the rebuild. The collector owns them: it hands them out through Begin and
+        // closes the abandoned ones after a node's Write — both on a normal exit and on an exception.
         readonly List<IBlobchegOpenBuilder> _builders = new List<IBlobchegOpenBuilder>();
 
         struct About
@@ -69,21 +70,23 @@ namespace Blobcheg.Authoring
         {
             var about = AboutOf(node);
 
-            // Текст ошибки собирается только когда ошибка есть: на пустом заходе через Add проходят
-            // все записи проекта, и интерполяция на каждую — это и есть цена «ничего не менялось».
+            // The error text is assembled only when there is an error: on an empty run every record of
+            // the project passes through Add, and an interpolation for each is exactly the price of
+            // "nothing changed".
             if (Array.IndexOf(BlobchegDomains.All, domain) < 0)
-                BlobchegDomains.RequireDeclared(domain, $"запись ноды '{about.Name}'");
+                BlobchegDomains.RequireDeclared(domain, $"the record of node '{about.Name}'");
 
             if (Array.IndexOf(about.OutTypes, domain) < 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{about.Name}' пишет в домен '{domain.Name}', которого нет в её OutTypes");
+                    $"Blobcheg: node '{about.Name}' writes into domain '{domain.Name}', which is not in its OutTypes");
 
             if (!_written.Add(domain.FullName + " " + about.Guid))
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{about.Name}' пишет в домен '{domain.Name}' второй раз — " +
-                    "одна нода даёт базе ровно одну запись");
+                    $"Blobcheg: node '{about.Name}' writes into domain '{domain.Name}' a second time — " +
+                    "one node gives a base exactly one record");
 
-            // Записи копятся пачкой и уезжают писателю в Handover: позиция в пачке — это тикет.
+            // The records pile up as a batch and travel to the writer in Handover: the position in the
+            // batch is the ticket.
             if (!_pending.TryGetValue(domain, out var pending))
                 _pending[domain] = pending = new List<BlobchegRecord>();
 
@@ -101,7 +104,7 @@ namespace Blobcheg.Authoring
             });
         }
 
-        /// <summary>Билдер записи с массивами. Байты уезжают тем же маршрутом Add — в End.</summary>
+        /// <summary>The builder for a record with arrays. The bytes travel by the same Add route — in End.</summary>
         public BlobchegBuilder<T> Begin<T>(BlobchegNodeSo node) where T : unmanaged
         {
             BlobchegRecordTypes.Require(typeof(T));
@@ -115,9 +118,9 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// Закрывает брошенные билдеры после Write ноды. Память освобождается всегда; ошибка про
-        /// незакрытый билдер бросается только на нормальном выходе — упавший Write уже несёт свою,
-        /// и она обязана доехать как была.
+        /// Closes the abandoned builders after a node's Write. The memory is always freed; the error
+        /// about an unclosed builder is thrown only on a normal exit — a Write that failed already
+        /// carries its own, and that one is obliged to arrive as it was.
         /// </summary>
         public void ReleaseBuilders(string nodeName, bool nodeFailed)
         {
@@ -135,11 +138,11 @@ namespace Blobcheg.Authoring
 
             if (leaked != null && !nodeFailed)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{nodeName}' открыла билдер записи '{leaked}' и не закрыла его — " +
-                    "без End запись не собрана и в базу не попала. Write обязан звать End");
+                    $"Blobcheg: node '{nodeName}' opened a builder for record '{leaked}' and never closed it — " +
+                    "without End the record is not assembled and never reached the base. Write is obliged to call End");
         }
 
-        /// <summary>Накопленные записи уезжают писателям. Зовётся один раз, перед Flush.</summary>
+        /// <summary>The accumulated records travel to the writers. Called once, before Flush.</summary>
         public void Handover()
         {
             foreach (var pair in _pending)
@@ -163,15 +166,15 @@ namespace Blobcheg.Authoring
         {
             if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(node, out var guid, out long _))
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' не ассет проекта — раскладке нужен стабильный ключ порядка");
+                    $"Blobcheg: node '{node.name}' is not a project asset — the layout needs a stable ordering key");
 
             return guid;
         }
     }
 
     /// <summary>
-    /// То, что нода видит в <see cref="BlobchegNodeSo.Write"/>. Домен выводится из маркер-интерфейса
-    /// записи — руками его называть не нужно.
+    /// What a node sees inside <see cref="BlobchegNodeSo.Write"/>. The domain is derived from the marker
+    /// interface of the record — there is no need to name it by hand.
     /// </summary>
     public struct BlobchegNodeWriter
     {
@@ -180,21 +183,21 @@ namespace Blobcheg.Authoring
         internal BlobchegIdTable Ids;
 
         /// <summary>
-        /// Свой <see cref="BlobchegId"/> — его можно положить прямо в запись. Известен уже здесь,
-        /// потому что раздаётся по OutTypes, до записи. Роутеров у ноды ноль или несколько —
-        /// исключение, а не догадка.
+        /// Its own <see cref="BlobchegId"/> — it can be put straight into the record. It is known here
+        /// already, because it is handed out by OutTypes, before the write. Zero routers on a node or
+        /// several is an exception, not a guess.
         /// </summary>
         public BlobchegId Id => Ids.Single(Node);
 
-        /// <summary>Свой id в конкретном роутере — форма для ноды, входящей сразу в несколько.</summary>
+        /// <summary>Its own id in a particular router — the form for a node that belongs to several at once.</summary>
         public BlobchegId IdIn<TRouter>() where TRouter : unmanaged, IBlobchegRouter
             => Ids.Of(Node, typeof(TRouter));
 
-        /// <summary>Id чужой ноды — так одна запись ссылается на другую, не зная её оффсетов.</summary>
+        /// <summary>The id of another node — that is how one record references another without knowing its offsets.</summary>
         public BlobchegId IdOf(BlobchegNodeSo other)
         {
             if (other == null)
-                throw new ArgumentNullException(nameof(other), "Blobcheg: id несуществующей ноды");
+                throw new ArgumentNullException(nameof(other), "Blobcheg: the id of a node that does not exist");
 
             return Ids.Single(other);
         }
@@ -202,27 +205,28 @@ namespace Blobcheg.Authoring
         public BlobchegId IdOf<TRouter>(BlobchegNodeSo other) where TRouter : unmanaged, IBlobchegRouter
         {
             if (other == null)
-                throw new ArgumentNullException(nameof(other), "Blobcheg: id несуществующей ноды");
+                throw new ArgumentNullException(nameof(other), "Blobcheg: the id of a node that does not exist");
 
             return Ids.Of(other, typeof(TRouter));
         }
 
         /// <summary>
-        /// Запись с массивом. Форма обязательная: размер такой записи известен только после всех
-        /// Allocate, а <see cref="Add{T}"/> структ-литералом молча дал бы массивы нулевой длины.
+        /// A record with an array. The form is mandatory: the size of such a record is only known after
+        /// all the Allocate calls, and <see cref="Add{T}"/> with a struct literal would quietly produce
+        /// arrays of zero length.
         /// </summary>
         public BlobchegBuilder<T> Begin<T>() where T : unmanaged
             => Collector.Begin<T>(Node);
 
-        /// <summary>Типизированная запись. Домен берётся из маркер-интерфейса <typeparamref name="T"/>.</summary>
+        /// <summary>A typed record. The domain is taken from the marker interface of <typeparamref name="T"/>.</summary>
         public unsafe void Add<T>(in T record) where T : unmanaged
         {
             BlobchegRecordTypes.Require(typeof(T));
 
             if (BlobchegRecordTypes.RequiresBuilder(typeof(T)))
                 throw new InvalidOperationException(
-                    $"Blobcheg: запись '{typeof(T).FullName}' несёт BlobchegArray и собирается только " +
-                    "билдером — литерал молча дал бы массивы нулевой длины. Пишите через w.Begin<T>()");
+                    $"Blobcheg: record '{typeof(T).FullName}' carries a BlobchegArray and is only assembled " +
+                    "by a builder — a literal would quietly produce arrays of zero length. Write through w.Begin<T>()");
 
             var bytes = new byte[UnsafeUtility.SizeOf<T>()];
             var copy = record;
@@ -233,7 +237,7 @@ namespace Blobcheg.Authoring
                 unchecked((uint)BurstRuntime.GetHashCode32<T>()), bytes);
         }
 
-        /// <summary>Сырой путь: типа у записи нет, значит нет и проверок по нему.</summary>
+        /// <summary>The raw path: the record has no type, so there are no checks by it either.</summary>
         public void AddBytes<TDomain>(ReadOnlySpan<byte> record)
         {
             Collector.Add(Node, typeof(TDomain), null, 0, record.ToArray());

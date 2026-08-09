@@ -24,9 +24,9 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Чтение <see cref="BlobchegArray{T}"/> на байтах, собранных руками: раскладка хвоста здесь
-    /// назначается тестом, а не билдером, поэтому видно ровно контракт рантайма — само-относительный
-    /// оффсет, пустота без разыменования, отказ на копии записи.
+    /// Reading a <see cref="BlobchegArray{T}"/> over bytes assembled by hand: the layout of the tail is
+    /// assigned here by the test and not by the builder, so exactly the runtime contract is visible —
+    /// the self-relative offset, emptiness without dereferencing, the refusal on a copy of the record.
     /// </summary>
     public sealed class BlobchegArrayTests
     {
@@ -56,8 +56,8 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// TestCurve руками: Levels в [0,4), поле массива в [4,12), хвост float'ов с 12.
-        /// Оффсет меряется от адреса поля: 12 - 4 = 8.
+        /// TestCurve by hand: Levels in [0,4), the array field in [4,12), the float tail from 12.
+        /// The offset is measured from the field address: 12 - 4 = 8.
         /// </summary>
         static byte[] CurveBytes(int levels, params float[] values)
         {
@@ -74,7 +74,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Массив_читается_по_элементам()
+        public void The_array_is_read_element_by_element()
         {
             var built = Build(CurveBytes(3, 1.5f, 2.5f, 3.5f), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "ArrayDomain");
@@ -86,7 +86,7 @@ namespace Blobcheg.Tests
                 Assert.That(curve.Values.IsEmpty, Is.False);
                 Assert.That(curve.Values[0], Is.EqualTo(1.5f));
                 Assert.That(curve.Values[1], Is.EqualTo(2.5f));
-                Assert.That(curve.Values[2], Is.EqualTo(3.5f), "последний байт последнего элемента — ещё внутри записи");
+                Assert.That(curve.Values[2], Is.EqualTo(3.5f), "the last byte of the last element is still inside the record");
             }
             finally
             {
@@ -95,7 +95,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Пустой_массив_читается_без_разыменования()
+        public void An_empty_array_is_read_without_dereferencing()
         {
             var built = Build(CurveBytes(0), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "ArrayDomain");
@@ -107,7 +107,7 @@ namespace Blobcheg.Tests
                 unsafe
                 {
                     Assert.That((IntPtr)curve.Values.GetUnsafePtr(), Is.EqualTo(IntPtr.Zero),
-                        "у пустоты нет указателя — и нет разыменования");
+                        "emptiness has no pointer — and no dereferencing");
                 }
             }
             finally
@@ -117,7 +117,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Один_элемент_читается()
+        public void A_single_element_is_read()
         {
             var built = Build(CurveBytes(1, 42f), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "ArrayDomain");
@@ -132,17 +132,17 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Вложенный_массив_читается()
+        public void A_nested_array_is_read()
         {
-            // TestTable руками: поле Rows в [0,8), строки в [8,24), их хвосты — с 24.
-            // Оффсет каждой строки меряется от адреса её собственного поля Cells.
+            // TestTable by hand: the Rows field in [0,8), the rows in [8,24), their tails from 24.
+            // The offset of every row is measured from the address of its own Cells field.
             var stream = new MemoryStream();
             var w = new BinaryWriter(stream);
-            w.Write(8);     // Rows._offset: строки лежат с 8, поле на 0
+            w.Write(8);     // Rows._offset: the rows lie from 8, the field is at 0
             w.Write(2);     // Rows._length
-            w.Write(16);    // row0.Cells._offset: числа с 24, поле на 8
+            w.Write(16);    // row0.Cells._offset: the numbers from 24, the field is at 8
             w.Write(2);     // row0.Cells._length
-            w.Write(16);    // row1.Cells._offset: числа с 32, поле на 16
+            w.Write(16);    // row1.Cells._offset: the numbers from 32, the field is at 16
             w.Write(1);     // row1.Cells._length
             w.Write(10);
             w.Write(20);
@@ -166,7 +166,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Индекс_за_границей_бросает()
+        public void An_index_past_the_bounds_throws()
         {
             var built = Build(CurveBytes(2, 1f, 2f), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "ArrayDomain");
@@ -182,12 +182,13 @@ namespace Blobcheg.Tests
         }
 
         /// <summary>
-        /// Доказательство, что readonly расставлен правильно, с двух сторон сразу: обычное чтение
-        /// через ref readonly НЕ делает защитной копии (иначе покраснели бы тесты выше), а явная
-        /// копия в локальную переменную ловится проверкой адреса, называет тип и говорит про копию.
+        /// Proof that readonly is placed correctly, from both sides at once: an ordinary read through a
+        /// ref readonly does NOT make a defensive copy (otherwise the tests above would have gone red),
+        /// while an explicit copy into a local variable is caught by the address check, names the type
+        /// and says it is about a copy.
         /// </summary>
         [Test]
-        public void Копия_записи_бросает_а_не_отдаёт_мусор()
+        public void A_copy_of_the_record_throws_instead_of_handing_out_garbage()
         {
             var built = Build(CurveBytes(3, 1.5f, 2.5f, 3.5f), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "ArrayDomain");
@@ -195,8 +196,8 @@ namespace Blobcheg.Tests
             {
                 var copy = blob.Read<TestCurve>(built.offset);
                 var thrown = Assert.Throws<InvalidOperationException>(() => _ = copy.Values[0]);
-                StringAssert.Contains("копи", thrown.Message);
-                StringAssert.Contains("System.Single", thrown.Message, "ошибка обязана назвать тип элемента");
+                StringAssert.Contains("copy", thrown.Message);
+                StringAssert.Contains("System.Single", thrown.Message, "the error is obliged to name the element type");
             }
             finally
             {
@@ -205,7 +206,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void GetUnsafePtr_отдаёт_первый_элемент()
+        public void GetUnsafePtr_hands_out_the_first_element()
         {
             var built = Build(CurveBytes(3, 1f, 2f, 4f), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "ArrayDomain");
@@ -247,7 +248,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Массив_читается_из_бёрстовой_джобы()
+        public void The_array_is_read_from_a_bursted_job()
         {
             var built = Build(CurveBytes(3, 1f, 2f, 4f), typeof(TestCurve).FullName);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Persistent), "ArrayDomain");

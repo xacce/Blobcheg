@@ -4,9 +4,9 @@ using Blobcheg.Authoring;
 namespace Blobcheg.HashTests
 {
     /// <summary>
-    /// Модель тестов таблицы: два домена, роутер и таблица над ним. Роутер здесь свой, а не тот, что
-    /// в Blobcheg.Tests, потому что роутер, его базы и его таблицу генератор обязан видеть в одной
-    /// компиляции — а тесты хешей лежат отдельной сборкой.
+    /// The model of the table tests: two domains, a router and a table over it. The router here is its
+    /// own and not the one in Blobcheg.Tests, because the generator is obliged to see a router, its
+    /// bases and its table in one compilation — and the hash tests live in a separate assembly.
     /// </summary>
     public interface ITestHashHot
     {
@@ -18,10 +18,10 @@ namespace Blobcheg.HashTests
 
     public struct TestHashHotRecord : ITestHashHot
     {
-        /// <summary>Свой хеш, положенный нодой прямо в запись: он известен до записи.</summary>
+        /// <summary>Its own hash, put by the node straight into the record: it is known before the write.</summary>
         public ulong Self;
 
-        /// <summary>Хеш соседней ноды: так одна запись ссылается на другую, не зная её адресов.</summary>
+        /// <summary>The hash of a neighbouring node: that is how one record references another without knowing its addresses.</summary>
         public ulong Twin;
 
         public int Rpm;
@@ -32,7 +32,7 @@ namespace Blobcheg.HashTests
         public int Tier;
     }
 
-    // Биты нумеруются доменами по FullName ordinal: cold — нулевой, hot — первый.
+    // The bits are numbered by the domains in ordinal FullName order: cold is zero, hot is one.
     [Blobcheg(typeof(ITestHashCold), "cold")]
     public partial struct TestHashColdDb
     {
@@ -48,13 +48,13 @@ namespace Blobcheg.HashTests
     {
     }
 
-    /// <summary>Таблица хешей над роутером. Имя структуры своё, имя файла — от роутера.</summary>
+    /// <summary>The hash table over the router. The struct has its own name, the file name comes from the router.</summary>
     [BlobchegHashes(typeof(TestHashRouter))]
     public partial struct TestHashTable
     {
     }
 
-    /// <summary>Нода в обеих базах: строка роутера с двумя битами.</summary>
+    /// <summary>A node in both bases: a router row with two bits.</summary>
     public sealed class TestHashNodeSo : BlobchegNodeSo
     {
         public int rpm = 100;
@@ -75,7 +75,7 @@ namespace Blobcheg.HashTests
         }
     }
 
-    /// <summary>Нода только в холодной базе: в горячей дорожке её нет.</summary>
+    /// <summary>A node only in the cold base: it is not in the hot lane at all.</summary>
     public sealed class TestHashColdOnlyNodeSo : BlobchegNodeSo
     {
         public int tier = 7;

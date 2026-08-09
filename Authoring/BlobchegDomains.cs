@@ -6,9 +6,9 @@ using UnityEditor;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Реестр доменов. Домен — это маркер-интерфейс, объявленный через <see cref="BlobchegAttribute"/>:
-    /// одна база, один файл. Реестр собирается из атрибутов, а не из ручного списка — ручной список
-    /// это ещё одно место, где можно забыть.
+    /// The registry of domains. A domain is a marker interface declared through
+    /// <see cref="BlobchegAttribute"/>: one base, one file. The registry is gathered from the attributes
+    /// rather than from a hand-written list — a hand-written list is one more place to forget in.
     /// </summary>
     public static class BlobchegDomains
     {
@@ -36,8 +36,8 @@ namespace Blobcheg.Authoring
         public static string NameOf(Type domain) => domain.Name;
 
         /// <summary>
-        /// Домен записи выводится из её маркер-интерфейса. Ни одного домена или больше одного —
-        /// ошибка: запись обязана принадлежать ровно одной базе.
+        /// The domain of a record is derived from its marker interface. No domain at all or more than
+        /// one is an error: a record is obliged to belong to exactly one base.
         /// </summary>
         public static Type DomainOf(Type recordType)
         {
@@ -51,16 +51,16 @@ namespace Blobcheg.Authoring
 
                 if (found != null)
                     throw new InvalidOperationException(
-                        $"Blobcheg: запись '{recordType.FullName}' помечена сразу двумя доменами " +
-                        $"('{found.Name}' и '{candidate.Name}') — она обязана принадлежать одной базе");
+                        $"Blobcheg: record '{recordType.FullName}' is marked with two domains at once " +
+                        $"('{found.Name}' and '{candidate.Name}') — it is obliged to belong to one base");
 
                 found = candidate;
             }
 
             if (found == null)
                 throw new InvalidOperationException(
-                    $"Blobcheg: запись '{recordType.FullName}' не принадлежит ни одному домену. " +
-                    "Домен — маркер-интерфейс, объявленный через [Blobcheg(typeof(IДомен))] на структуре базы");
+                    $"Blobcheg: record '{recordType.FullName}' belongs to no domain. " +
+                    "A domain is a marker interface declared through [Blobcheg(typeof(IDomain))] on the base struct");
 
             return found;
         }
@@ -69,8 +69,8 @@ namespace Blobcheg.Authoring
         {
             if (Array.IndexOf(All, domain) < 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: {what} ссылается на домен '{domain.FullName}', который не объявлен " +
-                    "ни одной базой — нужен [Blobcheg(typeof(...))] на структуре базы");
+                    $"Blobcheg: {what} references domain '{domain.FullName}', which is declared by no " +
+                    "base — a [Blobcheg(typeof(...))] on the base struct is needed");
         }
 
         public static IEnumerable<Type> DomainsOf(BlobchegNodeSo node)
@@ -78,11 +78,11 @@ namespace Blobcheg.Authoring
             var declared = node.OutTypes;
             if (declared == null || declared.Length == 0)
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' не объявила ни одного домена в OutTypes");
+                    $"Blobcheg: node '{node.name}' declared no domain at all in OutTypes");
 
             foreach (var domain in declared)
             {
-                RequireDeclared(domain, $"нода '{node.name}'");
+                RequireDeclared(domain, $"node '{node.name}'");
                 yield return domain;
             }
         }

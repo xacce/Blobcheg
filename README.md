@@ -1,140 +1,144 @@
 # Blobcheg
 
-База данных для Unity поверх бинарных файлов: та же механика, что у блоб-ассетов Entities, но без
-сабсцен. Burst-совместимо, `BlobAssetReference` не используется.
+A database for Unity on top of binary files: the same mechanics as the blob assets of Entities, but
+without subscenes. Burst-compatible, `BlobAssetReference` is not used.
 
 ---
 
-## Содержание
+## Contents
 
-1. [Зачем](#зачем)
-2. [Что получишь](#что-получишь)
-3. [Как получать данные](#как-получать-данные)
-4. [Как это выглядит](#как-это-выглядит)
+1. [Why](#why)
+2. [What you get](#what-you-get)
+3. [How to get the data](#how-to-get-the-data)
+4. [What it looks like](#what-it-looks-like)
 5. [Live reload](#live-reload)
-6. [Бинарь в билде](#бинарь-в-билде)
-7. [Модель](#модель)
-8. [Установка](#установка)
-9. [Быстрый старт](#быстрый-старт)
-10. [Ноды и записи](#ноды-и-записи)
-11. [Массивы в записи](#массивы-в-записи)
-12. [Ссылки в authoring'е](#ссылки-в-authoringе)
-13. [Подъём базы](#подъём-базы)
-14. [Роутер и BlobchegId](#роутер-и-blobchegid)
-15. [Хеш имени: адрес, переживающий пересборку](#хеш-имени-адрес-переживающий-пересборку)
-16. [BlobchegReference: указатель вместо оффсета](#blobchegreference-указатель-вместо-оффсета)
-17. [Пересборка](#пересборка)
-18. [Проверки и ошибки](#проверки-и-ошибки)
-19. [Справочник API](#справочник-api)
-20. [Сборки пакета](#сборки-пакета)
-21. [Разработка пакета](#разработка-пакета)
+6. [The binary in the build](#the-binary-in-the-build)
+7. [The model](#the-model)
+8. [Installation](#installation)
+9. [Quick start](#quick-start)
+10. [Nodes and records](#nodes-and-records)
+11. [Arrays in a record](#arrays-in-a-record)
+12. [References in authoring](#references-in-authoring)
+13. [Loading a base](#loading-a-base)
+14. [The router and BlobchegId](#the-router-and-blobchegid)
+15. [The name hash: an address that outlives a rebuild](#the-name-hash-an-address-that-outlives-a-rebuild)
+16. [BlobchegReference: a pointer instead of an offset](#blobchegreference-a-pointer-instead-of-an-offset)
+17. [The rebuild](#the-rebuild)
+18. [Checks and errors](#checks-and-errors)
+19. [API reference](#api-reference)
+20. [The assemblies of the package](#the-assemblies-of-the-package)
+21. [Developing the package](#developing-the-package)
 
 ---
 
-## Зачем
+## Why
 
-Игре нужна база: статы, кривые, конфиги — данные, которые собираются в редакторе, живут от старта
-до выхода и читаются из Burst без копий. Штатный ответ Unity — блоб-ассеты, но
-`BlobAssetReference` из коробки привязан к сабсцене: блоб печётся бейкером, живёт при entity scene
-и умирает с её выгрузкой. Игровой базе этот контроль жизни не нужен — она не выгружается вместе со
-сценой, — а заводить блоб мимо сабсцены особого смысла нет: бейк, дедупликация и патч ссылок
-остаются по ту сторону.
+A game needs a database: stats, curves, configs — data that is assembled in the editor, lives from the
+start to the exit and is read from Burst without copies. Unity's stock answer is blob assets, but out of
+the box `BlobAssetReference` is bound to a subscene: a blob is baked by a baker, lives with the entity
+scene and dies when it is unloaded. A game database does not need that control of lifetime — it is not
+unloaded together with a scene — and there is little point in making a blob past a subscene: baking,
+deduplication and the reference patch stay on the other side.
 
-Blobcheg — те же блобы минус сабсцена. Данные пекутся в редакторе в бинарные файлы, в рантайме
-файл лежит в памяти целиком, чтение записи — реинтерпретация байтов. Entities опциональны: без них
-теряются только автоподъём баз и патч ссылок в компонентах.
-
----
-
-## Что получишь
-
-Ту же скорость чтения на горячем пути и — если накатить патч — тот же маппинг при импорте
-сущностей, что у блобов: в компоненте лежит оффсет, при загрузке субсцены он ремапится в указатель
-на запись в резидентном буфере, и `.Value` читает память напрямую, без синглтона и без сложения.
-Без патча остаётся обычный путь «оффсет плюс `Read<T>`» — синглтон базы и одно сложение.
-
-В довесок то, чего у блобов нет:
-
-- **несколько роутеров** — независимых баз данных, каждая со своим набором файлов и своим
-  пространством id;
-- **несколько баз** в каждом роутере (до 64) — по одной на домен, каждая своим файлом;
-- **разные типы записей** внутри одной базы — любые `unmanaged`-структуры её домена, а не один
-  тип на файл.
-
-Вместе это даёт главный приём: данные одной сущности разносятся по базам по характеру доступа —
-горячие поля отдельно от иконок и описаний, — а связывает их общий индекс в роутере;
-см. [пример](#как-это-выглядит).
-
-Если привычнее реляционный словарь: роутер — база данных, база-домен — таблица, запись — строка.
-Дальше README зовёт их родными именами.
-
-Годится для всего, что перманентно живёт в игре в виде данных: статы юнитов, кривые прокачки,
-лут-таблицы, рецепты, диалоги. Не годится для тяжёлых потоковых буферов — вершины меша, текстуры,
-аудио: это ассеты, у Unity для них свой конвейер.
+Blobcheg is the same blobs minus the subscene. The data is baked in the editor into binary files, at
+runtime the file lies in memory whole, and reading a record is a reinterpretation of bytes. Entities are
+optional: without them only the automatic loading of bases and the reference patch in components are
+lost.
 
 ---
 
-## Как получать данные
+## What you get
 
-Адреса три, и выбор между ними — не вкус, а срок жизни адреса и число баз под рукой.
+The same read speed on the hot path and — if the patch is applied — the same mapping on entity import as
+blobs have: the component holds an offset, on the loading of a subscene it is remapped into a pointer to
+the record in the resident buffer, and `.Value` reads the memory directly, without a singleton and
+without an addition. Without the patch the ordinary road stays, "an offset plus `Read<T>`" — the
+singleton of the base and one addition.
 
-**Оффсет** — прямой и самый быстрый путь: знаешь запись на бейке — храни `uint` и читай
-`db.Read<T>(offset)`. С патчем тот же слот объявляется `BlobchegReference<T>`: до импорта в нём
-оффсет, после — адрес, и `.Value` читает без базы и без сложения;
-см. [BlobchegReference](#blobchegreference-указатель-вместо-оффсета).
+On top of that, what blobs do not have:
 
-**BlobchegId** — когда на руках имя ноды, а записей у неё несколько: один `uint` вместо пачки
-оффсетов. Роутер по нему отдаёт строку с оффсетами ноды во всех своих базах;
-см. [Роутер](#роутер-и-blobchegid).
+- **several routers** — independent databases, each with its own set of files and its own id space;
+- **several bases** in every router (up to 64) — one per domain, each in its own file;
+- **different record types** inside one base — any `unmanaged` structs of its domain, rather than one
+  type per file.
 
-**Хеш имени** — адрес для сейва. Оффсет и id стабильны внутри одной сборки базы, компакт раздаёт
-их заново, а хеш считается от имени ноды и переживает любую пересборку; таблица разворачивает его
-обратно в id. См. [Хеш имени](#хеш-имени-адрес-переживающий-пересборку).
+Together this gives the main trick: the data of one entity is spread across bases by the character of
+its access — the hot fields apart from the icons and the descriptions — and what binds them is a common
+index in the router; see [the example](#what-it-looks-like).
+
+If a relational dictionary is more familiar: a router is a database, a base-domain is a table, a record
+is a row. From here on the README calls them by their own names.
+
+It fits everything that lives permanently in the game as data: unit stats, progression curves, loot
+tables, recipes, dialogues. It does not fit heavy streaming buffers — mesh vertices, textures, audio:
+those are assets, and Unity has its own pipeline for them.
 
 ---
 
-## Как это выглядит
+## How to get the data
 
-Проект с боёвкой и метой. Два роутера, у каждого свои базы, в каждой базе — записи нескольких
-типов:
+There are three addresses, and the choice between them is not taste but the lifetime of the address and
+the number of bases at hand.
+
+**An offset** is the direct and the fastest road: if you know the record at bake time, keep a `uint` and
+read `db.Read<T>(offset)`. With the patch the same slot is declared a `BlobchegReference<T>`: before the
+import it holds an offset, after it an address, and `.Value` reads without a base and without an
+addition; see [BlobchegReference](#blobchegreference-a-pointer-instead-of-an-offset).
+
+**A BlobchegId** — when what you have is the name of a node and it has several records: one `uint`
+instead of a bunch of offsets. The router hands out by it the row with the offsets of the node in all of
+its bases; see [The router](#the-router-and-blobchegid).
+
+**A name hash** is the address for a save. An offset and an id are stable within one build of the base,
+a compaction hands them out anew, while the hash is computed from the name of the node and outlives any
+rebuild; a table unfolds it back into an id. See
+[The name hash](#the-name-hash-an-address-that-outlives-a-rebuild).
+
+---
+
+## What it looks like
+
+A project with combat and a meta layer. Two routers, each with its own bases, and in every base records
+of several types:
 
 ```
-GameRouter — бой: сущность разнесена по базам по характеру доступа
-├─ CombatDb        IHotPathCombatData   WeaponHotData, UnitHotData, ProjectileHotData        ← горячий путь
+GameRouter — combat: the entity is spread across bases by the character of access
+├─ CombatDb        IHotPathCombatData   WeaponHotData, UnitHotData, ProjectileHotData        ← the hot path
 ├─ ProgressionDb   IProgressionData     WeaponProgressionData, UnitProgressionData, TalentData
 └─ PresentationDb  IPresentationData    WeaponPresentationData, UnitPresentationData, ProjectileVfxData
 
-MetaRouter — экономика и повествование: тематические таблицы
+MetaRouter — economy and narrative: thematic tables
 ├─ EconomyDb       IEconomyData         ItemData, RecipeData, LootTableData, VendorData
 ├─ QuestDb         IQuestData           QuestData, QuestStageData, RewardData
 └─ DialogueDb      IDialogueData        SpeakerData, DialogueLineData, ChoiceData
 ```
 
-`GameRouter` показывает главный приём: данные одной сущности **разнесены по базам, а индекс у них
-общий**. Оружие — это `WeaponHotData` в горячей базе, `WeaponProgressionData` и
-`WeaponPresentationData` в остальных; все три — записи одной ноды, связанные одним `BlobchegId`.
-Боевая джоба поднимает в кеш только горячую базу и не платит за строки диалогов и иконки, UI
-читает презентацию, а строку роутера они делят одну. `MetaRouter` — другой полюс того же
-механизма: базы нарезаны тематически, и нода квеста пишет только в `QuestDb`.
+`GameRouter` shows the main trick: the data of one entity is **spread across bases while their index is
+common**. A weapon is `WeaponHotData` in the hot base, `WeaponProgressionData` and
+`WeaponPresentationData` in the others; all three are records of one node, tied together by one
+`BlobchegId`. A combat job loads only the hot base into the cache and does not pay for dialogue lines
+and icons, the UI reads the presentation, and the row of the router they share is one. `MetaRouter` is
+the other pole of the same mechanism: the bases are cut thematically, and a quest node writes only into
+`QuestDb`.
 
-Объявление — атрибут на партиале, тело допишет генератор:
+The declaration is an attribute on a partial, the body is written by the generator:
 
 ```csharp
-// сборка Game.Combat
+// the Game.Combat assembly
 [BlobchegRouter] public partial struct GameRouter { }
 
 [Blobcheg(typeof(IHotPathCombatData), "combatData")]   public partial struct CombatDb { }
 [Blobcheg(typeof(IProgressionData), "progression")]    public partial struct ProgressionDb { }
 [Blobcheg(typeof(IPresentationData), "presentation")]  public partial struct PresentationDb { }
 
-// сборка Game.Meta — второй роутер объявляется ровно так же. Два роутера в одной
-// сборке тоже можно, тогда базы называют свой явно: Router = typeof(MetaRouter)
+// the Game.Meta assembly — the second router is declared in exactly the same way. Two routers in one
+// assembly are fine too, and then the bases name theirs explicitly: Router = typeof(MetaRouter)
 [BlobchegRouter] public partial struct MetaRouter { }
 ```
 
-Данные заполняются нодами — `ScriptableObject`-ассетами. Нода оружия раскладывает свою сущность
-по базам за один `Write` — по записи в каждый объявленный домен (класс ноды живёт в Editor-only
-сборке, потому что `BlobchegNodeSo` лежит в `Blobcheg.Authoring`):
+The data is filled in by nodes — `ScriptableObject` assets. A weapon node lays its entity out across the
+bases in one `Write` — a record into each declared domain (the node class lives in an Editor-only
+assembly, because `BlobchegNodeSo` lies in `Blobcheg.Authoring`):
 
 ```csharp
 [CreateAssetMenu(menuName = "Game/Weapon")]
@@ -145,7 +149,7 @@ public sealed class WeaponNodeSo : BlobchegNodeSo
     public float upgradeStep = 1.15f;
     public uint muzzleVfx;
     public uint icon;
-    public BlobchegNodeSo projectile;   // нода снаряда: в запись уедет её id
+    public BlobchegNodeSo projectile;   // the projectile node: its id travels into the record
 
     public override Type[] OutTypes => new[]
         { typeof(IHotPathCombatData), typeof(IProgressionData), typeof(IPresentationData) };
@@ -157,10 +161,10 @@ public sealed class WeaponNodeSo : BlobchegNodeSo
             rpm        = rpm,
             damage     = damage,
 
-            // всё ниже — опционально: кладётся, только если записи это нужно
-            id         = w.Id,                        // свой BlobchegId
-            saveKey    = this.HashIn<GameRouter>(),   // свой хеш имени
-            projectile = w.IdOf(projectile),          // id чужой ноды — ссылка запись → запись
+            // everything below is optional: it goes in only if the record needs it
+            id         = w.Id,                        // its own BlobchegId
+            saveKey    = this.HashIn<GameRouter>(),   // its own name hash
+            projectile = w.IdOf(projectile),          // the id of another node — a record → record reference
         });
         w.Add(new WeaponProgressionData { upgradeStep = upgradeStep });
         w.Add(new WeaponPresentationData { muzzleVfx = muzzleVfx, icon = icon });
@@ -168,24 +172,25 @@ public sealed class WeaponNodeSo : BlobchegNodeSo
 }
 ```
 
-Свои id и хеш нода знает **до** записи — id раздаются по `OutTypes` раньше `Write`, а хеш — чистая
-функция от имени, — поэтому и свои, и чужие (`IdOf`) кладутся в запись за один проход, и
-потребитель получает их как обычные поля. `HashIn` живёт в `Blobcheg.Hashes.Authoring`; полный
-набор — `Id`, `IdIn<TRouter>`, `IdOf` — в [таблице писателя](#что-умеет-blobchegnodewriter).
+A node knows its own id and hash **before** the write — the ids are handed out by `OutTypes` earlier
+than `Write`, and the hash is a pure function of the name — so both its own and other nodes' (`IdOf`)
+go into the record in one pass, and the consumer gets them as ordinary fields. `HashIn` lives in
+`Blobcheg.Hashes.Authoring`; the full set — `Id`, `IdIn<TRouter>`, `IdOf` — is in
+[the writer's table](#what-blobchegnodewriter-can-do).
 
-Разные типы в одной базе появляются сами: рядом с `WeaponHotData` в `CombatDb` лежат
-`UnitHotData` юнитов и `ProjectileHotData` снарядов. Файл один, типы разные, и `Read<T>` не даст
-их перепутать.
+Different types in one base appear by themselves: next to `WeaponHotData` in `CombatDb` lie the
+`UnitHotData` of units and the `ProjectileHotData` of projectiles. The file is one, the types are
+different, and `Read<T>` will not let them be mixed up.
 
-Дальше — все способы добраться до записи, по нарастающей.
+Next come all the ways to reach a record, in ascending order.
 
-**Оффсет без патча.** Запись выбирается в инспекторе типизированным полем, бейкер кладёт в
-компонент голый `uint`, чтение — синглтон базы плюс одно сложение:
+**An offset without the patch.** The record is picked in the inspector with a typed field, the baker
+puts a bare `uint` into the component, and the read is the singleton of the base plus one addition:
 
 ```csharp
 public sealed class TurretAuthoring : MonoBehaviour
 {
-    public BlobchegRef<WeaponHotData> weapon;   // пикер покажет только записи WeaponHotData
+    public BlobchegRef<WeaponHotData> weapon;   // the picker will show only WeaponHotData records
 
     sealed class Baker : Baker<TurretAuthoring>
     {
@@ -203,9 +208,9 @@ public sealed class TurretAuthoring : MonoBehaviour
 ref readonly var hot = ref combatDb.Read<WeaponHotData>(turret.weapon);
 ```
 
-**Оффсет с патчем.** Тот же слот объявляется `BlobchegReference<T>`, бейкер кладёт
-`a.weapon.ToReference()`, а на импорте субсцены оффсет ремапится в адрес — ровно как у
-`BlobAssetReference`. Чтение — без базы и без сложения:
+**An offset with the patch.** The same slot is declared a `BlobchegReference<T>`, the baker puts
+`a.weapon.ToReference()` in, and on the import of the subscene the offset is remapped into an address —
+exactly as with `BlobAssetReference`. The read is without a base and without an addition:
 
 ```csharp
 public struct TurretWeapon : IComponentData
@@ -216,109 +221,117 @@ public struct TurretWeapon : IComponentData
 ref readonly var hot = ref turret.weapon.Value;
 ```
 
-**BlobchegId.** Один id разворачивается роутером в строку с оффсетами сущности во всех её базах:
+**A BlobchegId.** One id is unfolded by the router into the row with the offsets of the entity in all of
+its bases:
 
 ```csharp
-var row = gameRouter.Get(weapon.id);   // один id — все аспекты оружия
+var row = gameRouter.Get(weapon.id);   // one id — every aspect of the weapon
 ref readonly var hot      = ref combatDb.Read<WeaponHotData>(row.combatData);
 ref readonly var progress = ref progressionDb.Read<WeaponProgressionData>(row.progression);
 
-if (row.HasPresentation)   // не каждая нода пишет во все базы: талант живёт только в ProgressionDb
+if (row.HasPresentation)   // not every node writes into every base: a talent lives only in ProgressionDb
 {
     ref readonly var look = ref presentationDb.Read<WeaponPresentationData>(row.presentation);
 }
 
-// id, который Write положил в саму запись, разворачивается так же — записи ссылаются друг
-// на друга без единого managed-объекта:
+// an id that Write put into the record itself is unfolded the same way — records reference one
+// another without a single managed object:
 var projRow = gameRouter.Get(hot.projectile);
 ref readonly var proj = ref combatDb.Read<ProjectileHotData>(projRow.combatData);
 ```
 
-**Хеш имени.** Адрес для сейва:
+**A name hash.** The address for a save:
 
 ```csharp
-save.weapon = hot.saveKey;                             // хеш уже в записи — его положил Write
-save.other  = gameHashes.HashOf(other.id);             // или таблицей, из любого id
-if (gameHashes.TryGetId(save.weapon, out var id)) ...  // на загрузке — обратно в id
+save.weapon = hot.saveKey;                             // the hash is already in the record — Write put it there
+save.other  = gameHashes.HashOf(other.id);             // or through the table, from any id
+if (gameHashes.TryGetId(save.weapon, out var id)) ...  // on loading — back into an id
 ```
 
 ---
 
 ## Live reload
 
-Правка ноды в редакторе пересобирает файл базы, бут-система это замечает, перечитывает файл и
-переводит уже загруженные сущности на новый буфер. Числа меняются прямо в запущенном PlayMode,
-без перезапуска. Как это устроено — [в разделе про подъём](#в-редакторе-база-перечитывается).
+Editing a node in the editor rebuilds the file of the base, the boot system notices that, re-reads the
+file and moves the already loaded entities onto the new buffer. The numbers change right inside a
+running PlayMode, without a restart. How that is arranged is
+[in the section about loading](#in-the-editor-the-base-is-re-read).
 
 ---
 
-## Бинарь в билде
+## The binary in the build
 
-В билд база уезжает бинарными файлами в `StreamingAssets/Blobcheg` — по файлу на базу, роутер и
-таблицу хешей, без перекомпиляции данных в ресурсы. На десктопе это обычная папка, и пересобранный
-в редакторе файл можно подложить в готовый билд. Правка значений адреса записей не двигает, поэтому
-запечённые субсцены и сейвы подмену не заметят — балансить числа в разосланном билде можно без
-пересборки плеера.
+Into a build the base travels as binary files in `StreamingAssets/Blobcheg` — a file per base, per
+router and per hash table, without recompiling the data into resources. On the desktop that is an
+ordinary folder, and a file rebuilt in the editor can be slipped into a finished build. Editing the
+values does not move the addresses of the records, so baked subscenes and saves will not notice the
+substitution — the numbers can be balanced in a distributed build without rebuilding the player.
 
-Подмена переживает правку чисел, но не правку длины массива: выросшая или ужавшаяся запись
-переезжает, а адрес у потребителей в билде остаётся старым. Изменилась длина — плеер
-пересобирается.
-
----
-
-## Модель
-
-Пять понятий, всё остальное — производное.
-
-**Домен** — маркер-интерфейс, например `IHotPathCombatData`. Один домен = одна база = один файл
-`{Домен}.bcheg`.
-
-**База** — `partial struct` с атрибутом `[Blobcheg(typeof(IДомен))]`. Генератор дописывает ей
-конструктор, `Read<T>`, `Dispose` и имя файла. В рантайме база — это резидентный буфер файла.
-
-**Запись** — `unmanaged`-структура, реализующая маркер-интерфейс домена. Её байты лежат в файле.
-
-**Нода** — `ScriptableObject`, наследник `BlobchegNodeSo`. Единица данных в редакторе: объявляет,
-в какие домены пишет, и заполняет записи. В каждый домен нода даёт ровно одну запись.
-
-**Оффсет** — единственный адрес записи в базе. Таблиц в файле нет: смысл записи придаёт только
-оффсет, и хранит его потребитель. Хранилище оффсета — `BlobchegRefSo`, sub-asset, который
-пересборка создаёт на пару (нода × домен) и перевыставляет.
-
-Есть и второй адрес — `BlobchegId`, имя ноды, общее для всех баз одного роутера. По нему роутер
-отдаёт оффсеты ноды сразу во всех своих базах; см. [Роутер](#роутер-и-blobchegid).
-
-И третий — хеш имени ноды. Он ничего не адресует напрямую и нужен ровно затем, чем плохи первые
-два: оффсет и id живут одну сборку базы, а хеш переживает её. Разворачивает его в id отдельная
-таблица; см. [Хеш имени](#хеш-имени-адрес-переживающий-пересборку).
-
-Содержимое записи пакет не проверяет: `Read<T>` реинтерпретирует байты. Проверяются целостность
-файла и его личность; в редакторе и development-билде дополнительно — границы и тип записи.
+The substitution outlives an edit of the numbers, but not an edit of an array length: a record that grew
+or shrank moves, while the address in the consumers of the build stays the old one. If a length changed,
+the player is rebuilt.
 
 ---
 
-## Установка
+## The model
 
-Требования: Unity 6000.3+, пакеты Burst, Collections, Mathematics. Entities — опционально, нужны
-только для автоматического подъёма баз и для патча ссылок в компонентах.
+Five notions, everything else is derived.
 
-Пакет `com.xacce.blobcheg` кладётся в `Packages/` проекта — сабмодулем или зависимостью в
-`Packages/manifest.json`. Больше ничего настраивать не нужно: домены, роутеры и ноды пакет находит по атрибутам и типам, пересборку
-вешает на импорт ассетов сам.
+**A domain** is a marker interface, for example `IHotPathCombatData`. One domain = one base = one
+`{Domain}.bcheg` file.
 
-Отдельно включаются только две вещи:
+**A base** is a `partial struct` with the `[Blobcheg(typeof(IDomain))]` attribute. The generator writes
+its constructor, `Read<T>`, `Dispose` and the file name. At runtime a base is the resident buffer of the
+file.
 
-| Что | Как | Зачем |
+**A record** is an `unmanaged` struct implementing the marker interface of the domain. Its bytes lie in
+the file.
+
+**A node** is a `ScriptableObject`, a descendant of `BlobchegNodeSo`. The unit of data in the editor: it
+declares which domains it writes into and fills the records. Into every domain a node gives exactly one
+record.
+
+**An offset** is the only address of a record in a base. There are no tables in the file: the meaning of
+a record is given by the offset alone, and it is the consumer who keeps it. The storage of an offset is
+`BlobchegRefSo`, a sub-asset that the rebuild creates per (node × domain) pair and re-issues.
+
+There is a second address too — the `BlobchegId`, the name of the node, common to all the bases of one
+router. By it the router hands out the offsets of the node in all of its bases at once; see
+[The router](#the-router-and-blobchegid).
+
+And a third one — the hash of the node's name. It addresses nothing directly and is needed for exactly
+what the first two are bad at: an offset and an id live for one build of the base, while a hash outlives
+it. A separate table unfolds it into an id; see
+[The name hash](#the-name-hash-an-address-that-outlives-a-rebuild).
+
+The package does not check the content of a record: `Read<T>` reinterprets the bytes. What is checked is
+the integrity of the file and its identity; in the editor and in a development build, additionally, the
+bounds and the type of the record.
+
+---
+
+## Installation
+
+Requirements: Unity 6000.3+, the Burst, Collections and Mathematics packages. Entities are optional,
+they are needed only for the automatic loading of bases and for the reference patch in components.
+
+The `com.xacce.blobcheg` package goes into the project's `Packages/` — as a submodule or as a dependency
+in `Packages/manifest.json`. Nothing else has to be set up: the package finds the domains, the routers
+and the nodes by attributes and types, and it hangs the rebuild on asset import itself.
+
+Only two things are switched on separately:
+
+| What | How | Why |
 |---|---|---|
-| Автоподъём баз в ECS | сослаться на сборку `Blobcheg.Entities` | кодоген выпустит бут-систему |
-| Патч `BlobchegReference<T>` | форк `com.unity.entities` + дефайн `BLOBCHEG_ENTITIES_PATCH` | ссылка в компоненте становится указателем |
-| Хеши имён | сослаться на сборку `Blobcheg.Hashes` | появится `[BlobchegHashes]` и её файл |
+| The automatic loading of bases in ECS | reference the `Blobcheg.Entities` assembly | the codegen will emit a boot system |
+| The `BlobchegReference<T>` patch | a fork of `com.unity.entities` + the `BLOBCHEG_ENTITIES_PATCH` define | a reference in a component becomes a pointer |
+| Name hashes | reference the `Blobcheg.Hashes` assembly | `[BlobchegHashes]` and its file appear |
 
 ---
 
-## Быстрый старт
+## Quick start
 
-### 1. Домен, запись и база — в рантайм-сборке
+### 1. The domain, the record and the base — in a runtime assembly
 
 ```csharp
 public interface IHotPathCombatData { }
@@ -330,13 +343,13 @@ public struct GunData : IHotPathCombatData
 }
 
 [Blobcheg(typeof(IHotPathCombatData))]
-public partial struct CombatDb { }   // ctor, Read<T>, Dispose, FileName допишет генератор
+public partial struct CombatDb { }   // the ctor, Read<T>, Dispose and FileName are written by the generator
 ```
 
-### 2. Нода — в Editor-only сборке
+### 2. The node — in an Editor-only assembly
 
-`BlobchegNodeSo` живёт в `Blobcheg.Authoring`, а она Editor-only. Значит и класс ноды должен лежать
-в сборке с `includePlatforms: ["Editor"]`.
+`BlobchegNodeSo` lives in `Blobcheg.Authoring`, and that one is Editor-only. So the node class has to lie
+in an assembly with `includePlatforms: ["Editor"]`.
 
 ```csharp
 [CreateAssetMenu(menuName = "Combat/Gun")]
@@ -352,14 +365,14 @@ public sealed class GunNodeSo : BlobchegNodeSo
 }
 ```
 
-Создай ассет через `Assets → Create → Combat/Gun`. Пересборка запустится сама на импорте.
+Create the asset through `Assets → Create → Combat/Gun`. The rebuild starts by itself on the import.
 
-### 3. Ссылка на запись — типизированное поле
+### 3. A reference to a record — a typed field
 
 ```csharp
 public sealed class WeaponAuthoring : MonoBehaviour
 {
-    public BlobchegRef<GunData> gun;   // пикер покажет только записи GunData
+    public BlobchegRef<GunData> gun;   // the picker will show only GunData records
 
     sealed class Baker : Baker<WeaponAuthoring>
     {
@@ -372,99 +385,101 @@ public sealed class WeaponAuthoring : MonoBehaviour
 }
 ```
 
-### 4. Подъём базы
+### 4. Loading the base
 
-На Entities достаточно объявить базу `IComponentData` — систему выпустит кодоген:
+On Entities it is enough to declare the base an `IComponentData` — the system is emitted by the codegen:
 
 ```csharp
 [Blobcheg(typeof(IHotPathCombatData))]
 public partial struct CombatDb : IComponentData { }
 ```
 
-Без Entities подъём пишется руками, см. [Подъём базы](#подъём-базы).
+Without Entities the loading is written by hand, see [Loading a base](#loading-a-base).
 
-### 5. Чтение
+### 5. Reading
 
 ```csharp
 ref readonly var gun = ref db.Read<GunData>(weapon.gun);
 ```
 
-Запись чужого домена в `Read<T>` не скомпилируется: у метода констрейнт
+A record of another domain will not compile in `Read<T>`: the method has the constraint
 `where T : unmanaged, IHotPathCombatData`.
 
 ---
 
-## Ноды и записи
+## Nodes and records
 
-### Контракт ноды
+### The contract of a node
 
 ```csharp
 public abstract class BlobchegNodeSo : ScriptableObject
 {
-    public string BlobchegName { get; }     // стабильное имя; пустое пересборка заполнит сама
+    public string BlobchegName { get; }     // a stable name; an empty one is filled in by the rebuild
     public abstract Type[] OutTypes { get; }
     public abstract void Write(ref BlobchegNodeWriter writer);
 }
 ```
 
-`BlobchegName` — поле в инспекторе, отдельное от имени ассета. Пустое пересборка заполняет один раз
-именем ассета и больше не трогает: имя файла человек меняет мышкой, а на этом имени стоит
-[хеш](#хеш-имени-адрес-переживающий-пересборку), который уехал в чужие сейвы.
+`BlobchegName` is a field in the inspector, separate from the name of the asset. An empty one is filled
+in by the rebuild once with the name of the asset and is never touched again: the name of a file is
+changed by a human with a mouse, and on that name stands the
+[hash](#the-name-hash-an-address-that-outlives-a-rebuild) that has travelled into other people's saves.
 
-`OutTypes` — декларация: домены, в которые нода обещает писать. Она читается **до** `Write`, из неё
-выводятся роутеры ноды и её id. Расхождение декларации с фактом — ошибка пересборки: объявила домен
-и не написала в него, или написала в необъявленный.
+`OutTypes` is a declaration: the domains the node promises to write into. It is read **before** `Write`,
+and out of it come the routers of the node and its id. A divergence between the declaration and the fact
+is an error of the rebuild: it declared a domain and did not write into it, or wrote into an undeclared
+one.
 
-Одна нода даёт домену ровно одну запись. Вторая — ошибка.
+One node gives a domain exactly one record. A second one is an error.
 
-Нода роутера с `FixedIndex` реализует сверх этого `IBlobchegIndexed` — см.
-[объявленный индекс](#объявленный-индекс).
+A node of a router with `FixedIndex` implements `IBlobchegIndexed` on top of that — see
+[a declared index](#a-declared-index).
 
-### Что умеет `BlobchegNodeWriter`
+### What `BlobchegNodeWriter` can do
 
-| Метод | Что делает |
+| Method | What it does |
 |---|---|
-| `Add<T>(in T record)` | типизированная запись; домен выводится из маркер-интерфейса `T` |
-| `Begin<T>()` | билдер записи с массивами — см. [Массивы в записи](#массивы-в-записи) |
-| `AddBytes<TDomain>(ReadOnlySpan<byte> bytes)` | сырой блок: типа нет, значит нет и проверок по нему |
-| `Id` | свой `BlobchegId`; ноль или несколько роутеров — исключение |
-| `IdIn<TRouter>()` | свой id в конкретном роутере — для ноды, входящей сразу в несколько |
-| `IdOf(node)` / `IdOf<TRouter>(node)` | id чужой ноды: так одна запись ссылается на другую |
+| `Add<T>(in T record)` | a typed record; the domain is derived from the marker interface of `T` |
+| `Begin<T>()` | a builder of a record with arrays — see [Arrays in a record](#arrays-in-a-record) |
+| `AddBytes<TDomain>(ReadOnlySpan<byte> bytes)` | a raw block: there is no type, so there are no checks by it either |
+| `Id` | its own `BlobchegId`; zero or several routers is an exception |
+| `IdIn<TRouter>()` | its own id in a particular router — for a node that belongs to several at once |
+| `IdOf(node)` / `IdOf<TRouter>(node)` | the id of another node: that is how one record references another |
 
-### Требования к типу записи
+### The requirements on a record type
 
-- `unmanaged` — держит компилятор;
-- без указателей внутри (`T*`, `IntPtr`, `UIntPtr` на любой глубине вложенности) — проверяет
-  пересборка. Констрейнт `unmanaged` указатель пропускает, а адрес чужой памяти переживает запись в
-  файл, но не перезапуск процесса;
-- ровно один маркер-интерфейс домена. Два — ошибка: запись обязана принадлежать одной базе;
-- тип с `BlobchegArray<T>` на любой глубине пишется только через `Begin<T>()`. `Add` такой тип
-  отбивает: размер записи известен лишь после всех `Allocate`, а структ-литерал молча дал бы
-  массивы нулевой длины.
+- `unmanaged` — held by the compiler;
+- no pointers inside (`T*`, `IntPtr`, `UIntPtr` at any depth of nesting) — checked by the rebuild. The
+  `unmanaged` constraint lets a pointer through, and the address of someone else's memory outlives a
+  write into a file but not a restart of the process;
+- exactly one marker interface of a domain. Two is an error: a record is obliged to belong to one base;
+- a type with a `BlobchegArray<T>` at any depth is written only through `Begin<T>()`. `Add` rejects such
+  a type: the size of the record is known only after all the `Allocate` calls, and a struct literal
+  would silently give arrays of zero length.
 
 ---
 
-## Массивы в записи
+## Arrays in a record
 
-`BlobchegArray<T>` — типизированный массив переменной длины внутри записи. Восемь байт в самой
-структуре: само-относительный оффсет и длина; элементы лежат хвостом внутри байтового блока той же
-записи. Запись остаётся непрозрачным блоком, который ездит по файлу целиком, — формат файла о
-массиве не знает ничего.
+`BlobchegArray<T>` is a typed array of variable length inside a record. Eight bytes in the struct
+itself: a self-relative offset and a length; the elements lie as a tail inside the byte block of the
+same record. The record stays an opaque block that travels through the file whole — the file format
+knows nothing about an array.
 
-### Объявление
+### The declaration
 
 ```csharp
 public struct CityData : ICityData
 {
     public int Population;
-    public BlobchegArray<QuarterData> Quarters;   // длину назначает нода, не тип
+    public BlobchegArray<QuarterData> Quarters;   // the length is assigned by the node, not by the type
 }
 ```
 
-Элемент — обычная `unmanaged`-структура и может нести свой `BlobchegArray<T>`: так строится
-вложенность любой глубины, включая рекурсивные типы (`TreeNode` с массивом `TreeNode`).
+An element is an ordinary `unmanaged` struct and may carry a `BlobchegArray<T>` of its own: that is how
+nesting of any depth is built, including recursive types (a `TreeNode` with an array of `TreeNode`).
 
-### Запись — только билдером
+### Writing — only with a builder
 
 ```csharp
 public override void Write(ref BlobchegNodeWriter w)
@@ -480,13 +495,13 @@ public override void Write(ref BlobchegNodeWriter w)
 }
 ```
 
-`Root` — голова записи, поля заполняются как обычно. `Allocate(ref поле, длина)` резервирует
-место и отдаёт окно записи; длина ноль легальна — поле остаётся пустотой. Поле, не тронутое ни
-одним `Allocate`, тоже читается пустым массивом, а не мусором. `End` обязателен: без него
-пересборка падает с именем ноды. Окно живёт до `End` и ни секундой дольше — доступ после `End`
-бросает.
+`Root` is the head of the record, its fields are filled in as usual. `Allocate(ref field, length)`
+reserves the space and hands out a writing window; a length of zero is legal — the field stays an
+emptiness. A field untouched by any `Allocate` also reads as an empty array and not as garbage. `End` is
+obligatory: without it the rebuild fails with the name of the node. The window lives until `End` and not
+a second longer — access after `End` throws.
 
-### Чтение
+### Reading
 
 ```csharp
 ref readonly var city = ref db.Read<CityData>(reference.Offset);
@@ -494,69 +509,73 @@ for (var i = 0; i < city.Quarters.Length; i++)
     Use(city.Quarters[i]);
 ```
 
-Запись держится как `ref readonly` — копия записи в локальную переменную рвёт само-относительный
-оффсет, и чтение из копии бросает (в редакторе и development-билде), а не отдаёт мусор.
+A record is held as `ref readonly` — copying a record into a local variable breaks the self-relative
+offset, and a read from the copy throws (in the editor and in a development build) instead of handing
+out garbage.
 
-Для горячего цикла есть `GetUnsafePtr()`: адрес проверяется один раз, дальше цикл — чистая
-арифметика. У пустого массива указатель `null`.
+For a hot loop there is `GetUnsafePtr()`: the address is checked once, and after that the loop is pure
+arithmetic. An empty array has a `null` pointer.
 
-### Цена
+### The price
 
-Элементы лежат внутри записи, и платит за них её домен: массив в горячей записи — это вес каждого
-чтения соседних полей. Дедупликации нет — два одинаковых массива в двух нодах лежат двумя копиями.
-Правка длины двигает запись и оставляет в файле дырку; дырки переиспользуются следующими записями,
-а в ноль их сводит компакт, который и так стоит на пре-билде.
-
----
-
-## Ссылки в authoring'е
-
-Оффсет и id едут из редактора в билд через sub-asset'ы, которые пересборка вешает на ноду. Руками
-их создавать не нужно, ссылаться на них — нужно.
-
-| Носитель | Пара | Что несёт |
-|---|---|---|
-| `BlobchegRefSo` | нода × домен | `offset` записи |
-| `BlobchegIdSo` | нода × роутер | `BlobchegId` ноды |
-
-Поле у потребителя типизировано, ассет — нет.
-
-| Поле | Что отдаёт | Пикер показывает |
-|---|---|---|
-| `BlobchegRef<T>` | `Offset`, `ToReference()` | только записи типа `T` |
-| `BlobchegRawRef` | `Offset` | записи из `AddBytes` |
-| `BlobchegIdRef<TRouter>` | `Id` | только ноды этого роутера |
-
-Все три отбивают чужой ассет трижды: компилятором (параметр типа), драйвером инспектора (пикер и
-перетаскивание) и исключением при чтении на бейке. Пустое поле бросает, а не отдаёт ноль.
-
-У каждого поля есть `Asset` — для `DependsOn` в бейкере. Без него субсцена не перепечётся, когда
-адрес записи уедет.
+The elements lie inside the record, and it is its domain that pays for them: an array in a hot record is
+the weight of every read of the neighbouring fields. There is no deduplication — two identical arrays in
+two nodes lie as two copies. Editing a length moves the record and leaves a hole in the file; the holes
+are reused by the following records, and they are brought to zero by the compaction, which stands on the
+pre-build anyway.
 
 ---
 
-## Подъём базы
+## References in authoring
 
-### На Entities — кодогеном
+An offset and an id travel from the editor into the build through sub-assets that the rebuild hangs on a
+node. They do not have to be created by hand, but they do have to be referenced.
 
-Объяви базу или роутер `IComponentData` и сошлись на сборку `Blobcheg.Entities`. Генератор выпустит
-`{Имя}BootSystem` в группе `BlobchegBootGroup`.
+| The carrier | The pair | What it carries |
+|---|---|---|
+| `BlobchegRefSo` | node × domain | the `offset` of the record |
+| `BlobchegIdSo` | node × router | the `BlobchegId` of the node |
+
+The consumer's field is typed, the asset is not.
+
+| The field | What it hands out | What the picker shows |
+|---|---|---|
+| `BlobchegRef<T>` | `Offset`, `ToReference()` | only records of the type `T` |
+| `BlobchegRawRef` | `Offset` | records from `AddBytes` |
+| `BlobchegIdRef<TRouter>` | `Id` | only the nodes of this router |
+
+All three reject a foreign asset three times over: by the compiler (the type parameter), by the drawer
+in the inspector (the picker and drag-and-drop) and by an exception on the read at bake time. An empty
+field throws instead of handing out a zero.
+
+Every field has an `Asset` — for `DependsOn` in a baker. Without it the subscene will not be re-baked
+when the address of the record moves.
+
+---
+
+## Loading a base
+
+### On Entities — by codegen
+
+Declare the base or the router an `IComponentData` and reference the `Blobcheg.Entities` assembly. The
+generator will emit a `{Name}BootSystem` in the `BlobchegBootGroup` group.
 
 ```csharp
 [Blobcheg(typeof(IHotPathCombatData), "combatData")]
-public partial struct CombatDb : IComponentData { }   // CombatDbBootSystem выпустит кодоген
+public partial struct CombatDb : IComponentData { }   // CombatDbBootSystem is emitted by the codegen
 ```
 
-`BlobchegBootGroup` стоит в начале `InitializationSystemGroup` (`OrderFirst`) и **до**
-`BeginInitializationEntityCommandBufferSystem`: системы, которым база нужна, обязаны увидеть её
-раньше, чем свои сущности.
+`BlobchegBootGroup` stands at the beginning of `InitializationSystemGroup` (`OrderFirst`) and **before**
+`BeginInitializationEntityCommandBufferSystem`: the systems that need the base are obliged to see it
+earlier than their own entities.
 
-`[DisableAutoCreation]` на самой базе уезжает на выпущенную систему — «система нужна, но кто её
-создаёт, решаю я». Свою систему подъёма никто не запрещает: положи её в ту же группу.
+A `[DisableAutoCreation]` on the base itself travels onto the emitted system — "the system is needed, but
+who creates it is my decision". Nobody forbids a loading system of your own: put it into the same group.
 
-Нет ссылки на `Blobcheg.Entities`, а `IComponentData` объявлен — ошибка компиляции `BCHG008`.
+There is no reference to `Blobcheg.Entities` while `IComponentData` is declared — the compilation error
+`BCHG008`.
 
-### Руками
+### By hand
 
 ```csharp
 public partial struct CombatDbBootSystem : ISystem
@@ -569,7 +588,7 @@ public partial struct CombatDbBootSystem : ISystem
 
     public void OnUpdate(ref SystemState state)
     {
-        // Голый путь: отказ здесь обязан гасить систему — см. «Битый файл отбивается один раз».
+        // The bare road: a refusal here is obliged to switch the system off — see "A broken file is rejected once".
         if (!load.Poll()) return;
 
         state.EntityManager.CreateSingleton(new CombatDb(load.Acquire()));
@@ -585,34 +604,36 @@ public partial struct CombatDbBootSystem : ISystem
 }
 ```
 
-Чтение асинхронное by construction: на Android StreamingAssets лежит в архиве, и блокирующее
-ожидание там либо стопорит кадр, либо вешает игру. `Poll()` — метод, а не свойство: без вызова
-автомат чтения не поедет.
+The reading is asynchronous by construction: on Android StreamingAssets lies inside an archive, and a
+blocking wait there either stalls the frame or hangs the game. `Poll()` is a method and not a property:
+without a call the reading machine will not move.
 
-`Complete()` — блокирующее ожидание, оно для тестов и редакторных инструментов, не для игрового
-потока.
+`Complete()` is a blocking wait, it is for tests and editor tooling, not for the game thread.
 
-### В редакторе база перечитывается
+### In the editor the base is re-read
 
-Правка ноды пересобирает файл базы, а живой мир держит копию, снятую на подъёме, — без перечитывания
-он показывал бы вчерашние числа до перезапуска. Поэтому в редакторе (и только в нём) подъём работает
-иначе:
+Editing a node rebuilds the file of the base, while a live world holds the copy taken at loading — without
+a re-read it would be showing yesterday's numbers until a restart. That is why in the editor (and only
+there) the loading works differently:
 
-- база поднимается и в **редакторном** мире, не только в игровом: сущности сабсцен там есть всегда, а
-  без базы любой проход патча упирается в «домен не поднят»;
-- бут-система после подъёма не гаснет, а сторожит номер своего файла в `BlobchegFileVersions`;
-- переписали файл — она перечитывает его, кладёт новый блоб в синглтон и прогоняет
-  `BlobchegSweep.Run`, который переселяет слоты сущностей с прежнего буфера на новый;
-- «домен не поднят» на живом пути в редакторе не бросает: слот остаётся оффсетом и доедет до адреса
-  первым же проходом после подъёма базы. В плеере это по-прежнему ошибка.
+- the base is loaded in the **editor** world too, not only in the game one: the entities of subscenes are
+  always there, and without the base any pass of the patch runs into "the domain is not loaded";
+- after the loading the boot system does not switch itself off, it watches the number of its file in
+  `BlobchegFileVersions`;
+- the file was rewritten — it re-reads it, puts the new blob into the singleton and runs
+  `BlobchegSweep.Run`, which moves the slots of the entities from the previous buffer onto the new one;
+- "the domain is not loaded" does not throw on the live road in the editor: the slot stays an offset and
+  will reach its address with the very first pass after the base is loaded. In the player it is still an
+  error.
 
-Кодогенная бут-система делает всё это сама. Рукописной надо сказать то же самое руками — жить в
-редакторном мире (`[WorldSystemFilter(WorldSystemFilterFlags.Default | WorldSystemFilterFlags.Editor)]`),
-не гасить себя в редакторе и добавить перезаливку:
+The codegen boot system does all of this by itself. A handwritten one has to be told the same thing by
+hand — to live in the editor world
+(`[WorldSystemFilter(WorldSystemFilterFlags.Default | WorldSystemFilterFlags.Editor)]`), not to switch
+itself off in the editor and to add the re-read:
 
 ```csharp
 #if UNITY_EDITOR
-    int seen;   // номер файла, который эта система уже читала
+    int seen;   // the number of the file this system has already read
 
     void Reraise(ref SystemState state)
     {
@@ -621,12 +642,12 @@ public partial struct CombatDbBootSystem : ISystem
         var reload = BlobchegTransport.Default.Read(CombatDb.FileName, Allocator.Persistent);
         reload.Complete();
 
-        // Новый буфер встаёт на учёт первым: прежний уходит в отставные поколения, и только по ним
-        // слоты со старыми адресами доедут до новых.
+        // The new buffer goes onto the register first: the previous one leaves into the retired
+        // generations, and only through them will the slots with the old addresses reach the new ones.
         var fresh = new CombatDb(reload.Acquire());
 
-        state.EntityManager.CompleteAllTrackedJobs();   // джобы дочитали прежний буфер
-        SystemAPI.GetSingleton<CombatDb>().Dispose();   // и только теперь его можно освободить
+        state.EntityManager.CompleteAllTrackedJobs();   // the jobs have finished reading the previous buffer
+        SystemAPI.GetSingleton<CombatDb>().Dispose();   // and only now may it be freed
         SystemAPI.SetSingleton(fresh);
 
         BlobchegSweep.Run(state.EntityManager);
@@ -634,39 +655,42 @@ public partial struct CombatDbBootSystem : ISystem
 #endif
 ```
 
-Порядок здесь не вкусовой: освободить прежний буфер до того, как новый встал на учёт, — значит
-оставить слоты смотреть в освобождённую память.
+The order here is not a matter of taste: freeing the previous buffer before the new one went onto the
+register means leaving the slots looking into freed memory.
 
-### Битый файл отбивается один раз
+### A broken file is rejected once
 
-Файл не прочитался или не прошёл проверку на подъёме — отказ уезжает наверх ровно один раз, и
-чтение на этом кончается. В плеере бут-система гаснет: чинить файл там некому. В редакторе она ждёт
-пересборки — та перепишет файл, и подъём поедет заново, без перезагрузки домена.
+The file did not read or did not pass the check on loading — the refusal travels upwards exactly once,
+and the reading ends there. In the player the boot system switches off: there is nobody there to fix the
+file. In the editor it waits for a rebuild — that one will rewrite the file, and the loading will go
+again, without a domain reload.
 
-### Переходный отказ — варнинг, а не ошибка
+### A transient refusal is a warning, not an error
 
-Два отказа из этого списка в редакторе значат «пока нет», а не «сломано»:
+Two refusals from that list mean "not yet" in the editor and not "broken":
 
-- **файла базы нет** — домен приехал с пуллом раньше, чем пересборка написала его файл;
-- **обрезан или дописан** — длину читатель узнаёт до тела, и между этими двумя чтениями пересборка
-  успела подменить файл.
+- **there is no file of the base** — the domain arrived with the pool earlier than the rebuild wrote its
+  file;
+- **truncated or appended to** — the reader learns the length before the body, and between those two
+  reads the rebuild managed to substitute the file.
 
-Оба бросают `BlobchegTransientException` (наследник `InvalidOperationException`), и кодогенная
-бут-система в редакторе не поднимает из-за них исключение: в консоль уходит варнинг прямым текстом
-«это нотификация, а не проблема», а подъём повторяется сам, когда пересборка перепишет файл. Один
-варнинг на полосу, не на кадр.
+Both throw a `BlobchegTransientException` (a descendant of `InvalidOperationException`), and the codegen
+boot system in the editor does not raise an exception because of them: a warning goes into the console
+saying in plain text "this is a notification and not a problem", and the loading repeats by itself when
+the rebuild rewrites the file. One warning per streak, not per frame.
 
-В плеере тот же отказ терминальный: там файл переписывать некому, и система гаснет, как на любой
-другой ошибке. Рукописной бут-системе это правило придётся завести самой — ловить
-`BlobchegTransientException` отдельно от прочих и не считать его поломкой.
+In the player the same refusal is terminal: there is nobody there to rewrite the file, and the system
+switches off, as on any other error. A handwritten boot system will have to set that rule up itself — to
+catch `BlobchegTransientException` apart from the others and not to count it as a breakage.
 
-Повторять подъём каждым кадром нельзя: файл за кадр не меняется, а лог за минуты уходит в
-гигабайты, и настоящую причину в нём уже не найти. Рукописной бут-системе это правило придётся
-завести самой — иначе первый же протухший `.bcheg` (например, собранный прошлой версией пакета)
-превращает мир в бесконечный поток одного и того же исключения.
+Repeating the loading every frame is not allowed: the file does not change within a frame, while the log
+grows into gigabytes over minutes, and the real cause can no longer be found in it. A handwritten boot
+system will have to set that rule up itself — otherwise the very first stale `.bcheg` (assembled by a
+previous version of the package, say) turns the world into an endless stream of one and the same
+exception.
 
-Владение буфером уходит из чтения в момент `Acquire()`. Конструктор базы отбил файл — освободить
-буфер обязан тот, кто его забрал:
+The ownership of the buffer leaves the reading at the moment of `Acquire()`. The constructor of the base
+rejected the file — whoever took the buffer is obliged to free it:
 
 ```csharp
 var buffer = load.Acquire();
@@ -675,98 +699,99 @@ try { db = new CombatDb(buffer); }
 catch { buffer.Dispose(); throw; }
 ```
 
-### Транспорт
+### The transport
 
-По умолчанию — `StreamingAssets/Blobcheg` этого проекта. Подменяется целиком:
+By default it is the `StreamingAssets/Blobcheg` of this project. It is replaced whole:
 
 ```csharp
 BlobchegTransport.Default = new BlobchegFileTransport(myDirectory);
-// или своя реализация IBlobchegTransport
+// or an implementation of IBlobchegTransport of your own
 ```
 
 ---
 
-## Роутер и BlobchegId
+## The router and BlobchegId
 
-Оффсет — прямой путь: знаешь запись на бейке, храни оффсет. Роутер нужен, когда на руках только имя
-ноды: один `uint` вместо пачки оффсетов во всех базах.
+An offset is the direct road: if you know the record at bake time, keep the offset. A router is needed
+when all you have is the name of a node: one `uint` instead of a bunch of offsets in every base.
 
-### Объявление
+### The declaration
 
 ```csharp
 [BlobchegRouter]
-public partial struct GameRouter { }                        // тело допишет генератор
+public partial struct GameRouter { }                        // the body is written by the generator
 
-[Blobcheg(typeof(IHotPathCombatData), "combatData")]        // второй аргумент — имя члена в строке
+[Blobcheg(typeof(IHotPathCombatData), "combatData")]        // the second argument is the name of the member in the row
 public partial struct CombatDb { }
 
 [Blobcheg(typeof(IProgressionData), "progression")]
 public partial struct ProgressionDb { }
 ```
 
-Имя члена — это и есть вступление в роутер. Не указано — база живёт сама по себе.
+The name of the member IS the joining of the router. Not given — the base lives on its own.
 
-Правила:
+The rules:
 
-- роутер не назван → берётся единственный роутер **в сборке этой базы**; их ноль или несколько —
-  ошибка компиляции, снимается через `Router = typeof(...)` в атрибуте;
-- **роутер и его базы обязаны лежать в одной сборке** — генератор роутера видит только свою
-  компиляцию;
-- домен входит максимум в один роутер;
-- баз в роутере не больше 64.
+- the router is not named → the only router **in the assembly of this base** is taken; if there are zero
+  or several of them it is a compilation error, removed with `Router = typeof(...)` in the attribute;
+- **a router and its bases are obliged to lie in one assembly** — the generator of the router sees only
+  its own compilation;
+- a domain belongs to at most one router;
+- there are no more than 64 bases in a router.
 
-### Ссылка и чтение
+### A reference and a read
 
 ```csharp
-public BlobchegIdRef<GameRouter> gun;      // поле в authoring'е
+public BlobchegIdRef<GameRouter> gun;      // the field in authoring
 ...
-AddComponent(entity, new GunRef { id = a.gun.Id });   // в компоненте — uint
+AddComponent(entity, new GunRef { id = a.gun.Id });   // in the component it is a uint
 ```
 
 ```csharp
-var row = router.Get(id);                              // неизвестный id — бросает
+var row = router.Get(id);                              // an unknown id throws
 ref readonly var hot = ref combatDb.Read<GunData>(row.combatData);
 if (row.HasProgression) { ... }
 
-uint offset = router.GetCombatData(id);                // бросает и на id, и на отсутствии записи
-if (router.TryGetCombatData(id, out offset)) { ... }   // не бросает никогда
+uint offset = router.GetCombatData(id);                // throws both on the id and on a missing record
+if (router.TryGetCombatData(id, out offset)) { ... }   // never throws
 ```
 
-Роутер живёт синглтоном, ровно как база.
+A router lives as a singleton, exactly like a base.
 
-### Устройство `BlobchegId`
+### How `BlobchegId` is arranged
 
-Один `uint`: старший байт — тег роутера, младшие три — номер строки.
+One `uint`: the high byte is the tag of the router, the low three are the number of the row.
 
 ```csharp
-id.Tag       // тег роутера; ноль — id не назначен
-id.Index     // номер строки, 0 .. 16 777 215
-id.IsValid   // тег не ноль
-router.IdAt(i)   // id строки по номеру — так роутер обходят целиком
-router.Count     // сколько строк
+id.Tag       // the tag of the router; zero means the id is not assigned
+id.Index     // the number of the row, 0 .. 16 777 215
+id.IsValid   // the tag is not zero
+router.IdAt(i)   // the id of a row by its number — that is how a router is walked whole
+router.Count     // how many rows there are
 ```
 
-По тегу ловится id чужого роутера, а `default(BlobchegId)` — это «не назначен», а не первая нода
-роутера. Цена — потолок 16 777 216 нод на роутер.
+By the tag an id of another router is caught, and `default(BlobchegId)` is "not assigned" and not the
+first node of the router. The price is a ceiling of 16 777 216 nodes per router.
 
-### Стабильность id
+### The stability of an id
 
-Id — позиция строки, а не хеш. Правка значений его не двигает. Не двигают и появление с удалением:
-выданный однажды id лежит на носителе ноды и наследуется следующей пересборкой, новая нода садится в
-хвост, удалённая оставляет за собой пустую строку. Убирает дырки только [компакт](#компакт).
+An id is the position of a row and not a hash. Editing the values does not move it. Neither do additions
+and deletions: an id handed out once lies on the carrier of the node and is inherited by the next
+rebuild, a new node sits down at the tail, a deleted one leaves an empty row behind it. Only the
+[compaction](#compaction) removes the holes.
 
-Нода узнаёт свой id **до записи**, поэтому может положить его прямо в запись за один проход:
+A node learns its id **before the write**, so it can put it right into the record in one pass:
 
 ```csharp
 public override void Write(ref BlobchegNodeWriter w)
     => w.Add(new GunData { id = w.Id, twin = w.IdOf(twinNode) });
 ```
 
-### Объявленный индекс
+### A declared index
 
-Номер строки можно не получать, а объявлять. Это нужно там, где id уезжает наружу — в сейв, на
-провод, в таблицу, которую ведут не в Unity: такой номер обязан не зависеть ни от журнала носителей,
-ни от компакта.
+The number of a row can be declared instead of received. That is needed where an id travels outside — into
+a save, over the wire, into a table kept outside Unity: such a number is obliged to depend neither on the
+journal of the carriers nor on the compaction.
 
 ```csharp
 [BlobchegRouter(FixedIndex = true)]
@@ -779,61 +804,65 @@ public sealed class BuildingSo : BlobchegNodeSo, IBlobchegIndexed
 }
 ```
 
-Откуда нода берёт номер — её дело: сериализованное поле, `const`, `enum`, строка таблицы. Правила
-такого роутера:
+Where the node takes the number from is its own business: a serialised field, a `const`, an `enum`, a row
+of a table. The rules of such a router:
 
-- **каждая** его нода обязана реализовать `IBlobchegIndexed`; не реализовала — пересборка бросает,
-  потому что взять номер ей неоткуда;
-- два одинаковых номера — тоже отказ: строка принадлежит одной ноде;
-- носитель `BlobchegIdSo` продолжает писаться и остаётся тем, что читает `BlobchegIdRef<TRouter>` на
-  бейке, но источником правды быть перестаёт. Снеси все носители, пересобери — id вернутся те же;
-- компакт номера такого роутера не трогает: он их не раздавал. Оффсеты пережимает, как обычно;
-- номера разрежены по желанию потребителя (здания 0…999, оружие 1000…1999). Дырка между семьями
-  стоит пустую строку в файле роутера — 5 байт при восьми базах, 5 КБ на тысячу пропущенных номеров.
-  Потолок строк прежний, 16 777 215;
-- нода, входящая в два детерминированных роутера, занимает в обоих одну и ту же строку: номер у неё
-  один. Её номер в обычном роутере при этом по-прежнему раздаётся.
+- **every** node of it is obliged to implement `IBlobchegIndexed`; one that does not makes the rebuild
+  throw, because there is nowhere for it to take the number from;
+- two identical numbers are a refusal as well: a row belongs to one node;
+- the `BlobchegIdSo` carrier keeps being written and stays what `BlobchegIdRef<TRouter>` reads at bake
+  time, but it stops being the source of truth. Delete every carrier, rebuild — the ids come back the
+  same;
+- the compaction does not touch the numbers of such a router: it did not hand them out. The offsets it
+  squeezes as usual;
+- the numbers are sparse at the consumer's will (buildings 0…999, weapons 1000…1999). A hole between the
+  families costs an empty row in the router file — 5 bytes with eight bases, 5 KB per thousand skipped
+  numbers. The ceiling of rows is the same, 16 777 215;
+- a node belonging to two deterministic routers occupies one and the same row in both: it has one number.
+  Its number in an ordinary router is still handed out as before.
 
-Флаг, включённый на роутере, который уже раздавал номера, **переносит** их: объявление сильнее
-журнала. Пересборка пишет строку в лог на каждую переехавшую ноду (было → стало) и считает их в
-`MovedIds` отчёта. Уехавший id — это другая нода в запечённой субсцене и в чужом сейве, поэтому
-номера снимают с текущего манифеста роутера (`Assets/Blobcheg/<Роутер>.asset`, ноды лежат в нём в
-порядке id) и объявляют ровно их.
+The flag switched on for a router that has already handed out numbers **moves** them: a declaration is
+stronger than a journal. The rebuild writes a line into the log for every node that moved (was → became)
+and counts them in the `MovedIds` of the report. A moved id is a different node in a baked subscene and
+in someone else's save, so the numbers are taken from the current manifest of the router
+(`Assets/Blobcheg/<Router>.asset`, where the nodes lie in the order of their ids) and exactly those are
+declared.
 
 ### LayoutHash
 
-Файл, собранный под другой набор баз, не поднимется; ошибка на пересборке скажет, какую базу
-роутер не видит.
+A file assembled for a different set of bases will not load; the error on the rebuild will say which base
+the router does not see.
 
 ---
 
-## Хеш имени: адрес, переживающий пересборку
+## The name hash: an address that outlives a rebuild
 
-Оффсет и `BlobchegId` стабильны внутри одной сборки базы и не более того: [компакт](#компакт)
-раздаёт заново и адреса, и номера строк, а выросшая запись уводит соседнюю в хвост. Сейв игрока
-живёт дольше, поэтому ему нужен адрес другого рода — хеш имени ноды. Он не адресует ничего сам:
-разворачивает его в `BlobchegId` таблица, которая пересобирается вместе со всем остальным.
+An offset and a `BlobchegId` are stable within one build of the base and no further:
+[the compaction](#compaction) hands out both the addresses and the numbers of the rows anew, and a record
+that grew pushes its neighbour into the tail. A player's save lives longer, so it needs an address of a
+different kind — the hash of the node's name. It addresses nothing by itself: it is unfolded into a
+`BlobchegId` by a table that is rebuilt together with everything else.
 
-Ключ — строка `"{Роутер}:{Имя}"`, свёрнутая в `ulong`. Домена в ключе нет: хеш ведёт в строку
-роутера, а строка одна на ноду, в сколько бы доменов та ни писала. Роутер есть по той же причине,
-по которой в `BlobchegId` живёт тег: без него одинаковые имена в двух роутерах дали бы один хеш на
-две разные строки. Отсюда же следует, что у баз вне роутера хешей не бывает — разворачивать не во
-что.
+The key is the string `"{Router}:{Name}"` folded into a `ulong`. There is no domain in the key: the hash
+leads to a row of the router, and there is one row per node, no matter how many domains it writes into.
+The router is there for the same reason the tag lives in a `BlobchegId`: without it identical names in
+two routers would give one hash for two different rows. From that it also follows that bases outside a
+router have no hashes — there is nothing to unfold into.
 
-### Объявление
+### The declaration
 
 ```csharp
 [BlobchegHashes(typeof(GameRouter))]
-public partial struct GameHashes : IComponentData { }   // тело и бут-систему допишет генератор
+public partial struct GameHashes : IComponentData { }   // the body and the boot system are written by the generator
 ```
 
-Роутер, его базы и его таблица обязаны лежать в одной сборке — генератор видит только свою
-компиляцию. Файл ложится рядом с роутером и зовётся `{Роутер}Hashes.bcheg`.
+A router, its bases and its table are obliged to lie in one assembly — the generator sees only its own
+compilation. The file lands next to the router and is called `{Router}Hashes.bcheg`.
 
-### Хеш в записи
+### The hash in a record
 
-Хеш — чистая функция от имени, поэтому нода знает свой хеш до записи и может положить его в
-запись, как кладёт id:
+The hash is a pure function of the name, so a node knows its hash before the write and can put it into
+the record the way it puts an id:
 
 ```csharp
 public override void Write(ref BlobchegNodeWriter w)
@@ -844,48 +873,49 @@ public override void Write(ref BlobchegNodeWriter w)
     });
 ```
 
-`HashIn` живёт в `Blobcheg.Hashes.Authoring`, а не в `BlobchegNodeWriter`: основной путь пакета о
-хешах не знает, и проект, которому сейвы не нужны, за них не платит.
+`HashIn` lives in `Blobcheg.Hashes.Authoring` and not in `BlobchegNodeWriter`: the main road of the
+package knows nothing about hashes, and a project that does not need saves does not pay for them.
 
-### Сейв и загрузка
+### Saving and loading
 
 ```csharp
 save.weapon = hashes.HashOf(weapon.id);              // BlobchegId  -> ulong
-save.armor  = hashes.HashOfCombatData(armor.offset); // uint offset -> ulong, по методу на базу
+save.armor  = hashes.HashOfCombatData(armor.offset); // uint offset -> ulong, a method per base
 
 if (!hashes.TryGetId(save.weapon, out var id))
-    return;                                          // ноды с таким именем в проекте больше нет
+    return;                                          // there is no node with that name in the project any more
 
 ref readonly var gun = ref combat.Read<GunData>(router.Get(id).combatData);
 ```
 
-Таблица считается на пересборке и печётся в файл готовой: в рантайме её не строят, а читают,
-поэтому путь `хеш → id` дешёвый и годится и на горячем. `HashOf*` по оффсету — путь сейва, он не
-горячий.
+The table is computed on the rebuild and baked into the file ready: at runtime it is not built but read,
+so the road `hash → id` is cheap and fits the hot path too. `HashOf*` by an offset is the road of a save,
+it is not hot.
 
-### Что ломает хеш
+### What breaks a hash
 
-Переименование ассета — не ломает: хеш считается от `BlobchegName`, а не от имени файла. Компакт —
-не ломает: таблица пересобирается вместе с адресами. Удаление ноды — хеш перестаёт находиться, и
-это ответ `TryGetId`, а не ошибка.
+Renaming the asset does not break it: the hash is computed from `BlobchegName` and not from the name of
+the file. The compaction does not break it: the table is rebuilt together with the addresses. Deleting a
+node makes the hash stop being found, and that is an answer of `TryGetId` and not an error.
 
-Ломает ровно одно: правка самого `BlobchegName`. Списка прежних имён у ноды нет намеренно — имя
-объявлено вечным, как GUID.
+Exactly one thing breaks it: editing `BlobchegName` itself. A node has no list of its previous names on
+purpose — the name is declared eternal, like a GUID.
 
-Два одинаковых имени в одном роутере и два разных имени, сошедшихся на одном `ulong`, валят
-пересборку с путями обоих ассетов в тексте: и то, и другое означает два предмета с одним адресом в
-сейве.
+Two identical names in one router, and two different names that met on one `ulong`, fail the rebuild with
+the paths of both assets in the text: both mean two things with one address in a save.
 
 ---
 
-## BlobchegReference: указатель вместо оффсета
+## BlobchegReference: a pointer instead of an offset
 
-Обычное чтение стоит синглтона базы и сложения. Если этого мало, ссылку можно держать так, чтобы к
-моменту чтения в ней уже лежал адрес записи. Ровно так Unity поступает со своими
-`BlobAssetReference`, и патч встроен туда же, где патчатся они.
+An ordinary read costs the singleton of the base and an addition. If that is not enough, a reference can
+be held so that by the moment of the read it already holds the address of the record. That is exactly
+what Unity does with its own `BlobAssetReference`, and the patch is built into the very place where those
+are patched.
 
-`BlobchegReference<T>` — восемь байт, в которых по очереди живут две вещи: до патча оффсет, после
-патча адрес. Ноль означает «не назначено» без сентинела: оффсеты начинаются с 32 и выровнены на 16.
+`BlobchegReference<T>` is eight bytes in which two things live in turn: before the patch an offset, after
+the patch an address. Zero means "not assigned" without a sentinel: the offsets start at 32 and are
+aligned to 16.
 
 ```csharp
 public struct WeaponRef : IComponentData
@@ -893,189 +923,197 @@ public struct WeaponRef : IComponentData
     public BlobchegReference<GunData> gun;
 }
 
-// в бейкере
+// in the baker
 AddComponent(entity, new WeaponRef { gun = a.gun.ToReference() });
 
-// в джобе — без базы и без сложения
+// in a job — without a base and without an addition
 ref readonly var gun = ref weapon.gun.Value;
 ```
 
-### Что нужно включить
+### What has to be switched on
 
-Сборка `Blobcheg.Entities.Patch` включается дефайном `BLOBCHEG_ENTITIES_PATCH` и требует
-**форкнутый** `com.unity.entities`: в него добавлена точка расширения `BlobchegPatchHook` и её
-вызовы. Логика патча в форк не переехала — там только вызовы, четыре строки.
+The `Blobcheg.Entities.Patch` assembly is switched on by the `BLOBCHEG_ENTITIES_PATCH` define and requires
+a **forked** `com.unity.entities`: the extension point `BlobchegPatchHook` and its calls were added to it.
+The logic of the patch did not move into the fork — there are only the calls there, four lines.
 
-Форк собирать руками не нужно: в `tools~/entities-patch/` лежат `.patch` на конкретную версию
-пакета, `vendor.ps1` (вендорит чистый пакет из кеша и накатывает патч), `regen.sh` (пересобирает
-патч из текущего форка) и README с порядком бампа версии.
+The fork does not have to be assembled by hand: `tools~/entities-patch/` holds the `.patch` for a
+particular version of the package, `vendor.ps1` (vendors the clean package from the cache and applies the
+patch), `regen.sh` (rebuilds the patch from the current fork) and a README with the order of a version
+bump.
 
-### Когда срабатывает
+### When it fires
 
-- загрузка секции субсцены;
-- обратный проход перед записью мира — в файл обязан уехать оффсет, а не адрес процесса;
-- живой путь редактора: открытая субсцена, где сущности приезжают чейнджсетом мимо сериализации.
+- the loading of a subscene section;
+- the reverse pass before writing a world — what travels into the file is obliged to be an offset and not
+  a process address;
+- the live road of the editor: an open subscene, where entities arrive with a change set past the
+  serialisation.
 
-### Правила
+### The rules
 
-**Порядок подъёма — забота потребителя.** Патч не ждёт базу. Сущности, приехавшие раньше своего
-домена, — это явная ошибка с именем компонента и домена в тексте, а не нули в полях. Выставляй
-синглтон готовности баз и грузи субсцены после него.
+**The order of loading is the consumer's concern.** The patch does not wait for a base. Entities that
+arrived earlier than their domain are an explicit error with the name of the component and of the domain
+in the text, and not zeroes in the fields. Set a singleton of base readiness and load the subscenes after
+it.
 
-Патч идемпотентен и пересборку под живым редактором переживает: прежние адреса переводятся на
-новый буфер.
+The patch is idempotent and outlives a rebuild under a live editor: the previous addresses are moved onto
+the new buffer.
 
-В редакторе и development-билде патч дополнительно сверяет по отладочному контуру, что по
-полученному адресу начинается запись объявленного типа.
+In the editor and in a development build the patch additionally checks against the debug contour that a
+record of the declared type begins at the address it got.
 
-### Чего патч не умеет
+### What the patch cannot do
 
-| Случай | Почему | Что делать |
+| The case | Why | What to do |
 |---|---|---|
-| слот в `ISharedComponentData` | общий компонент лежит одним значением на индекс, чанк его не несёт | перенести в обычный компонент |
-| запись из `AddBytes` (`BlobchegRawReference`) | у неё нет типа, значит и домена | читать через «оффсет плюс `Read`» |
-| поле объявлено как `BlobchegReferenceData` | это нутро слота, домен из него не выводится | объявить `BlobchegReference<T>` |
+| a slot in an `ISharedComponentData` | a shared component lies as one value per index, a chunk does not carry it | move it into an ordinary component |
+| a record from `AddBytes` (`BlobchegRawReference`) | it has no type, and so no domain either | read through "an offset plus `Read`" |
+| the field is declared as `BlobchegReferenceData` | that is the innards of a slot, the domain cannot be derived from it | declare a `BlobchegReference<T>` |
 
-Такой тип просто не регистрируется, в лог ничего не сыплется; причина остаётся строкой в
-`BlobchegPatchTableBuilder.Diagnostics`. Разработчик узнаёт о непропатченном слоте на чтении:
-`Value` бросает «не пропатчен» с именем типа записи, а не отдаёт мусор.
+Such a type is simply not registered, nothing is poured into the log; the reason stays a line in
+`BlobchegPatchTableBuilder.Diagnostics`. The developer learns about an unpatched slot on the read:
+`Value` throws "is not patched" with the name of the record type instead of handing out garbage.
 
 ---
 
-## Пересборка
+## The rebuild
 
-Кнопки Save нет намеренно: собранный час назад блоб при свежих ассетах выглядит рабочим и врёт.
+There is no Save button on purpose: a blob assembled an hour ago looks working next to fresh assets and
+lies.
 
-### Когда происходит
+### When it happens
 
-| Событие | Что делает |
+| The event | What it does |
 |---|---|
-| импорт, перемещение или удаление ноды | инкрементальная пересборка |
-| вход в PlayMode | инкрементальная пересборка; упала — PlayMode не запускается |
-| пре-билд (`callbackOrder = -10000`) | компакт, затем двойная полная пересборка с требованием идемпотентности |
-| `Tools → Blobcheg → Пересобрать базы` | полная пересборка по требованию человека |
-| `Tools → Blobcheg → Сжать базы (компакт)` | компакт по требованию человека |
+| the import, the move or the deletion of a node | an incremental rebuild |
+| entering PlayMode | an incremental rebuild; if it failed, PlayMode does not start |
+| the pre-build (`callbackOrder = -10000`) | a compaction, then a double full rebuild with a demand of idempotency |
+| `Tools → Blobcheg → Rebuild bases` | a full rebuild at a human's demand |
+| `Tools → Blobcheg → Compact bases` | a compaction at a human's demand |
 
-Первые три события — про изменившиеся ассеты. Файлы при этом теряются и мимо ассетов: снесённые
-артефакты при тёплой Library (`git clean -X`, свежая ворктри) не делают грязной ни одну ноду, и
-пересобирать автоматике нечего, хотя писать некуда. На это и есть команда в меню — адреса и id она
-не двигает, их двигает только компакт.
+The first three events are about changed assets. Files are lost past the assets too: artifacts wiped out
+with a warm Library (`git clean -X`, a fresh worktree) do not make a single node dirty, and the
+automation has nothing to rebuild although there is nowhere to write. That is what the menu command is
+for — it does not move the addresses and the ids, only the compaction moves those.
 
-### API
+### The API
 
 ```csharp
-BlobchegBuild.RebuildAll();          // инкрементально: неизменившиеся ноды отдают прошлые байты
-BlobchegBuild.RebuildFull();         // кеш забыт, проект обойдён, Write позван у всех
-BlobchegBuild.Compact();             // раскладка с нуля: дырки исчезают, адреса и id выдаются заново
-BlobchegBuild.RequireUpToDate(what); // пересобрать дважды и потребовать, чтобы второй заход ничего не изменил
+BlobchegBuild.RebuildAll();          // incrementally: unchanged nodes hand out their previous bytes
+BlobchegBuild.RebuildFull();         // the cache is forgotten, the project is walked, Write is called on everyone
+BlobchegBuild.Compact();             // the layout from scratch: the holes disappear, the addresses and the ids are handed out anew
+BlobchegBuild.RequireUpToDate(what); // rebuild twice and demand that the second pass changed nothing
 ```
 
-Все четыре возвращают/используют `BlobchegBuildReport` — домены, роутеры, записи, сколько файлов,
-манифестов и носителей переписано.
+All four return/use a `BlobchegBuildReport` — domains, routers, records, how many files, manifests and
+carriers were rewritten.
 
-### Компакт
+### Compaction
 
-Адреса записей стабильны между пересборками: правка значений, появление и удаление соседей чужой
-адрес не двигают, поэтому нетронутые субсцены не перепекаются, а пересобранный файл можно подменять
-в билде. Компакт — единственное, что двигает все адреса и все id разом. Сам собой не случается: их уже запомнили
-запечённые субсцены и чужие сейвы. Мест ровно два — пре-билд, где следом всё равно перепекается всё,
-и команда в меню, которую человек зовёт сам.
+The addresses of the records are stable between rebuilds: editing the values, the appearance and the
+deletion of neighbours do not move a foreign address, so untouched subscenes are not re-baked and a
+rebuilt file can be substituted in a build. The compaction is the only thing that moves every address and
+every id at once. It does not happen by itself: baked subscenes and other people's saves have already
+remembered them. There are exactly two places for it — the pre-build, where everything is re-baked
+afterwards anyway, and the menu command, which a human calls themselves.
 
-### Выход
+### The output
 
-| Путь | Что |
+| The path | What |
 |---|---|
-| `Assets/StreamingAssets/Blobcheg/{Домен}.bcheg` | файл базы |
-| `Assets/StreamingAssets/Blobcheg/{Роутер}.bcheg` | файл роутера |
-| `Assets/StreamingAssets/Blobcheg/{Роутер}Hashes.bcheg` | таблица хешей имён |
-| `Assets/Blobcheg/{Домен}.asset` | манифест: имя файла, число записей, хеш, состав, время сборки |
-| `Assets/Blobcheg/{Роутер}.asset` | манифест роутера; ноды перечислены в порядке id |
-| `Assets/Blobcheg/{Роутер}Hashes.asset` | манифест таблицы; ноды в порядке строк |
-| sub-asset'ы на нодах | `BlobchegRefSo` и `BlobchegIdSo` |
+| `Assets/StreamingAssets/Blobcheg/{Domain}.bcheg` | the file of a base |
+| `Assets/StreamingAssets/Blobcheg/{Router}.bcheg` | the file of a router |
+| `Assets/StreamingAssets/Blobcheg/{Router}Hashes.bcheg` | the table of name hashes |
+| `Assets/Blobcheg/{Domain}.asset` | the manifest: the file name, the number of records, the hash, the contents, the build time |
+| `Assets/Blobcheg/{Router}.asset` | the manifest of a router; the nodes are listed in the order of their ids |
+| `Assets/Blobcheg/{Router}Hashes.asset` | the manifest of the table; the nodes in the order of the rows |
+| the sub-assets on the nodes | `BlobchegRefSo` and `BlobchegIdSo` |
 
-Файлы и манифесты производны от ассетов — в гит класть не нужно. Носители (sub-asset'ы) — нужно:
-в них лежит журнал выданных адресов и id.
+The files and the manifests are derived from the assets — they do not have to go into git. The carriers
+(the sub-assets) do: they hold the journal of the addresses and the ids that were handed out.
 
-### Когда пересборка отказывается работать
+### When the rebuild refuses to work
 
-- **нода пропала из обхода, а её файл на диске** — так выглядит только что переименованный ассет;
-  повторить, когда редактор доимпортирует;
-- **пересборка вошла сама в себя** — нода позвала `RebuildAll` из своего `Write`;
-- **ассет объявлен нодой, но не грузится** — молча пропущен не будет.
+- **a node fell out of the walk while its file is on disk** — that is what a just-renamed asset looks
+  like; repeat it once the editor has finished importing;
+- **the rebuild entered itself** — a node called `RebuildAll` from its own `Write`;
+- **an asset is declared a node but does not load** — it will not be skipped silently.
 
 ---
 
-## Проверки и ошибки
+## Checks and errors
 
-Ошибка бросается, а не возвращается. Нет файла, битый header, не сошлась целостность, две записи
-одной ноды в домен, обращение к оффсету до `Flush`, пустой или чужой `BlobchegRef<T>` /
-`BlobchegIdRef<T>`, неизвестный id, отсутствие записи в базе — исключение.
+An error is thrown, not returned. No file, a broken header, the integrity did not match, two records of
+one node into a domain, an access to an offset before `Flush`, an empty or foreign `BlobchegRef<T>` /
+`BlobchegIdRef<T>`, an unknown id, a missing record in a base — an exception.
 
-Единственное исключение из правила — `TryGet*` и `Has*` у роутера: там отсутствие записи и есть
-нормальный ответ, и они не бросают никогда.
+The only exception from the rule is `TryGet*` and `Has*` of a router: there a missing record IS the
+normal answer, and they never throw.
 
-Два отказа подъёма отличаются типом: «файла нет» и «обрезан или дописан» бросают
-`BlobchegTransientException`. Причина у них во времени, а не в байтах, и в редакторе это
-нотификация, а не поломка — см. [переходный отказ](#переходный-отказ--варнинг-а-не-ошибка).
+Two refusals of the loading differ by type: "there is no file" and "truncated or appended to" throw a
+`BlobchegTransientException`. Their cause is in time and not in the bytes, and in the editor that is a
+notification and not a breakage — see
+[a transient refusal](#a-transient-refusal-is-a-warning-not-an-error).
 
-### Что и когда проверяется
+### What is checked and when
 
-| Когда | Что |
+| When | What |
 |---|---|
-| всегда, разово при подъёме | magic, версия формата, база это или роутер, длина файла, целостность (`ContentHash`), личность файла (хеш имени домена) |
-| всегда, на каждый `router.Get` | тег id и диапазон строки — два сравнения |
-| `ENABLE_UNITY_COLLECTIONS_CHECKS` | выравнивание оффсета, границы буфера, **тип записи** в `Read<T>` |
-| `ENABLE_UNITY_COLLECTIONS_CHECKS` | в слоте `BlobchegReference<T>` адрес, а не оставшийся оффсет |
-| пересборка, роутер с `FixedIndex` | нода реализует `IBlobchegIndexed`, номер в пределах потолка и не занят другой нодой |
+| always, once at loading | the magic, the format version, whether it is a base or a router, the length of the file, the integrity (`ContentHash`), the identity of the file (the hash of the domain name) |
+| always, on every `router.Get` | the tag of the id and the range of the row — two comparisons |
+| `ENABLE_UNITY_COLLECTIONS_CHECKS` | the alignment of the offset, the bounds of the buffer, **the type of the record** in `Read<T>` |
+| `ENABLE_UNITY_COLLECTIONS_CHECKS` | that the `BlobchegReference<T>` slot holds an address and not an offset left in it |
+| the rebuild, a router with `FixedIndex` | the node implements `IBlobchegIndexed`, the number is within the ceiling and is not taken by another node |
 
-### Отладочный контур
+### The debug contour
 
-Сверка типа записи опирается на секцию в файле, где лежат типы и имена нод. В редакторе и
-development-билде она есть, в релизном плеере её нет — `Read<T>` там чистый `AsRef`.
+The check of the record type leans on a section in the file that holds the types and the names of the
+nodes. In the editor and in a development build it is there, in a release player it is not — `Read<T>` is
+a pure `AsRef` there.
 
-По контуру же работает `Describe`:
+`Describe` works off the same contour:
 
 ```csharp
 if (db.HasDebug)
     db.Describe(offset, out var typeName, out var nodeName);
 
-router.Describe(id);   // имя ноды
+router.Describe(id);   // the name of the node
 ```
 
-### Диагностика кодогена
+### The diagnostics of the codegen
 
-| Код | Про что |
+| The code | About what |
 |---|---|
-| `BCHG001` | база помечена `[Blobcheg]`, но не `partial` |
-| `BCHG002` | база вложена в другой тип |
-| `BCHG003` | в `[Blobcheg]` передан не интерфейс |
-| `BCHG004` | задано имя члена роутера, но роутер не выбран (ноль, несколько или в чужой сборке) |
-| `BCHG005` | роутер не `partial` или вложенный |
-| `BCHG006` | роутер собран из противоречивых баз: домен или имя члена дважды |
-| `BCHG007` | в роутере больше 64 баз |
-| `BCHG008` | база объявлена `IComponentData`, а сборка не референсит `Blobcheg.Entities` |
-| `BCHG009` | таблица хешей не `partial` или вложенная |
-| `BCHG010` | в `[BlobchegHashes]` передан не роутер этой сборки |
+| `BCHG001` | a base is marked `[Blobcheg]` but is not `partial` |
+| `BCHG002` | a base is nested in another type |
+| `BCHG003` | something that is not an interface was passed to `[Blobcheg]` |
+| `BCHG004` | the name of a router member is given, but the router is not chosen (zero, several, or in another assembly) |
+| `BCHG005` | the router is not `partial` or is nested |
+| `BCHG006` | the router is assembled out of contradictory bases: a domain or a member name twice |
+| `BCHG007` | there are more than 64 bases in the router |
+| `BCHG008` | a base is declared `IComponentData` while the assembly does not reference `Blobcheg.Entities` |
+| `BCHG009` | the hash table is not `partial` or is nested |
+| `BCHG010` | something that is not a router of this assembly was passed to `[BlobchegHashes]` |
 
 ---
 
-## Справочник API
+## API reference
 
-### База (дописывает генератор)
+### A base (written by the generator)
 
 ```csharp
-const string DomainName;                  // имя маркер-интерфейса
-static string FileName { get; }           // "{Домен}.bcheg"
-Db(BlobchegBuffer buffer);                // забирает владение буфером, валидирует файл
+const string DomainName;                  // the name of the marker interface
+static string FileName { get; }           // "{Domain}.bcheg"
+Db(BlobchegBuffer buffer);                // takes the ownership of the buffer, validates the file
 bool IsCreated { get; }
 int Length { get; }
 bool HasDebug { get; }
-ref readonly T Read<T>(uint offset) where T : unmanaged, IДомен;
+ref readonly T Read<T>(uint offset) where T : unmanaged, IDomain;
 void Describe(uint offset, out string typeName, out string nodeName);
 void Dispose();
 ```
 
-### Роутер (дописывает генератор)
+### A router (written by the generator)
 
 ```csharp
 const string RouterName;
@@ -1083,56 +1121,57 @@ const ulong LayoutHash;
 const int DomainCount;
 static string FileName { get; }
 Router(BlobchegBuffer buffer);
-int Count { get; }                        // строк, они же ноды
+int Count { get; }                        // rows, which are also nodes
 byte Tag { get; }
 BlobchegId IdAt(uint index);
-RouterRow Get(BlobchegId id);             // неизвестный id — бросает
+RouterRow Get(BlobchegId id);             // an unknown id throws
 bool TryGet(BlobchegId id, out RouterRow row);
-uint Get{Member}(BlobchegId id);          // на каждую базу
+uint Get{Member}(BlobchegId id);          // one per base
 bool TryGet{Member}(BlobchegId id, out uint offset);
 bool Has{Member}(BlobchegId id);
-string Describe(BlobchegId id);           // имя ноды; нужен отладочный контур
+string Describe(BlobchegId id);           // the name of the node; needs the debug contour
 void Dispose();
 ```
 
-Плюс `enum {Router}Db` — флаги баз — и `struct {Router}Row` с `Mask`, `Has{Member}` и `{member}`.
+Plus an `enum {Router}Db` — the flags of the bases — and a `struct {Router}Row` with `Mask`,
+`Has{Member}` and `{member}`.
 
-### Таблица хешей (дописывает генератор)
+### A hash table (written by the generator)
 
 ```csharp
 const string RouterName;
-const string FileIdentity;                // "{Роутер}Hashes"
-const ulong LayoutHash;                   // тот же, что у роутера
+const string FileIdentity;                // "{Router}Hashes"
+const ulong LayoutHash;                   // the same as the router's
 const int DomainCount;
 static string FileName { get; }
 Hashes(BlobchegBuffer buffer);
-int Count { get; }                        // строк роутера, включая дырки
+int Count { get; }                        // the rows of the router, holes included
 byte Tag { get; }
-BlobchegId GetId(ulong hash);             // неизвестный хеш — бросает
+BlobchegId GetId(ulong hash);             // an unknown hash throws
 bool TryGetId(ulong hash, out BlobchegId id);
-ulong HashOf(BlobchegId id);              // дырка от удалённой ноды — 0
-ulong HashOf{Member}(uint offset);        // на каждую базу; записи нет — бросает
+ulong HashOf(BlobchegId id);              // a hole from a deleted node is 0
+ulong HashOf{Member}(uint offset);        // one per base; a missing record throws
 bool TryHashOf{Member}(uint offset, out ulong hash);
 void Dispose();
 ```
 
-Ключ считается без таблицы: `BlobchegHashKey.Of<TRouter>(name)` в рантайме,
-`node.HashIn<TRouter>()` на бейке.
+The key is computed without the table: `BlobchegHashKey.Of<TRouter>(name)` at runtime,
+`node.HashIn<TRouter>()` at bake time.
 
-### Чтение файла
+### Reading a file
 
 ```csharp
 BlobchegLoad load = BlobchegTransport.Default.Read(fileName, Allocator.Persistent);
-bool ready = load.Poll();          // двигает автомат; без вызова он не поедет
-load.Complete();                   // блокирующее ожидание — тесты и инструменты
-BlobchegBuffer buffer = load.Acquire();   // отдаёт владение; до готовности — ошибка
+bool ready = load.Poll();          // moves the machine; without a call it will not go
+load.Complete();                   // a blocking wait — tests and tooling
+BlobchegBuffer buffer = load.Acquire();   // hands over the ownership; before it is ready — an error
 load.Dispose();
 ```
 
-`BlobchegTransientException` — отказ, у которого есть срок годности: файла ещё нет или чтение
-поймало его посреди перезаписи. Наследник `InvalidOperationException`, ловится отдельно от него.
+`BlobchegTransientException` is a refusal with an expiry date: the file is not there yet, or the reading
+caught it in the middle of a rewrite. A descendant of `InvalidOperationException`, caught apart from it.
 
-### Пересборка (Editor)
+### The rebuild (Editor)
 
 ```csharp
 BlobchegBuildReport BlobchegBuild.RebuildAll();
@@ -1142,60 +1181,62 @@ void BlobchegBuild.RequireUpToDate(string what);
 IEnumerable<BlobchegRefSo> BlobchegBuild.RefsOf(BlobchegNodeSo node);
 IEnumerable<BlobchegIdSo> BlobchegBuild.IdsOf(BlobchegNodeSo node);
 List<BlobchegNodeSo> BlobchegBuild.FindNodes();
-void BlobchegHooks.MarkDirty();    // пометить домены грязными из тестов и инструментов
+void BlobchegHooks.MarkDirty();    // mark the domains dirty from tests and tooling
 ```
 
 ---
 
-## Сборки пакета
+## The assemblies of the package
 
-| asmdef | Что внутри | Платформы |
+| asmdef | What is inside | Platforms |
 |---|---|---|
-| `Blobcheg.Core` | формат файла, транспорт, писатель, хеши | все |
-| `Blobcheg.Runtime` | `[Blobcheg]`, `[BlobchegRouter]`, `BlobchegBlob`, `BlobchegRouterBlob`, `BlobchegId`, поля-ссылки, генератор | все |
-| `Blobcheg.Entities` | `BlobchegBootGroup` | все, только с Entities |
-| `Blobcheg.Entities.Patch` | патч `BlobchegReference<T>` на импорте | все, с форком Entities и дефайном `BLOBCHEG_ENTITIES_PATCH` |
-| `Blobcheg.Hashes` | `[BlobchegHashes]`, `BlobchegHashKey`, формат и резидентная таблица | все |
-| `Blobcheg.Authoring` | ноды, пересборка, реестры доменов и роутеров, пикеры полей | Editor |
-| `Blobcheg.Hashes.Authoring` | писатель таблицы, `HashIn`, пост-проход пересборки | Editor |
+| `Blobcheg.Core` | the file format, the transport, the writer, the hashes | all |
+| `Blobcheg.Runtime` | `[Blobcheg]`, `[BlobchegRouter]`, `BlobchegBlob`, `BlobchegRouterBlob`, `BlobchegId`, the reference fields, the generator | all |
+| `Blobcheg.Entities` | `BlobchegBootGroup` | all, only with Entities |
+| `Blobcheg.Entities.Patch` | the `BlobchegReference<T>` patch on import | all, with the Entities fork and the `BLOBCHEG_ENTITIES_PATCH` define |
+| `Blobcheg.Hashes` | `[BlobchegHashes]`, `BlobchegHashKey`, the format and the resident table | all |
+| `Blobcheg.Authoring` | the nodes, the rebuild, the registries of domains and routers, the field pickers | Editor |
+| `Blobcheg.Hashes.Authoring` | the writer of the table, `HashIn`, the post-pass of the rebuild | Editor |
 
-`Blobcheg.Entities` и `Blobcheg.Entities.Patch` гасятся сами через `defineConstraints`, если пакета
-Entities или дефайна нет.
+`Blobcheg.Entities` and `Blobcheg.Entities.Patch` switch themselves off through `defineConstraints` if
+the Entities package or the define is missing.
 
 ---
 
-## Разработка пакета
+## Developing the package
 
-### Генератор
+### The generator
 
-Исходник — `Authoring/CodeGen~/`, собранный `Blobcheg.CodeGen.dll` лежит в `Runtime/` с лейблами
-`RoslynAnalyzer` и `RunOnlyOnAssembliesWithReference`, поэтому применяется к сборкам, которые
-референсят `Blobcheg.Runtime`.
+The source is `Authoring/CodeGen~/`, the assembled `Blobcheg.CodeGen.dll` lies in `Runtime/` with the
+labels `RoslynAnalyzer` and `RunOnlyOnAssembliesWithReference`, so it is applied to the assemblies that
+reference `Blobcheg.Runtime`.
 
-Пересобрать: `dotnet build -c Release` в `Authoring/CodeGen~/`, затем скопировать DLL в `Runtime/`.
-`.meta` не трогать — в нём лейблы и GUID.
+To rebuild: `dotnet build -c Release` in `Authoring/CodeGen~/`, then copy the DLL into `Runtime/`. Do not
+touch the `.meta` — it holds the labels and the GUID.
 
-### Тесты
+### The tests
 
 ```
 unity test <project> --mode EditMode --filter Blobcheg
 ```
 
-Фильтр по `Blobcheg`, а не по `Blobcheg.Tests`: тесты бут-группы и патча лежат отдельными сборками
-(`Blobcheg.Entities.Tests`, `Blobcheg.EntitiesPatch.Tests`), и они гасятся без Entities и без
-дефайна. Пакет должен быть в `testables` манифеста проекта.
+The filter is `Blobcheg` and not `Blobcheg.Tests`: the tests of the boot group and of the patch lie in
+separate assemblies (`Blobcheg.Entities.Tests`, `Blobcheg.EntitiesPatch.Tests`), and they switch
+themselves off without Entities and without the define. The package has to be in the `testables` of the
+project manifest.
 
-### Деструктивный набор
+### The destructive set
 
-`Samples~/AdvancedTests` — отдельный набор, который ломает пакет от ассета до байта в файле: границы
-адреса, порча файла, чужие id и оффсеты, реентранс пересборки, объём, человеческий фактор.
+`Samples~/AdvancedTests` is a separate set that breaks the package from an asset down to a byte in a
+file: the boundaries of an address, corruption of a file, foreign ids and offsets, reentrancy of a
+rebuild, volume, the human factor.
 
-Он **не** часть поставки: `Samples~` невидима для Unity, поэтому потребителю не стоит ни секунды
-компиляции, пока он её не импортирует. Ставится через Package Manager → Samples → Import либо
-гоняется из CLI:
+It is **not** part of the delivery: `Samples~` is invisible to Unity, so it does not cost a consumer a
+second of compilation until they import it. It is installed through Package Manager → Samples → Import or
+run from the CLI:
 
 ```
-./tools~/run-advanced-tests.ps1 -Project <путь к Unity-проекту>
+./tools~/run-advanced-tests.ps1 -Project <the path to the Unity project>
 ```
 
-Подробности — `Samples~/AdvancedTests/README.md`.
+The details are in `Samples~/AdvancedTests/README.md`.

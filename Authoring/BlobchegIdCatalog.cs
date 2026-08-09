@@ -6,9 +6,9 @@ using System.Reflection;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Кандидаты для поля-id: носители id того роутера, который стоит параметром поля. Собирается
-    /// обходом нод — по той же причине, что и каталог записей: поисковый индекс отстаёт от импорта,
-    /// а пикер, показавший чужое, ошибётся молча.
+    /// The candidates for an id field: the id carriers of the router that stands as the field's
+    /// parameter. Gathered by walking the nodes — for the same reason as the record catalogue: the
+    /// search index lags behind the import, and a picker that showed something foreign errs silently.
     /// </summary>
     public static class BlobchegIdCatalog
     {
@@ -26,7 +26,7 @@ namespace Blobcheg.Authoring
             => carrier != null
                && (routerName == null || string.Equals(carrier.RouterName, routerName, StringComparison.Ordinal));
 
-        /// <summary>Имя роутера по типу его структуры — константа, выпущенная кодогеном.</summary>
+        /// <summary>The router name by its struct type — a constant emitted by the codegen.</summary>
         public static string RouterNameOf(Type router)
         {
             if (router == null)

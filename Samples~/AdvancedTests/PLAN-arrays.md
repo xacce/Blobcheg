@@ -1,37 +1,39 @@
-# План деструктивных тестов: массивы в записи
+# The plan of the destructive tests: arrays in a record
 
-Сценарии и ожидания написаны ДО чтения кода массивов — по контракту из
-`docs/blobcheg-tz-arrays.md`. Код смотрелся только ради имён типов.
+The scenarios and the expectations were written BEFORE the array code was read — from the contract in
+`docs/blobcheg-tz-arrays.md`. The code was looked at only for the names of the types.
 
-Ожидание везде одно из двух: явная ошибка или детерминированный результат. Молчаливый no-op,
-порча и мусор не принимаются. Правило набора в силе: чтение освобождённой памяти не исполняется,
-а обставляется так, чтобы его наличие было видно, — поэтому «окно после End» обязано отбиваться
-пакетом, а не исполняться тестом.
+Everywhere the expectation is one of two: an explicit error or a deterministic result. A silent no-op,
+corruption and garbage are not accepted. The rule of the set holds: reading freed memory is not
+executed, it is staged so that its presence is visible — which is why "the window after End" is obliged
+to be rejected by the package rather than executed by the test.
 
-| # | Сценарий | Категория | Ожидание |
+| # | Scenario | Category | Expectation |
 |---|---|---|---|
-| 1 | Массив на миллион элементов | объём | собирается, целостность сходится, крайние элементы читаются |
-| 2 | Билдер без единого Allocate — поле-массив забыто | человеческий фактор | запись читается, массив пуст, не мусор |
-| 3 | Литерал с массивом на второй ступени вложенности | человеческий фактор | явный отказ с называнием правильной формы |
-| 4 | Запись в окно массива после End | порядок | явная ошибка, не запись в освобождённую память |
-| 5 | Write упал между Begin и End | порча состояния | доезжает ошибка ноды; следующая пересборка живая |
-| 6 | Поле одного билдера в Allocate другого | абсурд | явный отказ «не из этой записи» |
-| 7 | Рекурсивный тип элемента, дерево в два уровня | абсурд | строится и читается по уровням |
-| 8 | Десять правок длины через пересборку | комбинаторика | файл выходит на устойчивый цикл, чужие адреса стоят |
+| 1 | An array of a million elements | volume | it assembles, the integrity check passes, the edge elements read |
+| 2 | A builder without a single Allocate — the array field is forgotten | human factor | the record reads, the array is empty, not garbage |
+| 3 | A literal with an array on the second level of nesting | human factor | an explicit refusal naming the right form |
+| 4 | A write into the array window after End | order | an explicit error, not a write into freed memory |
+| 5 | Write threw between Begin and End | state corruption | the node's error arrives; the next rebuild is alive |
+| 6 | A field of one builder in the Allocate of another | absurd | an explicit refusal, "not from this record" |
+| 7 | A recursive element type, a tree two levels deep | absurd | it builds and reads level by level |
+| 8 | Ten edits of the length through a rebuild | combinatorics | the file settles into a stable cycle, other addresses hold |
 
-Найденное чинится в пакете, а не в ожиданиях; каждая красная — `// BUG:` с корнем.
+What is found is fixed in the package and not in the expectations; every red one gets a `// BUG:` with
+the root.
 
-## Находки прогона
+## The findings of the run
 
-Находка письма (до прогона): окно `BlobchegBuilderArray<T>` держало сырой указатель и после
-`End` писало бы в освобождённую память молча. Закрыто в пакете: окно знает владельца и на
-закрытом билдере бросает с именем ноды.
+A finding of the writing (before the run): the `BlobchegBuilderArray<T>` window held a raw pointer and
+after `End` would have written into freed memory silently. Closed in the package: the window knows its
+owner and on a closed builder it throws with the node's name.
 
-Две находки прогона — не про массивы, а про сам набор в этом проекте:
+Two findings of the run are not about arrays but about the set itself in this project:
 
-- тег роутера набора совпал с тегом игрового `ContentRouter` (167): пространство тегов —
-  байт, и набор, вкопированный в проект потребителя, участвует в общей раздаче. Пакет отбил
-  коллизию вслух, как и обещал; роутер набора переименован в `AdvAlienRouter`;
-- `Ноды_с_одинаковым_именем_различимы` стоял на посылке «личность ноды — только GUID», которая
-  умерла с таблицей хешей имён: теперь имя — адрес записи в сейве, и тёзки в роутере
-  отбиваются пересборкой. Ожидание переписано вместе с посылкой.
+- the router tag of the set collided with the tag of the game's `ContentRouter` (167): the tag space is
+  a byte, and a set copied into a consumer's project takes part in the common handout. The package
+  rejected the collision out loud, as it promised; the router of the set was renamed to `AdvAlienRouter`;
+- `Nodes_with_identical_names_are_rejected_out_loud` stood on the premise "the identity of a node is the
+  GUID alone", which died together with the table of name hashes: now the name is the address of the
+  record in the save, and namesakes in a router are rejected by the rebuild. The expectation was
+  rewritten together with the premise.

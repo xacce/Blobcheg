@@ -10,14 +10,14 @@ using Unity.Jobs;
 namespace Blobcheg.AdvancedTests
 {
     /// <summary>
-    /// Чтение из джоб, реентранс пересборки и объём: сотня тысяч строк роутера, запись в мегабайты,
-    /// ровно одна нода и сотня тысяч чтений подряд.
+    /// Reading from jobs, reentrancy of the rebuild and volume: a hundred thousand router rows, a record
+    /// of megabytes, exactly one node and a hundred thousand reads in a row.
     /// </summary>
     public sealed class ConcurrencyAndVolumeTests : AdvancedFixture
     {
         /// <summary>
-        /// Чтение базы прямо из бёрстовой джобы — то, ради чего пакет вообще существует. Если это не
-        /// компилируется или не шедулится, всё остальное значения не имеет.
+        /// Reading a base straight from a bursted job — what the package exists for in the first place. If
+        /// that does not compile or does not schedule, everything else is beside the point.
         /// </summary>
         [BurstCompile]
         struct AdvReadJob : IJobParallelFor
@@ -32,7 +32,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Параллельное_чтение_из_джоб_даёт_те_же_значения()
+        public void Parallel_reading_from_jobs_gives_the_same_values()
         {
             var nodes = new List<AdvComboNodeSo>();
             for (var i = 0; i < 16; i++)
@@ -58,7 +58,7 @@ namespace Blobcheg.AdvancedTests
                 for (var i = 0; i < nodes.Count; i++)
                 {
                     Assert.That(rpm[i], Is.EqualTo(nodes[i].rpm),
-                        $"нода {nodes[i].name} прочитана из джобы не тем значением");
+                        $"node {nodes[i].name} was read from the job with the wrong value");
                 }
             }
             finally
@@ -70,13 +70,13 @@ namespace Blobcheg.AdvancedTests
         }
 
         /// <summary>
-        /// Нода в своём <c>Write</c> может тронуть AssetDatabase чем угодно и войти в пересборку из
-        /// середины пересборки. Защита стоит на самой пересборке, а не на хуке импорта: вложенный
-        /// заход идёт поверх наполовину заполненного коллектора и наполовину розданных id, и «файл
-        /// собран» после него не значит ничего.
+        /// A node may touch the AssetDatabase with anything inside its <c>Write</c> and enter a rebuild
+        /// from the middle of a rebuild. The guard stands on the rebuild itself and not on the import
+        /// hook: a nested run goes over a half-filled collector and half-handed-out ids, and "the file is
+        /// built" after it means nothing.
         /// </summary>
         [Test]
-        public void Пересборка_из_середины_пересборки_отбивается()
+        public void A_rebuild_from_the_middle_of_a_rebuild_is_rejected()
         {
             Node<AdvReentrantNodeSo>("Reentrant");
             AdvReentrantNodeSo.Forget();
@@ -84,11 +84,11 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             Assert.That(AdvReentrantNodeSo.Reentered, Is.Zero,
-                "нода позвала пересборку из Write, и пересборка это позволила");
+                "the node called the rebuild from Write and the rebuild allowed it");
         }
 
         [Test]
-        public void Сто_тысяч_строк_роутера_адресуются()
+        public void A_hundred_thousand_router_rows_are_addressable()
         {
             const int rows = 100_000;
             const int domains = 3;
@@ -103,8 +103,8 @@ namespace Blobcheg.AdvancedTests
             var writer = BlobchegRouterWriter.Open(Scratch, "AdvVolumeRouter", domains, layout);
             for (var i = 0; i < rows; i++)
             {
-                // Каждая третья строка пустая: дырки в маске обязаны выживать на объёме так же,
-                // как на двух строках.
+                // Every third row is empty: holes in the mask are obliged to survive at volume the same way
+                // as with two rows.
                 writer.Append("row" + i, i % 3 == 0
                     ? Array.Empty<BlobchegRouterCell>()
                     : new[] { new BlobchegRouterCell(i % domains, (uint)(BlobchegFormat.HeaderSize + i * 16)) });
@@ -125,12 +125,12 @@ namespace Blobcheg.AdvancedTests
                     var row = blob.Get(blob.IdAt((uint)i));
                     if (i % 3 == 0)
                     {
-                        Assert.That(row.Mask, Is.EqualTo(0ul), $"строка {i} обязана остаться пустой");
+                        Assert.That(row.Mask, Is.EqualTo(0ul), $"row {i} is obliged to stay empty");
                         continue;
                     }
 
                     Assert.That(row.Offset(i % domains), Is.EqualTo((uint)(BlobchegFormat.HeaderSize + i * 16)),
-                        $"строка {i} отдала чужой оффсет");
+                        $"row {i} handed out a foreign offset");
                 }
 
                 Assert.Throws<InvalidOperationException>(() => blob.Get(blob.IdAt((uint)rows)));
@@ -142,7 +142,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Запись_в_мегабайты_переживает_круг()
+        public void A_record_of_megabytes_outlives_the_round_trip()
         {
             const int megabytes = 2;
 
@@ -158,14 +158,14 @@ namespace Blobcheg.AdvancedTests
             var file = Bytes("IAdvLoose");
 
             Assert.That(file.Length, Is.GreaterThanOrEqualTo(offset + size),
-                "многомегабайтная запись обязана целиком лечь в файл");
-            Assert.That(file[offset], Is.EqualTo((byte)0), "первый байт записи");
-            Assert.That(file[offset + 4096], Is.EqualTo((byte)1), "и метка внутри неё");
-            Assert.That(file[offset + size - 1], Is.EqualTo((byte)0xFE), "и последний её байт");
+                "a multi-megabyte record is obliged to land in the file whole");
+            Assert.That(file[offset], Is.EqualTo((byte)0), "the first byte of the record");
+            Assert.That(file[offset + 4096], Is.EqualTo((byte)1), "and the mark inside it");
+            Assert.That(file[offset + size - 1], Is.EqualTo((byte)0xFE), "and its last byte too");
         }
 
         [Test]
-        public void Ровно_одна_нода_адресуется_нулевой_строкой()
+        public void Exactly_one_node_is_addressed_by_row_zero()
         {
             var only = Node<AdvColdOnlyNodeSo>("Only");
             only.tier = 77;
@@ -174,8 +174,8 @@ namespace Blobcheg.AdvancedTests
             Rebuild();
 
             var id = IdOf(only, AdvRouter.RouterName);
-            Assert.That(id.Index, Is.EqualTo(0u), "единственная нода — это строка ноль");
-            Assert.That(id.IsValid, Is.True, "но её id при этом не ноль: строку ноль от «не назначен» отличает тег");
+            Assert.That(id.Index, Is.EqualTo(0u), "the only node is row zero");
+            Assert.That(id.IsValid, Is.True, "but its id is not zero: the tag tells row zero from \"not assigned\"");
 
             var router = Router();
             var cold = Cold();
@@ -193,7 +193,7 @@ namespace Blobcheg.AdvancedTests
         }
 
         [Test]
-        public void Сто_тысяч_чтений_подряд_стабильны()
+        public void A_hundred_thousand_reads_in_a_row_are_stable()
         {
             var node = Node<AdvComboNodeSo>("Combo");
             node.rpm = 4242;
@@ -206,12 +206,12 @@ namespace Blobcheg.AdvancedTests
             {
                 const int reads = 100_000;
 
-                // Прогрев: первое чтение платит за JIT метода, и на сотне тысяч витков эта плата
-                // размазалась бы по замеру.
+                // A warm-up: the first read pays for the JIT of the method, and over a hundred thousand
+                // turns that payment would smear across the measurement.
                 for (var i = 0; i < 1024; i++)
                 {
                     if (db.Read<AdvGun>(offset).Rpm != 4242)
-                        Assert.Fail("прогрев прочитал не то, что записано");
+                        Assert.Fail("the warm-up read something other than what was written");
                 }
 
                 var wrong = 0;
@@ -224,16 +224,16 @@ namespace Blobcheg.AdvancedTests
 
                 watch.Stop();
 
-                Assert.That(wrong, Is.Zero, "чтение — чистая реинтерпретация; состояния между вызовами у неё нет");
+                Assert.That(wrong, Is.Zero, "a read is a pure reinterpretation; it has no state between calls");
 
-                // Не порог, а хронометраж: сколько стоит чтение в редакторе через сгенерированный
-                // фасад, на файле настоящей пересборки. Снят до того, как в CheckRead ляжет
-                // AtomicSafetyHandle, — чтобы потом было видно, чья цена. Разложение по слоям —
-                // в Tests/BlobchegReadCostTests.
+                // Not a threshold but a timing: what a read costs in the editor through the generated
+                // facade, on a file from a real rebuild. Taken before an AtomicSafetyHandle lands in
+                // CheckRead, so that whose price is whose stays visible afterwards. The breakdown by layer
+                // is in Tests/BlobchegReadCostTests.
                 UnityEngine.Debug.Log(
-                    $"Blobcheg: {reads} чтений через фасад за {watch.Elapsed.TotalMilliseconds:F2} мс — " +
-                    $"{watch.Elapsed.TotalMilliseconds * 1e6 / reads:F2} нс на чтение " +
-                    $"(редактор, отладочный контур {(db.HasDebug ? "есть" : "нет")})");
+                    $"Blobcheg: {reads} reads through the facade in {watch.Elapsed.TotalMilliseconds:F2} ms — " +
+                    $"{watch.Elapsed.TotalMilliseconds * 1e6 / reads:F2} ns per read " +
+                    $"(editor, debug contour {(db.HasDebug ? "present" : "absent")})");
             }
             finally
             {

@@ -18,7 +18,7 @@ namespace Blobcheg.Tests
         public float Hp;
     }
 
-    /// <summary>Близнец <see cref="TestGun"/>: тот же размер, другой тип. Ловушка реинтерпретации.</summary>
+    /// <summary>A twin of <see cref="TestGun"/>: the same size, a different type. The reinterpretation trap.</summary>
     struct TestGunTwin
     {
         public float AmmoMax;
@@ -26,8 +26,8 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Подъём базы: целостность, чтение по оффсету, отладочный контур. Всё, что за
-    /// <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c>, проверяется тут — в редакторе дефайн стоит.
+    /// Loading a base: the integrity, reading at an offset, the debug contour. Everything that sits
+    /// behind <c>ENABLE_UNITY_COLLECTIONS_CHECKS</c> is checked here — in the editor the define is set.
     /// </summary>
     public sealed class BlobchegBlobTests
     {
@@ -71,7 +71,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Читает_записанное_по_оффсету()
+        public void It_reads_what_was_written_at_the_offset()
         {
             var built = Build();
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "Domain");
@@ -88,19 +88,19 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Подмена_байта_ловится_на_подъёме()
+        public void A_swapped_byte_is_caught_on_load()
         {
             var built = Build();
             built.file[built.gun] ^= 0xFF;
 
             var buffer = BlobchegBuffer.From(built.file, Allocator.Temp);
             var thrown = Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "Domain"));
-            StringAssert.Contains("целостность", thrown.Message);
+            StringAssert.Contains("integrity", thrown.Message);
             buffer.Dispose();
         }
 
         [Test]
-        public void Обрезанный_файл_ловится_на_подъёме_и_отказ_переходный()
+        public void A_truncated_file_is_caught_on_load_and_the_failure_is_transient()
         {
             var built = Build();
             var cut = new byte[built.file.Length - BlobchegFormat.RecordAlign];
@@ -108,29 +108,29 @@ namespace Blobcheg.Tests
 
             var buffer = BlobchegBuffer.From(cut, Allocator.Temp);
 
-            // Так же выглядит файл, пойманный посреди перезаписи: длину читатель узнал от нового
-            // header'а, а байты достались от прежнего. Причина во времени, а не в байтах — отсюда
-            // и отдельный тип, по которому редактор отличает нотификацию от поломки.
+            // A file caught mid-rewrite looks the same: the reader learned the length from the new
+            // header while the bytes came from the old one. The cause is in time and not in the bytes —
+            // hence the separate type by which the editor tells a notification from a breakage.
             Assert.Throws<BlobchegTransientException>(() => new BlobchegBlob(buffer, "Domain"));
             buffer.Dispose();
         }
 
         [Test]
-        public void Испорченные_байты_переходными_не_считаются()
+        public void Corrupted_bytes_do_not_count_as_transient()
         {
             var built = Build();
             built.file[built.gun] ^= 0xFF;
 
             var buffer = BlobchegBuffer.From(built.file, Allocator.Temp);
 
-            // Граница: длина сошлась, значит файл дописан до конца, и целостность не сойдётся уже
-            // никогда. Ждать тут нечего — это ошибка, а не момент.
+            // The boundary: the length agreed, so the file is written to the end and the integrity will
+            // never agree again. There is nothing to wait for here — this is an error, not a moment.
             Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "Domain"));
             buffer.Dispose();
         }
 
         [Test]
-        public void Чужой_magic_ловится_на_подъёме()
+        public void A_foreign_magic_is_caught_on_load()
         {
             var built = Build();
             built.file[0] = 0x00;
@@ -141,31 +141,31 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Файл_чужого_домена_не_поднимается_под_этим_именем()
+        public void A_file_of_a_foreign_domain_does_not_load_under_this_name()
         {
             var built = Build();
 
-            // Два .bcheg переставили местами: байты целые, целостность сходится, а домен не тот.
+            // Two .bcheg files were swapped: the bytes are whole, the integrity agrees, and the domain is wrong.
             var buffer = BlobchegBuffer.From(built.file, Allocator.Temp);
-            var thrown = Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "ЧужойДомен"));
-            StringAssert.Contains("другого домена", thrown.Message);
+            var thrown = Assert.Throws<InvalidOperationException>(() => new BlobchegBlob(buffer, "ForeignDomain"));
+            StringAssert.Contains("another domain", thrown.Message);
             buffer.Dispose();
         }
 
         [Test]
-        public void Запись_читается_только_своим_типом()
+        public void A_record_is_read_only_with_its_own_type()
         {
-            // Близнец: тот же размер, другой тип. Ловит его отладочный контур, и в редакторе он есть.
+            // A twin: the same size, a different type. The debug contour catches it, and in the editor it is there.
             var built = Build(withDebug: true);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "Domain");
             try
             {
-                Assert.That(blob.Read<TestGun>(built.gun).Rpm, Is.EqualTo(600), "свой тип обязан читаться");
+                Assert.That(blob.Read<TestGun>(built.gun).Rpm, Is.EqualTo(600), "its own type is obliged to read");
 
                 Assert.Throws<InvalidOperationException>(() => blob.Read<TestGunTwin>(built.gun),
-                    "по этому адресу лежит TestGun — отдавать его как близнеца нельзя даже при равном размере");
+                    "a TestGun lies at this address — handing it out as its twin is not allowed even at equal size");
                 Assert.Throws<InvalidOperationException>(() => blob.Read<TestShield>(built.gun),
-                    "и не близнеца тоже");
+                    "and not as the twin either");
             }
             finally
             {
@@ -174,7 +174,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Оффсет_за_концом_буфера_бросает()
+        public void An_offset_past_the_end_of_the_buffer_throws()
         {
             var built = Build();
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "Domain");
@@ -190,7 +190,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Отладочный_контур_называет_запись()
+        public void The_debug_contour_names_the_record()
         {
             var built = Build(withDebug: true);
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "Domain");
@@ -208,7 +208,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Без_отладочного_контура_Describe_бросает()
+        public void Without_a_debug_contour_Describe_throws()
         {
             var built = Build();
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Temp), "Domain");
@@ -234,7 +234,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Читается_из_бёрстовой_джобы()
+        public void It_is_read_from_a_bursted_job()
         {
             var built = Build();
             var blob = new BlobchegBlob(BlobchegBuffer.From(built.file, Allocator.Persistent), "Domain");
@@ -252,7 +252,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Транспорт_читает_файл_целиком()
+        public void The_transport_reads_the_whole_file()
         {
             Build();
 
@@ -272,13 +272,13 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Транспорт_на_отсутствующем_файле_бросает_переходное()
+        public void The_transport_on_a_missing_file_throws_a_transient()
         {
             var transport = new BlobchegFileTransport(_dir);
-            var load = transport.Read(BlobchegNaming.FileName("НетТакого"), Allocator.Persistent);
+            var load = transport.Read(BlobchegNaming.FileName("NoSuchThing"), Allocator.Persistent);
 
-            // Файла нет — но в редакторе это ещё и «пока нет»: домен приехал с пуллом раньше, чем
-            // пересборка написала его файл. Тип отказа обязан это различать.
+            // The file is not there — but in the editor that also means "not yet": the domain arrived
+            // with a pull before the rebuild wrote its file. The failure type is obliged to tell those apart.
             Assert.Throws<BlobchegTransientException>(() => load.Complete());
             load.Dispose();
         }

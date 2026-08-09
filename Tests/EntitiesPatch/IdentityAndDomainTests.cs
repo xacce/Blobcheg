@@ -7,24 +7,26 @@ using Unity.Entities;
 namespace Blobcheg.PatchTests
 {
     /// <summary>
-    /// Личность записи и личность домена. Раздел спрашивает одно: может ли слот молча отдать не ту
-    /// запись — чужого типа, чужого домена или чужого поколения буфера.
+    /// The identity of a record and the identity of a domain. The section asks one thing: can a slot
+    /// quietly hand out the wrong record — of a foreign type, of a foreign domain or of a foreign
+    /// generation of the buffer.
     /// </summary>
     public sealed unsafe class IdentityAndDomainTests : PatchFixture
     {
-        // ------------------------------------------------------------- чужой тип и чужой домен
+        // ------------------------------------------------------------- a foreign type and a foreign domain
 
-        // План (строка 19) требовал: «в границах — отбой по типу записи (отладочный контур).
-        // Никогда — молчаливое чтение чужих байт». МОМЕНТ отбоя план не оговаривал, и реализация
-        // выбрала ранний: тип записи теперь доезжает до таблицы слотов
-        // (BlobchegFieldSlot.RecordTypeHash), и патч, получив адрес, сразу спрашивает контур —
-        // начинается ли по нему запись объявленного типа. Не сходится — WrongRecord прямо на патче.
+        // The plan (line 19) demanded: "inside the bounds — a rejection by record type (the debug
+        // contour). Never a silent read of someone else's bytes." The plan did not specify the MOMENT of
+        // the rejection, and the implementation chose the early one: the record type now reaches the slot
+        // table (BlobchegFieldSlot.RecordTypeHash), and having got the address the patch asks the contour
+        // straight away whether a record of the declared type starts there. If it does not — WrongRecord
+        // right at the patch.
         //
-        // Это строже, чем ждал тест (отбой на чтении Value), и обещание закрывает раньше: до Value
-        // дело просто не доходит, сцену с таким слотом не импортировать. Проверка, существовавшая
-        // только на старом пути, доехала до нового — ровно то, чего требовал план.
+        // That is stricter than the test expected (a rejection on reading Value) and closes the promise
+        // earlier: it simply never comes to Value, a scene with such a slot cannot be imported. The check
+        // that existed only on the old path made it to the new one — exactly what the plan demanded.
         [Test]
-        public void Запись_прочитанная_через_слот_близнецом_обязана_отбиться()
+        public void A_record_read_through_a_slot_as_its_twin_is_obliged_to_be_rejected()
         {
             var file = HotFile(ammo: 42f, rpm: 7);
             var hot = Raise(file);
@@ -33,26 +35,26 @@ namespace Blobcheg.PatchTests
             var carrier = EM.CreateEntity();
             EM.AddComponentData(carrier, new ArmorRef { Armor = new BlobchegReference<PatchArmor>(gunOffset) });
 
-            // Старый путь на том же оффсете отказывается — значит проверка в пакете есть.
+            // The old path refuses at the same offset — so the check does exist in the package.
             Assert.Throws<InvalidOperationException>(() => Copy(hot.Blob.Read<PatchArmor>(gunOffset)),
-                "Read близнецом обязан отбиться — это уже закрытая находка пакета");
+                "a Read as the twin is obliged to be rejected — that is an already closed finding of the package");
 
             var error = Assert.Throws<InvalidOperationException>(() => Patch(),
-                "и слот обязан отбиться на том же оффсете: иначе проверка типа существует только на " +
-                "старом пути, а новый её потерял");
+                "and the slot is obliged to be rejected at the same offset: otherwise the type check exists only on " +
+                "the old path and the new one lost it");
 
             Assert.That(error.Message, Does.Contain(nameof(ArmorRef)),
-                "компонент в сообщении есть — по нему сцену хотя бы можно найти");
+                "the component is in the message — by it the scene can at least be found");
             Assert.That(error.Message, Does.Contain(nameof(IPatchHot)),
-                "и домен назван именем, а не ключом");
+                "and the domain is named by name, not by a key");
         }
 
         [Test]
-        public void Оффсет_чужой_базы_за_пределами_своей_обязан_отбиться()
+        public void An_offset_of_a_foreign_base_outside_its_own_is_obliged_to_be_rejected()
         {
             var hot = Raise(HotFile());
 
-            // Холодная база нарочно длиннее горячей: тогда её хвостовой оффсет в горячей — за концом.
+            // The cold base is deliberately longer than the hot one: then its tail offset is past the end of the hot one.
             var coldFile = Domain(nameof(IPatchCold));
             for (var i = 0; i < 32; i++)
                 coldFile.Add("note" + i.ToString("D2"), new PatchNote { Tier = i, Extra = i * 2 });
@@ -62,18 +64,18 @@ namespace Blobcheg.PatchTests
 
             var far = coldFile["note31"];
             Assert.That(far, Is.GreaterThan((uint)hot.Length),
-                "холодная база не переросла горячую — тест проверяет не ту границу");
+                "the cold base did not outgrow the hot one — the test is checking the wrong boundary");
 
             Gun(far);
 
             Assert.Throws<InvalidOperationException>(() => Patch(),
-                "оффсет чужой базы, не помещающийся в свою, обязан отбиться по границам");
+                "an offset of a foreign base that does not fit into its own is obliged to be rejected by the bounds");
         }
 
-        // ------------------------------------------------------------- один адрес, два потребителя
+        // ------------------------------------------------------------- one address, two consumers
 
         [Test]
-        public void Один_оффсет_в_двух_компонентах_даёт_один_адрес_и_один_оффсет_обратно()
+        public void One_offset_in_two_components_gives_one_address_and_one_offset_back()
         {
             var file = HotFile();
             var hot = Raise(file);
@@ -89,7 +91,7 @@ namespace Blobcheg.PatchTests
 
             Assert.That(EM.GetComponentData<GunRef>(a).Gun.Data.Value, Is.EqualTo(hot.AddressOf(offset)));
             Assert.That(EM.GetComponentData<GunRefTwin>(b).Gun.Data.Value, Is.EqualTo(hot.AddressOf(offset)),
-                "один оффсет — один адрес, в каком бы компоненте он ни лежал");
+                "one offset means one address, whichever component it lies in");
 
             var bytes = Save();
             var loaded = LoadRaw(bytes);
@@ -97,13 +99,13 @@ namespace Blobcheg.PatchTests
             Assert.That(SlotOf(loaded, Single<GunRef>(loaded)), Is.EqualTo(offset));
             Assert.That(
                 loaded.EntityManager.GetComponentData<GunRefTwin>(Single<GunRefTwin>(loaded)).Gun.Data.Value,
-                Is.EqualTo(offset), "и обратно обоим обязан вернуться тот же самый оффсет");
+                Is.EqualTo(offset), "and that very same offset is obliged to come back to both");
         }
 
-        // ------------------------------------------------------------- поколения буфера
+        // ------------------------------------------------------------- buffer generations
 
         [Test]
-        public void Повторная_регистрация_домена_не_имеет_права_оставить_указатели_смотреть_в_старое()
+        public void Registering_a_domain_again_has_no_right_to_leave_pointers_looking_at_the_old_one()
         {
             var first = HotFile(ammo: 1f, rpm: 11);
             var gen1 = Raise(first);
@@ -112,24 +114,24 @@ namespace Blobcheg.PatchTests
             Patch();
             Assert.That(SlotOf(entity), Is.EqualTo(gen1.AddressOf(first["gun"])));
 
-            // Пересборка в «правильном» порядке: новая база встала на учёт, старая ещё жива.
+            // A rebuild in the "right" order: the new base is on the register, the old one is still alive.
             var gen2 = Raise(HotFile(ammo: 2f, rpm: 22));
 
             var slot = EM.GetComponentData<GunRef>(entity).Gun;
 
-            // Середины быть не должно: либо указатель уже смотрит в новое поколение, либо чтение
-            // честно отказывается. Молча отдать байты старого буфера нельзя.
-            if (slot.Data.Value == gen2.AddressOf(first["gun"]))
-                Assert.Pass("указатель переведён сразу регистрацией");
+            // There must be no middle: either the pointer already looks at the new generation, or the read
+            // refuses honestly. Quietly handing out the bytes of the old buffer is not allowed.
+if (slot.Data.Value == gen2.AddressOf(first["gun"]))
+                Assert.Pass("the pointer was translated by the registration itself");
 
             Assert.That(slot.IsResolved, Is.False,
-                "указатель всё ещё в прошлом поколении — тогда IsResolved обязан сказать «нет»");
+                "the pointer is still in the previous generation — then IsResolved is obliged to say \"no\"");
             Assert.Throws<InvalidOperationException>(() => Copy(slot.Value),
-                "и чтение обязано отказаться, а не отдать байты буфера, который вот-вот освободят");
+                "and the read is obliged to refuse instead of handing out the bytes of a buffer that is about to be freed");
         }
 
         [Test]
-        public void Пересборка_с_патчем_между_поколениями_доводит_до_нового_буфера()
+        public void A_rebuild_with_a_patch_between_generations_brings_it_to_the_new_buffer()
         {
             var first = HotFile(ammo: 1f, rpm: 11);
             Raise(first);
@@ -143,17 +145,19 @@ namespace Blobcheg.PatchTests
             Assert.That(Copy(EM.GetComponentData<GunRef>(entity).Gun.Value).Rpm, Is.EqualTo(22));
         }
 
-        // BUG: две пересборки подряд без патча между ними теряют указатель
-        // Что происходит: gen1 → gen2 → gen3 без патча в промежутке. Патч после третьей регистрации
-        //   валится с OutOfRange: адрес первого поколения не найден ни в текущем, ни в прошлом.
-        // Что должно: обещание фичи — пересборка переводит уже розданные указатели на новый буфер.
-        //   Два импорта ассета в одном кадре редактора дают ровно две регистрации подряд.
-        // Корневая причина: BlobchegBases.Table держит РОВНО ОДНО прошлое поколение
-        //   (PrevPtrs[slot]), и ветка повторного Register его перезаписывает: PrevPtrs[slot] =
-        //   Ptrs[slot]. После третьей регистрации адрес первого буфера в реестре не существует, и
-        //   TryResolve уходит в последнюю ветку, где heap-адрес заведомо >= length.
+        // BUG: two rebuilds in a row without a patch between them lose the pointer
+        // What happens: gen1 → gen2 → gen3 with no patch in between. The patch after the third
+        //   registration fails with OutOfRange: the address of the first generation is found neither in
+        //   the current one nor in the previous one.
+        // What should happen: the promise of the feature — a rebuild translates the already handed-out
+        //   pointers onto the new buffer. Two imports of an asset in one editor frame produce exactly two
+        //   registrations in a row.
+        // Root cause: BlobchegBases.Table holds EXACTLY ONE previous generation (PrevPtrs[slot]), and the
+        //   repeated-Register branch overwrites it: PrevPtrs[slot] = Ptrs[slot]. After the third
+        //   registration the address of the first buffer does not exist in the registry, and TryResolve
+        //   goes into the last branch, where a heap address is certainly >= length.
         [Test]
-        public void Две_пересборки_подряд_обязаны_довести_указатель_до_третьего_поколения()
+        public void Two_rebuilds_in_a_row_are_obliged_to_bring_the_pointer_to_the_third_generation()
         {
             var first = HotFile(ammo: 1f, rpm: 11);
             Raise(first);
@@ -164,73 +168,76 @@ namespace Blobcheg.PatchTests
             var gen3 = Raise(HotFile(ammo: 3f, rpm: 33));
 
             Assert.DoesNotThrow(() => Patch(),
-                "два импорта подряд — обычный день редактора, и указатели обязаны их пережить");
+                "two imports in a row are an ordinary day in the editor, and the pointers are obliged to outlive them");
 
             Assert.That(SlotOf(entity), Is.EqualTo(gen3.AddressOf(first["gun"])));
             Assert.That(Copy(EM.GetComponentData<GunRef>(entity).Gun.Value).Rpm, Is.EqualTo(33));
         }
 
-        // План (строка 25) допускал два исхода: «ЛИБО ссылка едет за записью, ЛИБО явная ошибка.
-        // Молча отданный сосед — порча». Реализация выбрала вторую половину.
+        // The plan (line 25) allowed two outcomes: "EITHER the reference travels after the record, OR an
+        // explicit error. A neighbour handed out silently is corruption." The implementation chose the
+        // second half.
         //
-        // Доехать за записью она не может и не сможет: перевод поколения — это арифметика
-        // `новая база + прежний сдвиг`, а сопоставить записи двух раскладок нечем — ни ключа, ни
-        // хеша содержимого в самой записи нет. Зато сверка по отладочному контуру видит, что по
-        // полученному адресу начинается БРОНЯ, а не пушка, и валит патч кодом WrongRecord. Ровно
-        // это план и называл вторым допустимым исходом; недопустимое — молчание — закрыто.
+        // Travelling after the record it cannot do and will not be able to: translating a generation is
+        // the arithmetic `new base + previous shift`, and there is nothing to match the records of two
+        // layouts with — the record itself carries neither a key nor a content hash. The check against
+        // the debug contour, however, sees that the ARMOR and not the gun starts at the resulting address
+        // and fails the patch with the WrongRecord code. That is exactly what the plan called the second
+        // admissible outcome; the inadmissible one — silence — is closed.
         [Test]
-        public void Поколение_сдвинувшее_запись_не_имеет_права_отдать_соседнюю()
+        public void A_generation_that_moved_a_record_has_no_right_to_hand_out_the_neighbouring_one()
         {
-            // gen1: только пушка.
+            // gen1: the gun only.
             var first = Domain(nameof(IPatchHot)).Add("gun", new PatchGun { Ammo = 1f, Rpm = 11 }).Seal();
             Raise(first);
 
             var entity = Gun(first["gun"]);
             Patch();
 
-            // gen2: перед пушкой появилась броня — по FullName она идёт первой и двигает пушку.
+            // gen2: the armor appeared before the gun — by FullName it comes first and moves the gun.
             var second = Domain(nameof(IPatchHot))
                 .Add("armor", new PatchArmor { Hp = 500f, Plates = 9 })
                 .Add("gun", new PatchGun { Ammo = 2f, Rpm = 22 })
                 .Seal();
 
             Raise(second);
-            Assert.That(second["gun"], Is.Not.EqualTo(first["gun"]), "раскладка не поехала — тест проверяет не то");
+            Assert.That(second["gun"], Is.Not.EqualTo(first["gun"]), "the layout did not move — the test is checking the wrong thing");
 
             var error = Assert.Throws<InvalidOperationException>(() => Patch(),
-                "перевод поколения привёл указатель на чужую запись — молчать об этом нельзя");
+                "the generation translation led the pointer to a foreign record — staying silent about that is not allowed");
 
             Assert.That(error.Message, Does.Contain(nameof(GunRef)),
-                "компонент в сообщении есть — по нему сцену хотя бы можно найти");
+                "the component is in the message — by it the scene can at least be found");
             Assert.That(error.Message, Does.Contain(nameof(IPatchHot)));
 
-            // Что отбой сработал именно на несовпадении записи, а не на всякой пересборке вообще,
-            // держит соседний тест: Пересборка_с_патчем_между_поколениями_доводит_до_нового_буфера
-            // гоняет ту же пару поколений с НЕ поехавшей раскладкой и проходит молча.
+            // That the rejection fired on the record mismatch and not on every rebuild in general is held
+            // by the neighbouring test: A_rebuild_with_a_patch_between_generations_brings_it_to_the_new_buffer
+            // runs the same pair of generations with a layout that did NOT move and passes silently.
         }
 
-        // ------------------------------------------------------------- домен записи
+        // ------------------------------------------------------------- the domain of a record
         //
-        // Записи «вне доменов» и «сразу в двух доменах» нельзя положить в живой компонент этой
-        // сборки: BlobchegPatchTableBuilder.Build обходит ВСЕ типы компонентов процесса и падает на
-        // первой такой ссылке целиком — то есть выключил бы патч всему проекту, а не одному тесту.
-        // Поэтому проверка идёт прямо по разрешению домена.
+        // Records "outside any domain" and "in two domains at once" cannot be put into a live component
+        // of this assembly: BlobchegPatchTableBuilder.Build walks ALL the component types of the process
+        // and fails entirely on the first such reference — that is, it would switch the patch off for the
+        // whole project and not for one test. That is why the check goes straight through the domain
+        // resolution.
         //
-        // API DESIGN: у сборки таблицы нет режима «проверь один тип и скажи, что не так». Есть одна
-        // кнопка Build на весь процесс, и её отказ — это отказ патча целиком, из
-        // [InitializeOnLoadMethod], с одним типом в тексте. Диагностировать «какие ещё компоненты
-        // объявлены неправильно» нечем, и написать тест на это с публичной поверхности нельзя —
-        // ниже рефлексия по приватному DomainKeyOf.
+        // API DESIGN: the table build has no mode "check one type and say what is wrong". There is one
+        // Build button for the whole process, and its refusal is a refusal of the patch as a whole, from
+        // [InitializeOnLoadMethod], with one type in the text. There is nothing to diagnose "which other
+        // components are declared wrongly" with, and a test for it cannot be written from the public
+        // surface — below is reflection over the private DomainKeyOf.
 
         static Exception DomainFailure(Type record)
         {
             var builder = typeof(BlobchegPatchTableBuilder);
 
             var collect = builder.GetMethod("CollectDomains", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(collect, Is.Not.Null, "CollectDomains переименован — тест разрешения домена ослеп");
+            Assert.That(collect, Is.Not.Null, "CollectDomains was renamed — the domain resolution test went blind");
 
             var resolve = builder.GetMethod("DomainKeyOf", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(resolve, Is.Not.Null, "DomainKeyOf переименован — тест разрешения домена ослеп");
+            Assert.That(resolve, Is.Not.Null, "DomainKeyOf was renamed — the domain resolution test went blind");
 
             var domains = collect.Invoke(null, null);
 
@@ -246,45 +253,46 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Запись_вне_доменов_обязана_быть_ошибкой_а_не_догадкой()
+        public void A_record_outside_any_domain_is_obliged_to_be_an_error_and_not_a_guess()
         {
             var error = DomainFailure(typeof(PatchLoose));
 
-            Assert.That(error, Is.Not.Null, "запись без маркер-интерфейса патчить неоткуда — это ошибка");
+            Assert.That(error, Is.Not.Null, "there is nowhere to patch a record without a marker interface from — that is an error");
             Assert.That(error.Message, Does.Contain(nameof(PatchLoose)),
-                "в сообщении обязано быть имя записи: искать её иначе не по чему");
+                "the message is obliged to carry the record name: there is nothing else to look for it by");
         }
 
         [Test]
-        public void Запись_сразу_в_двух_доменах_обязана_назвать_оба()
+        public void A_record_in_two_domains_at_once_is_obliged_to_name_both()
         {
             var error = DomainFailure(typeof(PatchBoth));
 
-            Assert.That(error, Is.Not.Null, "из какой базы брать адрес — не то, о чём можно догадаться");
+            Assert.That(error, Is.Not.Null, "which base to take the address from is not something to be guessed");
             Assert.That(error.Message, Does.Contain(nameof(IPatchHot)));
             Assert.That(error.Message, Does.Contain(nameof(IPatchCold)),
-                "названы обязаны быть оба домена — иначе непонятно, какой из них лишний");
+                "both domains are obliged to be named — otherwise it is unclear which of them is the extra one");
         }
 
         [Test]
-        public void Ссылка_на_саму_базу_как_на_запись_обязана_отбиться()
+        public void A_reference_to_the_base_itself_as_a_record_is_obliged_to_be_rejected()
         {
-            // База формально unmanaged и в BlobchegReference<T> пролезает. Домена у неё нет —
-            // домен у неё в атрибуте, а не в интерфейсе, и это разные вещи.
+            // A base is formally unmanaged and squeezes into a BlobchegReference<T>. It has no domain —
+            // its domain is in the attribute and not in an interface, and those are different things.
             var error = DomainFailure(typeof(PatchHotDb));
 
             Assert.That(error, Is.Not.Null,
-                "база — не запись своей базы; ссылка на неё обязана отбиться, а не завести домен сама себе");
+                "a base is not a record of its own base; a reference to it is obliged to be rejected and not to invent a domain for itself");
             Assert.That(error.Message, Does.Contain(nameof(PatchHotDb)));
         }
 
         [Test]
-        public void Голое_нутро_слота_в_поле_компонента_обязано_быть_ошибкой()
+        public void The_bare_innards_of_a_slot_in_a_component_field_are_obliged_to_be_an_error()
         {
-            // Человеческий фактор: разработчик заглянул внутрь BlobchegReference<T>, увидел там
-            // BlobchegReferenceData и объявил полем «настоящий» тип. Домен из него не выводится.
+            // The human factor: a developer looked inside BlobchegReference<T>, saw a
+            // BlobchegReferenceData there and declared the "real" type as the field. No domain is derived
+            // from it.
             var walk = typeof(BlobchegPatchTableBuilder).GetMethod("Walk", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(walk, Is.Not.Null, "Walk переименован — тест обхода полей ослеп");
+            Assert.That(walk, Is.Not.Null, "Walk was renamed — the field walk test went blind");
 
             var collect = typeof(BlobchegPatchTableBuilder)
                 .GetMethod("CollectDomains", BindingFlags.NonPublic | BindingFlags.Static);
@@ -301,8 +309,9 @@ namespace Blobcheg.PatchTests
         }
 
         /// <summary>
-        /// Не компонент: тип живёт только ради теста выше. Объяви его <c>IComponentData</c> — и
-        /// сборка таблицы упадёт на старте редактора, выключив патч всему проекту.
+        /// Not a component: the type lives only for the sake of the test above. Declare it
+        /// <c>IComponentData</c> and the table build fails at editor startup, switching the patch off for
+        /// the whole project.
         /// </summary>
         struct NakedData
         {
@@ -310,23 +319,24 @@ namespace Blobcheg.PatchTests
         }
 
         [Test]
-        public void Ключ_домена_считается_по_имени_маркера_и_совпадает_с_личностью_файла()
+        public void The_domain_key_is_computed_from_the_marker_name_and_matches_the_file_identity()
         {
             var hot = Raise(HotFile());
 
             Assert.That(hot.Key, Is.EqualTo(BlobchegNaming.NameHash(nameof(IPatchHot))),
-                "ключ реестра и личность файла обязаны быть одним числом — иначе патч ищет базу не там");
+                "the registry key and the file identity are obliged to be one number — otherwise the patch looks for the base in the wrong place");
             Assert.That(BlobchegBases.IsAddressOf(hot.Key, hot.AddressOf(BlobchegFormat.HeaderSize)), Is.True);
             Assert.That(BlobchegBases.IsAddressOf(BlobchegNaming.NameHash(nameof(IPatchCold)),
                 hot.AddressOf(BlobchegFormat.HeaderSize)), Is.False,
-                "адрес горячей базы не имеет права считаться адресом холодной");
+                "the address of the hot base has no right to count as an address of the cold one");
         }
 
         [Test]
-        public void Тест_модель_не_отравила_таблицу_патча()
+        public void The_test_model_did_not_poison_the_patch_table()
         {
-            // Если бы в сборке нашёлся компонент со ссылкой на запись без домена, Build упал бы, и
-            // ВСЕ остальные тесты набора проверяли бы пустоту, зеленея.
+            // If a component with a reference to a record without a domain were found in the assembly,
+            // Build would fail and ALL the other tests of the set would be checking emptiness while going
+            // green.
             Assert.That(BlobchegPatchTable.IsBuilt, Is.True);
 
             var registered = BlobchegPatchTableBuilder.RegisteredTypes;
@@ -340,22 +350,22 @@ namespace Blobcheg.PatchTests
                          nameof(PairRef), nameof(PackedRef), nameof(ShallowNestRef), nameof(DeepNestRef),
                          nameof(RefElement), nameof(RecordRef),
                      })
-                Assert.That(names, Does.Contain(expected), $"обход не нашёл слот в '{expected}'");
+                Assert.That(names, Does.Contain(expected), $"the walk did not find a slot in '{expected}'");
 
-            Assert.That(names, Does.Not.Contain(nameof(PlainData)), "компонент без слотов в таблице лишний");
+            Assert.That(names, Does.Not.Contain(nameof(PlainData)), "a component without slots does not belong in the table");
         }
 
         [Test]
-        public void Реестр_доменов_чистится_между_тестами()
+        public void The_domain_registry_is_cleaned_between_tests()
         {
-            // Страховка самого стенда: реестр — процессный статик, и незакрытая база соседнего
-            // теста делала бы этот набор недетерминированным.
+            // Insurance for the rig itself: the registry is a process-wide static, and a base left open by
+            // a neighbouring test would make this set non-deterministic.
             Assert.That(BlobchegBases.TryGet(BlobchegNaming.NameHash(nameof(IPatchHot)), out _, out _), Is.False);
             Assert.That(BlobchegPatchErrors.HasAny, Is.False);
         }
 
         [Test]
-        public void Пустой_перечислитель_зарегистрированных_типов_не_бывает()
+        public void There_is_no_such_thing_as_an_empty_enumerator_of_registered_types()
         {
             Assert.That(BlobchegPatchTableBuilder.RegisteredTypes, Is.Not.Null);
             Assert.That(BlobchegPatchTableBuilder.RegisteredTypes.Count, Is.GreaterThan(0));

@@ -3,18 +3,19 @@ using Unity.Entities;
 namespace Blobcheg
 {
     /// <summary>
-    /// Группа подъёма баз и роутеров. Стоит в самом начале инициализации — **до**
-    /// <see cref="BeginInitializationEntityCommandBufferSystem"/>: командный буфер проигрывает
-    /// структурные изменения кадра, и системы, которым база уже нужна, обязаны увидеть её раньше,
-    /// чем свои сущности.
+    /// The group that loads bases and routers. It stands at the very start of initialisation — **before**
+    /// <see cref="BeginInitializationEntityCommandBufferSystem"/>: the command buffer plays back the
+    /// structural changes of the frame, and systems that already need a base are obliged to see it
+    /// earlier than their own entities.
     ///
-    /// Сюда кодоген кладёт бут-систему на каждую базу и роутер, объявленные <c>IComponentData</c>.
-    /// Своя система подъёма при этом не запрещена: положи её в эту же группу.
+    /// This is where the codegen puts a boot system for every base and router declared as
+    /// <c>IComponentData</c>. A hand-written load system is not forbidden either: put it into the same
+    /// group.
     ///
-    /// Группа заведена и в редакторном мире — иначе кодогенная бут-система, которая там живёт,
-    /// осталась бы без своей группы. Наследование при этом не тронуто: рукописная система в этой
-    /// группе по-прежнему попадает только в игровой мир, а чтобы поднимать базу и в редакторном,
-    /// ей надо сказать это самой — <c>[WorldSystemFilter(Default | Editor)]</c>.
+    /// The group exists in the editor world too — otherwise the generated boot system that lives there
+    /// would be left without its group. Inheritance is untouched by that: a hand-written system in this
+    /// group still ends up in the game world only, and to load a base in the editor world as well it
+    /// has to say so itself — <c>[WorldSystemFilter(Default | Editor)]</c>.
     /// </summary>
     [WorldSystemFilter(WorldSystemFilterFlags.Default | WorldSystemFilterFlags.Editor)]
     [UpdateInGroup(typeof(InitializationSystemGroup), OrderFirst = true)]

@@ -7,9 +7,9 @@ using Unity.IO.LowLevel.Unsafe;
 namespace Blobcheg
 {
     /// <summary>
-    /// Чтение файла базы. Слой платформенный намеренно: StreamingAssets на Android — не файловая
-    /// система, и знание об этом живёт только в Unity. Транспорт сразу отдаёт финальный выровненный
-    /// буфер — промежуточного managed-массива и лишней копии нет.
+    /// Reading a base file. The layer is platform-bound on purpose: StreamingAssets on Android is not
+    /// a file system, and the knowledge of that lives only inside Unity. The transport hands back the
+    /// final aligned buffer straight away — there is no intermediate managed array and no extra copy.
     /// </summary>
     public interface IBlobchegTransport
     {
@@ -17,9 +17,10 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Реализация на <see cref="AsyncReadManager"/>: он знает про платформенные виртуальные файловые
-    /// системы, включая StreamingAssets внутри APK. Не Burst-код — под Burst нужен не тот, кто
-    /// читает файл однажды при старте, а тот, кто потом ходит в буфер из джоб.
+    /// An implementation on <see cref="AsyncReadManager"/>: it knows about the platform virtual file
+    /// systems, including StreamingAssets inside an APK. Not Burst code — what Burst is needed for is
+    /// not the one who reads the file once at startup, but the one who later enters the buffer from
+    /// jobs.
     /// </summary>
     public sealed class BlobchegFileTransport : IBlobchegTransport
     {
@@ -54,7 +55,7 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>Транспорт по умолчанию — StreamingAssets/Blobcheg этого проекта.</summary>
+    /// <summary>The default transport — StreamingAssets/Blobcheg of this project.</summary>
     public static class BlobchegTransport
     {
         static IBlobchegTransport _default;

@@ -4,23 +4,25 @@ using System.Text;
 namespace Blobcheg
 {
     /// <summary>
-    /// Ключ таблицы хешей: <c>"{Роутер}:{Имя}"</c>, свёрнутый в <c>ulong</c>. Чистая функция — ни
-    /// таблицы, ни пересборки, ни поднятой базы ей не нужно, поэтому её одинаково зовут и нода на
-    /// бейке, и инструмент, и потребитель, у которого имя лежит строкой в конфиге.
+    /// The key of a hash table: <c>"{Router}:{Name}"</c>, folded into a <c>ulong</c>. A pure function —
+    /// it needs neither a table, nor a rebuild, nor a loaded base, which is why it is called the same
+    /// way by a node at bake time, by a tool, and by a consumer who keeps the name as a string in a
+    /// config.
     ///
-    /// Домена в ключе нет намеренно. Хеш разворачивается в номер строки роутера, а строка — понятие
-    /// роутера: она одна на ноду независимо от того, в сколько доменов та пишет. Домен в ключе дал
-    /// бы одной ноде несколько хешей, ведущих в одну и ту же строку.
+    /// There is no domain in the key, on purpose. A hash unfolds into a router row number, and a row is
+    /// a notion of the router: there is one per node regardless of how many domains it writes into. A
+    /// domain in the key would give one node several hashes leading into one and the same row.
     ///
-    /// Роутер в ключе обязателен по той же причине, по которой в <see cref="BlobchegId"/> живёт тег:
-    /// без него две ноды с одинаковым именем в разных роутерах дают один хеш на две разные строки.
+    /// The router in the key is mandatory for the same reason the tag lives in <see cref="BlobchegId"/>:
+    /// without it two nodes with the same name in different routers give one hash for two different
+    /// rows.
     ///
-    /// Алгоритм — fnv1a-64, тот же, что у <see cref="BlobchegNaming.NameHash"/>: второго семейства
-    /// хешей в пакете нет.
+    /// The algorithm is fnv1a-64, the same as in <see cref="BlobchegNaming.NameHash"/>: there is no
+    /// second family of hashes in the package.
     /// </summary>
     public static class BlobchegHashKey
     {
-        /// <summary>Разделитель имени роутера и имени ноды.</summary>
+        /// <summary>The separator between the router name and the node name.</summary>
         public const byte Separator = (byte)':';
 
         const ulong OffsetBasis = 14695981039346656037;
@@ -29,10 +31,10 @@ namespace Blobcheg
         public static ulong Of(string routerName, string name)
         {
             if (string.IsNullOrEmpty(routerName))
-                throw new ArgumentException("Blobcheg: пустое имя роутера в ключе хеша", nameof(routerName));
+                throw new ArgumentException("Blobcheg: an empty router name in a hash key", nameof(routerName));
 
             if (string.IsNullOrEmpty(name))
-                throw new ArgumentException("Blobcheg: пустое имя ноды в ключе хеша", nameof(name));
+                throw new ArgumentException("Blobcheg: an empty node name in a hash key", nameof(name));
 
             var hash = OffsetBasis;
             Feed(ref hash, Encoding.UTF8.GetBytes(routerName));
@@ -42,9 +44,10 @@ namespace Blobcheg
 
             Feed(ref hash, Encoding.UTF8.GetBytes(name));
 
-            // Ноль занят: им помечен пустой слот таблицы и им же инициализировано любое поле, куда
-            // хеш ещё не положили. Досчитываем один шаг — произведение нечётного на нечётное нулём
-            // не бывает, поэтому шаг ровно один и он детерминирован.
+            // Zero is taken: it marks an empty table slot and it is also what any field that has not
+            // been given a hash yet is initialised to. One more step is computed — the product of an odd
+            // number by an odd number is never zero, so the step is exactly one and it is
+            // deterministic.
             if (hash == 0)
             {
                 hash ^= 0xFF;
@@ -54,7 +57,7 @@ namespace Blobcheg
             return hash;
         }
 
-        /// <summary>Имя роутера берётся у параметра типа, а не пишется руками.</summary>
+        /// <summary>The router name is taken from the type parameter, not written by hand.</summary>
         public static ulong Of<TRouter>(string name) where TRouter : unmanaged, IBlobchegRouter
             => Of(default(TRouter).Name, name);
 

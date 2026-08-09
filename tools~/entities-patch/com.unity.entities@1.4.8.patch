@@ -1,15 +1,15 @@
-# Форк com.unity.entities 1.4.8 под патч ссылок Blobcheg.
+# A fork of com.unity.entities 1.4.8 for the Blobcheg reference patch.
 #
-# Эталон: чистый 1.4.8, как он лежит в коммите 17c0a77fa3dd318dae0154d8ec67d836c8906ca8.
-# Накатывать из корня Unity-проекта, пакет должен быть уже вендорнут в Packages/com.unity.entities:
+# Baseline: a clean 1.4.8, as it lies in commit 17c0a77fa3dd318dae0154d8ec67d836c8906ca8.
+# Apply from the root of the Unity project, the package must already be vendored into Packages/com.unity.entities:
 #     git apply --3way Packages/Blobcheg/tools~/entities-patch/com.unity.entities@1.4.8.patch
-# Проверить, не накатывая:  git apply --check <тот же путь>
+# Check without applying:  git apply --check <the same path>
 #
-# Пересобрать после правки форка: tools~/entities-patch/regen.sh <проект>
+# Rebuild after editing the fork: tools~/entities-patch/regen.sh <project>
 
 diff --git a/Packages/com.unity.entities/Unity.Entities/Serialization/BlobchegPatchHook.cs b/Packages/com.unity.entities/Unity.Entities/Serialization/BlobchegPatchHook.cs
 new file mode 100644
-index 0000000..71a97e8
+index 00000000..bc195f33
 --- /dev/null
 +++ b/Packages/com.unity.entities/Unity.Entities/Serialization/BlobchegPatchHook.cs
 @@ -0,0 +1,56 @@
@@ -20,20 +20,20 @@ index 0000000..71a97e8
 +namespace Unity.Entities
 +{
 +    /// <summary>
-+    /// Точка расширения для стороннего контура ссылок (пакет Blobcheg).
-+    /// Форк только зовёт установленный снаружи хук — логика патча сюда не переезжает.
++    /// The extension point for a third-party reference contour (the Blobcheg package).
++    /// The fork only calls a hook installed from the outside — the patch logic does not move in here.
 +    /// </summary>
 +    public static unsafe class BlobchegPatchHook
 +    {
 +        /// <summary>
-+        /// Прогон элементов одного компонента одного архетипа.
-+        /// <paramref name="mode"/>: 0 — оффсет превратить в адрес (после загрузки),
-+        /// 1 — адрес свернуть обратно в оффсет (перед записью).
++        /// A run over the elements of one component of one archetype.
++        /// <paramref name="mode"/>: 0 — turn an offset into an address (after loading),
++        /// 1 — fold an address back into an offset (before writing).
 +        /// </summary>
 +        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 +        public delegate void PatchElements(int typeIndex, byte* elements, int elementCount, int elementStride, int mode);
 +
-+        // Ключ SharedStatic: сериализация чанков идёт из Burst, обычный static оттуда не виден.
++        // A SharedStatic key: chunk serialisation runs from Burst, and an ordinary static is invisible there.
 +        private struct PatchElementsKey
 +        {
 +        }
@@ -42,7 +42,7 @@ index 0000000..71a97e8
 +            SharedStatic<FunctionPointer<PatchElements>>.GetOrCreate<PatchElementsKey>();
 +
 +        /// <summary>
-+        /// Указатель на прогон элементов. Ставится снаружи, default — хука нет.
++        /// The pointer to the element run. Set from the outside; default means there is no hook.
 +        /// </summary>
 +        public static FunctionPointer<PatchElements> PatchElementsHook
 +        {
@@ -51,27 +51,27 @@ index 0000000..71a97e8
 +        }
 +
 +        /// <summary>
-+        /// Установлен ли хук. Читается и из Burst — обход архетипа не начинается впустую.
++        /// Whether the hook is installed. Read from Burst too — the archetype walk does not start for nothing.
 +        /// </summary>
 +        public static bool IsInstalled => s_PatchElements.Data.IsCreated;
 +
 +        /// <summary>
-+        /// Живой путь: чейнджсет уже лёг в мир, ссылки в нём ещё сырые.
++        /// The live path: the change set has already landed in the world, its references are still raw.
 +        /// </summary>
 +        public static Action<EntityManager> AfterApplyChangeSet;
 +
 +        /// <summary>
-+        /// Конец сериализации мира: все чанки обойдены, обратный проход отработал.
-+        /// Провалы обратного прохода сторона Blobcheg копит в своём почтовом ящике молча
-+        /// (Burst не умеет собирать сообщения) — это единственное место, где их можно
-+        /// поднять до исключения, пока сериализация ещё не считается успешной.
++        /// The end of world serialisation: every chunk was walked, the reverse pass has run.
++        /// The Blobcheg side piles the failures of the reverse pass into its mailbox silently
++        /// (Burst cannot assemble messages) — this is the only place where they can be
++        /// raised into an exception while the serialisation is not yet counted as successful.
 +        /// </summary>
 +        public static Action AfterSerializeWorld;
 +    }
 +}
 diff --git a/Packages/com.unity.entities/Unity.Entities/Serialization/BlobchegPatchHook.cs.meta b/Packages/com.unity.entities/Unity.Entities/Serialization/BlobchegPatchHook.cs.meta
 new file mode 100644
-index 0000000..53cea74
+index 00000000..53cea743
 --- /dev/null
 +++ b/Packages/com.unity.entities/Unity.Entities/Serialization/BlobchegPatchHook.cs.meta
 @@ -0,0 +1,11 @@
@@ -87,7 +87,7 @@ index 0000000..53cea74
 +  assetBundleName:
 +  assetBundleVariant:
 diff --git a/Packages/com.unity.entities/Unity.Entities/Serialization/SerializeUtility.cs b/Packages/com.unity.entities/Unity.Entities/Serialization/SerializeUtility.cs
-index 1bcae41..4d9e8c6 100644
+index 1bcae41a..c6c1a2bd 100644
 --- a/Packages/com.unity.entities/Unity.Entities/Serialization/SerializeUtility.cs
 +++ b/Packages/com.unity.entities/Unity.Entities/Serialization/SerializeUtility.cs
 @@ -180,8 +180,14 @@ internal static void ImportChunks(
@@ -97,10 +97,10 @@ index 1bcae41..4d9e8c6 100644
 -            var chunkLeftToLoad = megaChunkInfo[0].MegaChunkSize;
 -            var chunk = megaChunkInfo[0].MegaChunkIndex;
 +
-+            // Апстримная дыра, не наша правка: у мира без единой сущности список мегачанков пуст, а
-+            // эти две строки читают нулевой элемент безусловно — под ENABLE_UNITY_COLLECTIONS_CHECKS
-+            // это падение прямо в Burst. Цикл ниже при totalChunkCount == 0 не крутится ни разу,
-+            // поэтому достаточно не читать пустое.
++            // An upstream hole, not our edit: in a world without a single entity the megachunk list is
++            // empty, while these two lines read element zero unconditionally — under
++            // ENABLE_UNITY_COLLECTIONS_CHECKS that is a crash straight in Burst. The loop below does not
++            // turn once when totalChunkCount == 0, so it is enough not to read the empty thing.
 +            var hasMegaChunks = megaChunkInfo.Length > 0;
 +            var chunkLeftToLoad = hasMegaChunks ? megaChunkInfo[0].MegaChunkSize : 0;
 +            var chunk = hasMegaChunks ? megaChunkInfo[0].MegaChunkIndex : default;
@@ -111,7 +111,7 @@ index 1bcae41..4d9e8c6 100644
                      PatchBlobAssetsInChunkAfterLoad(archetype, chunk.Buffer, chunk.Count, (byte*) blobAssetBuffer);
                  }
  
-+                // Вне условия выше: своих блоб-ассетов у сцены нет, флаг архетипа к нашим ссылкам не относится.
++                // Outside the condition above: the scene has no blob assets of its own, and the archetype flag does not concern our references.
 +                PatchBlobchegRefsInChunk(archetype, chunk.Buffer, chunk.Count, 0);
 +
                  if (archetype->HasUnityObjectRefs)
@@ -121,14 +121,14 @@ index 1bcae41..4d9e8c6 100644
              }
          }
  
-+        // Близнец PatchBlobAssets*: та же прогулка по архетипу, но своей таблицы оффсетов у нас нет —
-+        // каждый непрерывный прогон элементов уходит во внешний хук Blobcheg.
++        // A twin of PatchBlobAssets*: the same walk over the archetype, but we have no offset table of our own —
++        // every contiguous run of elements goes into the external Blobcheg hook.
 +        internal static void PatchBlobchegRefsInChunk(Archetype* archetype, byte* chunkBuffer, int entityCount, int mode)
 +        {
 +            if (!BlobchegPatchHook.IsInstalled)
 +                return;
 +
-+            // Пустой чанк: обходить архетип не за чем, хук всё равно получил бы прогоны нулевой длины.
++            // An empty chunk: there is nothing to walk the archetype for, the hook would only get runs of zero length.
 +            if (entityCount <= 0)
 +                return;
 +
@@ -151,7 +151,7 @@ index 1bcae41..4d9e8c6 100644
 +                    var elementSize = ct.ElementSize;
 +                    var header = (BufferHeader*)componentArrayStart;
 +
-+                    // Буферы непрерывны только внутри одной сущности, поэтому вызов на каждую.
++                    // Buffers are contiguous only within one entity, hence a call per entity.
 +                    for (int bi = 0; bi < entityCount; ++bi)
 +                    {
 +                        if (header->Length > 0)
@@ -174,10 +174,10 @@ index 1bcae41..4d9e8c6 100644
                  }
              }
  
-+            // Единственная точка выхода метода: сюда доходим только успешно, на исключении — мимо.
-+            // Обратный проход по чанкам уже закончен, а провалы он копит в почтовом ящике Blobcheg
-+            // молча (Burst не умеет собирать сообщения) — здесь их поднимают до исключения,
-+            // пока сериализация ещё не считается успешной.
++            // The only exit point of the method: we get here only on success, on an exception we go past.
++            // The reverse pass over the chunks is already finished, and it piles its failures into the
++            // Blobcheg mailbox silently (Burst cannot assemble messages) — here they are raised into an
++            // exception while the serialisation is not yet counted as successful.
 +            BlobchegPatchHook.AfterSerializeWorld?.Invoke();
 +
              return blobHeader;
@@ -187,21 +187,21 @@ index 1bcae41..4d9e8c6 100644
                          if (archetype->HasBlobAssetRefs)
                              PatchBlobAssetsInChunkBeforeSave(archetype, tempChunkBuffer, entityCount, blobAssetOffsets, blobAssetMap);
  
-+                        // Вне условия выше — по той же причине, что и на загрузке. Адреса сворачиваются в оффсеты.
++                        // Outside the condition above, for the same reason as on load. Addresses are folded into offsets.
 +                        SerializeUtilityInterop.PatchBlobchegRefsInChunk(archetype, tempChunkBuffer, entityCount, 1);
 +
                          if (archetype->HasWeakAssetRefs)
                              GetWeakAssetRefsInChunk(archetype, tempChunkBuffer, entityCount, weakAssetRefs);
  
 diff --git a/Packages/com.unity.entities/Unity.Scenes/LiveConversionPatcher.cs b/Packages/com.unity.entities/Unity.Scenes/LiveConversionPatcher.cs
-index 05ea9c8..40233ad 100644
+index 05ea9c8d..08557e7d 100644
 --- a/Packages/com.unity.entities/Unity.Scenes/LiveConversionPatcher.cs
 +++ b/Packages/com.unity.entities/Unity.Scenes/LiveConversionPatcher.cs
 @@ -251,6 +251,9 @@ public unsafe void ApplyPatch(LiveConversionChangeSet changeSet)
  
              EntityPatcher.ApplyChangeSet(_DstWorld.EntityManager, changeSet.Changes);
  
-+            // Живой путь мимо сериализации: ссылки Blobcheg чинятся уже по применённому чейнджсету.
++            // The live path past serialisation: Blobcheg references are repaired over the applied change set.
 +            BlobchegPatchHook.AfterApplyChangeSet?.Invoke(_DstWorld.EntityManager);
 +
              if (sectionEntity != Entity.Null)

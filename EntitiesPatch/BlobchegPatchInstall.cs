@@ -7,11 +7,12 @@ using UnityEngine;
 namespace Blobcheg
 {
     /// <summary>
-    /// Ставит патч в форк: собирает таблицу слотов и отдаёт форку две точки входа — Burst-функцию на
-    /// прогон элементов и managed-обработчик живого пути.
+    /// Installs the patch into the fork: it builds the slot table and hands the fork two entry points —
+    /// a Burst function for running over elements and a managed handler for the live path.
     ///
-    /// Сборка таблицы требует поднятого TypeManager, поэтому <see cref="TypeManager.Initialize"/>
-    /// зовётся явно: он идемпотентен, а порядок инициализаторов домена гарантий не даёт.
+    /// Building the table requires an initialised TypeManager, so <see cref="TypeManager.Initialize"/>
+    /// is called explicitly: it is idempotent, and the order of the domain initialisers gives no
+    /// guarantees.
     /// </summary>
     public static unsafe class BlobchegPatchInstall
     {
@@ -31,16 +32,17 @@ namespace Blobcheg
             BlobchegPatchHook.AfterApplyChangeSet = BlobchegLiveSweep.Run;
             BlobchegPatchHook.AfterSerializeWorld = () => BlobchegPatchErrors.ThrowIfAny();
 
-            // Тот же проход отдаётся наружу: им пользуется всякий, кто поднял базу — кодогенная
-            // бут-система и рукописный подъём одинаково.
+            // The same pass is handed outwards: everyone who loaded a base uses it — the generated boot
+            // system and a hand-written load alike.
             BlobchegSweep.Hook = BlobchegLiveSweep.Run;
 
-            // Диагностика сборки таблицы в лог НЕ уходит, и это не забывчивость. Обход видит все
-            // типы процесса, включая тестовые фикстуры пакета, объявленные неправильно нарочно, —
-            // так консоль потребителя получала бы error про чужой тест сразу после установки.
-            // Настоящий сигнал и так есть и точнее: слот, оставшийся оффсетом, бросает на первом
-            // Value, по месту и с именем типа. Список остаётся в BlobchegPatchTableBuilder.Diagnostics
-            // для инструментов и тестов.
+            // The diagnostics of building the table do NOT go into the log, and that is not
+            // forgetfulness. The walk sees every type in the process, including the package's own test
+            // fixtures that are declared wrongly on purpose — so the consumer's console would get an
+            // error about someone else's test right after installation. The real signal exists anyway
+            // and is more precise: a slot left as an offset throws on the first Value, at the place and
+            // with the type name. The list stays in BlobchegPatchTableBuilder.Diagnostics for tools and
+            // tests.
             s_Installed = true;
         }
 
@@ -50,8 +52,8 @@ namespace Blobcheg
         {
             Install();
 
-            // Таблица держит persistent-память, а перезагрузка домена стирает managed-сторону, но не
-            // нативную. Без снятия каждая перекомпиляция оставляла бы за собой утечку.
+            // The table holds persistent memory, and a domain reload wipes the managed side but not the
+            // native one. Without uninstalling, every recompilation would leave a leak behind.
             UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += Uninstall;
         }
 #endif
@@ -69,14 +71,16 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Живой путь. Открытая сабсцена не ходит через десериализацию: бейкинг-мир диффится с теневым,
-    /// результат накатывается в игровой мир чейнджсетом — и в слотах после этого лежат оффсеты.
+    /// The live path. An open subscene does not go through deserialisation: the baking world is diffed
+    /// against the shadow one and the result is applied to the game world as a change set — and after
+    /// that the slots hold offsets.
     ///
-    /// Разбирать чейнджсет не нужно: патч идемпотентен по диапазонной проверке, поэтому дешевле
-    /// пройти все сущности с нашими компонентами, чем выяснять, какие именно переписал апплай.
+    /// There is no need to take the change set apart: the patch is idempotent by its range check, so
+    /// walking every entity carrying our components is cheaper than finding out which ones the apply
+    /// actually rewrote.
     ///
-    /// Этим же проходом пользуется подъём базы: он и переводит слоты, приехавшие раньше своей базы,
-    /// и переселяет их с прежнего буфера домена на новый после пересборки.
+    /// The load of a base uses the same pass: it both translates the slots that arrived before their
+    /// base and moves them from the previous domain buffer onto the new one after a rebuild.
     /// </summary>
     public static unsafe class BlobchegLiveSweep
     {
@@ -88,9 +92,9 @@ namespace Blobcheg
             foreach (var componentType in BlobchegPatchTableBuilder.RegisteredTypes)
                 Sweep(entityManager, componentType);
 
-            // «Домен не поднят» здесь не беда: этот проход живёт там, где идёт авторинг, а порядок
-            // подъёма баз в редакторном мире ему не подчиняется. Слот остался оффсетом, и проход
-            // сразу после подъёма базы доведёт его до адреса.
+            // "The domain is not loaded" is no trouble here: this pass lives where authoring happens,
+            // and the order in which bases load in the editor world does not obey it. The slot stayed an
+            // offset, and the pass right after the base loads will bring it to an address.
             BlobchegPatchErrors.ThrowIfAny(whileBasesRise: true);
         }
 
@@ -146,16 +150,18 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Показывает провалы патча человеку. Сам патч живёт в Burst-коде и складывает их в ящик молча;
-    /// без этой системы «сущности приехали раньше базы» выглядело бы как нули в полях.
+    /// Shows the failures of the patch to a human. The patch itself lives in Burst code and drops them
+    /// into a box silently; without this system "the entities arrived before the base" would look like
+    /// zeroes in fields.
     ///
-    /// Стоит в бут-группе, то есть в самом начале инициализации — на кадр позже стрима секции, зато
-    /// с полным сообщением.
+    /// It stands in the boot group, that is, at the very start of initialisation — a frame later than
+    /// the streaming of the section, but with a full message.
     ///
-    /// В редакторном мире система тоже нужна (иначе провалы там копились бы молча), но там она
-    /// прощает «домен не поднят»: сабсцены в редакторном мире грузит Unity, когда ей удобно, а базы
-    /// поднимаются чтением файла, и обогнать одно другим здесь законно. В плеере порядок наш, и
-    /// приехавшая раньше базы сущность остаётся ошибкой.
+    /// The system is needed in the editor world too (otherwise failures would pile up there silently),
+    /// but there it forgives "the domain is not loaded": in the editor world subscenes are loaded by
+    /// Unity whenever it finds convenient, while bases are loaded by reading a file, and one overtaking
+    /// the other is lawful here. In the player the order is ours, and an entity that arrived before the
+    /// base stays an error.
     /// </summary>
     [WorldSystemFilter(WorldSystemFilterFlags.Default | WorldSystemFilterFlags.Editor)]
     [UpdateInGroup(typeof(BlobchegBootGroup))]

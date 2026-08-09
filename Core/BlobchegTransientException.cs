@@ -3,16 +3,16 @@ using System;
 namespace Blobcheg
 {
     /// <summary>
-    /// Отказ подъёма, у которого есть срок годности: файла базы ещё нет, или чтение поймало его
-    /// посреди перезаписи. Причина здесь не в байтах, а во времени — то же чтение через кадр
-    /// проходит.
+    /// A load failure with an expiry date: the base file is not there yet, or the read caught it
+    /// mid-rewrite. The cause here is not in the bytes but in time — the same read a frame later
+    /// goes through.
     ///
-    /// В редакторе это переходный момент и чинится сам: пересборка допишет файл и поднимет его номер
-    /// в <see cref="BlobchegFileVersions"/>, по которому подъём поедет заново. В плеере тот же отказ
-    /// терминальный — файл там переписывать некому.
+    /// In the editor this is a transient moment and heals itself: a rebuild finishes writing the file
+    /// and bumps its number in <see cref="BlobchegFileVersions"/>, on which the load runs again. In
+    /// the player the same failure is terminal — there is nobody there to rewrite the file.
     ///
-    /// Отдельный тип, а не текст в сообщении: решает не тот, кто бросает, а тот, кто ловит, и решать
-    /// он обязан по типу, а не разбором строки.
+    /// A separate type rather than text in the message: the one who decides is not the one who throws
+    /// but the one who catches, and they are obliged to decide by type, not by parsing a string.
     /// </summary>
     public sealed class BlobchegTransientException : InvalidOperationException
     {

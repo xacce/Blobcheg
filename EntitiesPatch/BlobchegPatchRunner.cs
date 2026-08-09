@@ -6,12 +6,12 @@ using Unity.Entities;
 namespace Blobcheg
 {
     /// <summary>
-    /// Сам патч. Зовётся форком на каждый непрерывный прогон элементов компонента: для обычного
-    /// компонента — раз на тип в чанке, для буфера — раз на сущность.
+    /// The patch itself. Called by the fork for every contiguous run of component elements: for an
+    /// ordinary component once per type in a chunk, for a buffer once per entity.
     ///
-    /// Burst-код, поэтому исключений здесь нет: сообщение с подставленными числами под Бёрстом не
-    /// собрать. Провал кладётся в <see cref="BlobchegPatchErrors"/>, а человеку его показывает
-    /// managed-сторона — на ближайшем апдейте бут-группы.
+    /// Burst code, so there are no exceptions here: a message with numbers substituted into it cannot
+    /// be assembled under Burst. A failure is dropped into <see cref="BlobchegPatchErrors"/>, and the
+    /// managed side shows it to a human — at the nearest update of the boot group.
     /// </summary>
     [BurstCompile]
     internal static unsafe class BlobchegPatchRunner
@@ -50,9 +50,10 @@ namespace Blobcheg
                     {
                         case BlobchegRebase.Patched:
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                            // Сверка ДО записи: провалившийся патч обязан оставить слот как был.
-                            // Записав чужой адрес и только потом пожаловавшись, мы бы отравили поле —
-                            // и следующий проход перевёл бы отраву как законный адрес поколения.
+                            // The check comes BEFORE the write: a failed patch is obliged to leave the
+                            // slot as it was. Writing a foreign address and only then complaining would
+                            // poison the field — and the next pass would translate the poison as a
+                            // lawful generation address.
                             if (mode != ModeUnresolve && !RecordMatches(slot, moved))
                             {
                                 BlobchegPatchErrors.Report(
@@ -80,12 +81,13 @@ namespace Blobcheg
         }
 
         /// <summary>
-        /// Сверяет, что по полученному адресу действительно начинается запись ожидаемого типа.
-        /// Опирается на отладочный контур файла — тот самый, которым <c>BlobchegBlob.Read</c>
-        /// проверяет тип на старом пути; в релизном плеере контура нет, и проверки тоже.
+        /// Checks that a record of the expected type really does start at the resulting address. It
+        /// leans on the debug contour of the file — the very one <c>BlobchegBlob.Read</c> checks the
+        /// type against on the old path; a release player has no contour and no check either.
         ///
-        /// Без неё две беды проходят молча: слот, типизированный близнецом записи, и переезд
-        /// раскладки, после которого перевод поколения отдаёт соседнюю запись вместо своей.
+        /// Without it two troubles pass silently: a slot typed with a twin of the record, and a shifted
+        /// layout after which the generation translation hands out the neighbouring record instead of
+        /// its own.
         /// </summary>
         static bool RecordMatches(BlobchegFieldSlot* slot, ulong address)
         {
@@ -95,7 +97,7 @@ namespace Blobcheg
             if (!BlobchegBases.TryGetDebug(slot->DomainKey, out var basePtr, out var debugOffset))
                 return true;
 
-            // Контура нет — релизный файл, проверять нечем, и это не ошибка чтения.
+            // No contour — a release file, there is nothing to check against, and that is not a read error.
             if (debugOffset == 0)
                 return true;
 
@@ -107,9 +109,9 @@ namespace Blobcheg
     }
 
     /// <summary>
-    /// Почтовый ящик провалов патча: Burst-код кладёт сюда код и числа, managed-сторона собирает из
-    /// них человеческое сообщение. Первый провал побеждает — остальные только считаются, иначе
-    /// сцена на десять тысяч сущностей завалила бы лог одним и тем же.
+    /// The mailbox of patch failures: Burst code drops a code and numbers here, the managed side
+    /// assembles a human message out of them. The first failure wins — the rest are only counted,
+    /// otherwise a scene of ten thousand entities would bury the log under the same line.
     /// </summary>
     public static class BlobchegPatchErrors
     {
@@ -144,17 +146,18 @@ namespace Blobcheg
         public static void Clear() => s_Slot.Data = default;
 
         /// <summary>
-        /// Бросает по первому провалу и чистит ящик. Зовётся с managed-стороны, поэтому здесь и
-        /// имя типа, и имя домена, и число повторов.
+        /// Throws on the first failure and clears the box. Called from the managed side, which is why
+        /// the type name, the domain name and the repeat count are all here.
         ///
-        /// <paramref name="whileBasesRise"/> — для тех, кто спрашивает, пока базы ещё поднимаются:
-        /// «домен не поднят» им не беда, а состояние. Слот при таком провале остаётся оффсетом,
-        /// нетронутым, и первый же проход после подъёма базы доводит его до адреса. Остальные коды
-        /// бросают и здесь: битый оффсет не станет целым от того, что база опоздала.
+        /// <paramref name="whileBasesRise"/> is for those who ask while the bases are still loading:
+        /// "the domain is not loaded" is not trouble for them but a state. On such a failure the slot
+        /// stays an offset, untouched, and the very first pass after the base loads brings it to an
+        /// address. The other codes throw here as well: a broken offset does not become whole just
+        /// because the base was late.
         ///
-        /// Второй провал под первым в ящике не лежит — считается только число, — поэтому вместе с
-        /// прощённым «домен не поднят» теряется и счёт того, что случилось следом. Не потеря:
-        /// сломанный слот сломан и на следующем проходе, и там он уже назовётся.
+        /// A second failure does not lie under the first in the box — only the count is kept — so along
+        /// with a forgiven "the domain is not loaded" the count of whatever happened next is lost too.
+        /// No loss: a broken slot is broken on the next pass as well, and there it will name itself.
         /// </summary>
         public static void ThrowIfAny(bool whileBasesRise = false)
         {
@@ -172,55 +175,55 @@ namespace Blobcheg
 
             var component = ComponentName(slot.TypeIndex);
             var domain = BlobchegDomainNames.Of(slot.DomainKey);
-            var more = slot.Count > 1 ? $" (и ещё {slot.Count - 1} таких же)" : string.Empty;
+            var more = slot.Count > 1 ? $" (and {slot.Count - 1} more of the same)" : string.Empty;
 
             switch ((BlobchegRebase)slot.Code)
             {
                 case BlobchegRebase.DomainNotRaised:
                     throw new InvalidOperationException(
-                        $"Blobcheg: сущности с '{component}' приехали раньше своей базы — домен " +
-                        $"'{domain}' не поднят, патчить нечем{more}. Грузить сабсцены можно только " +
-                        "после того, как выставлен синглтон готовности баз");
+                        $"Blobcheg: entities carrying '{component}' arrived before their base — domain " +
+                        $"'{domain}' is not loaded, there is nothing to patch with{more}. Subscenes may only " +
+                        "be loaded after the base-readiness singleton has been set");
 
                 case BlobchegRebase.BadOffset:
                     throw new InvalidOperationException(
-                        $"Blobcheg: в '{component}' лежит {slot.Value} — как оффсет домена '{domain}' " +
-                        $"это невозможно{more}: либо внутри header'а (первые " +
-                        $"{BlobchegFormat.HeaderSize} Б), либо не кратно {BlobchegFormat.RecordAlign}. " +
-                        "Начало записи выглядит не так");
+                        $"Blobcheg: '{component}' holds {slot.Value} — as an offset of domain '{domain}' " +
+                        $"that is impossible{more}: it is either inside the header (the first " +
+                        $"{BlobchegFormat.HeaderSize} B) or not a multiple of {BlobchegFormat.RecordAlign}. " +
+                        "The start of a record does not look like that");
 
                 case BlobchegRebase.OutOfRange:
                     throw new InvalidOperationException(
-                        $"Blobcheg: в '{component}' лежит {slot.Value} — это не оффсет домена " +
-                        $"'{domain}' и не адрес живого поколения его буфера{more}. Похоже, сущность " +
-                        "пережила пересборку базы, буфер которой уже освобождён");
+                        $"Blobcheg: '{component}' holds {slot.Value} — that is neither an offset of domain " +
+                        $"'{domain}' nor an address of a live generation of its buffer{more}. It looks like the " +
+                        "entity outlived a rebuild of the base whose buffer is already freed");
 
                 case BlobchegRebase.WrongRecord:
                     throw new InvalidOperationException(
-                        $"Blobcheg: слот в '{component}' доехал до адреса {slot.Value} в домене " +
-                        $"'{domain}', но по нему не начинается запись объявленного типа{more}. Либо " +
-                        "слот типизирован не той записью, либо пересборка двинула раскладку и перевод " +
-                        "поколения отдал соседнюю запись — сущности надо перепечь");
+                        $"Blobcheg: a slot in '{component}' reached address {slot.Value} in domain " +
+                        $"'{domain}', but no record of the declared type starts there{more}. Either the " +
+                        "slot is typed with the wrong record, or a rebuild moved the layout and the generation " +
+                        "translation handed out the neighbouring record — the entities need rebaking");
 
                 default:
                     throw new InvalidOperationException(
-                        $"Blobcheg: патч '{component}' провалился с кодом {slot.Code}, значение " +
-                        $"{slot.Value}, домен '{domain}'{more}");
+                        $"Blobcheg: the patch of '{component}' failed with code {slot.Code}, value " +
+                        $"{slot.Value}, domain '{domain}'{more}");
             }
         }
 
         /// <summary>
-        /// Имя типа ищется по списку зарегистрированных, а не через TypeManager: сюда попадают
-        /// только те типы, что таблица и завела, а обращаться к TypeManager из обработчика ошибки —
-        /// лишний способ упасть по дороге к сообщению.
+        /// The type name is looked up in the list of registered ones rather than through the
+        /// TypeManager: only the types the table itself put down get here, and reaching into the
+        /// TypeManager from an error handler is one more way to fall on the road to the message.
         /// </summary>
         static string ComponentName(int typeIndex)
         {
             foreach (var type in BlobchegPatchTableBuilder.RegisteredTypes)
                 if (type.TypeIndex.Value == typeIndex)
-                    return type.GetManagedType()?.Name ?? $"тип #{typeIndex}";
+                    return type.GetManagedType()?.Name ?? $"type #{typeIndex}";
 
-            return $"тип #{typeIndex}";
+            return $"type #{typeIndex}";
         }
     }
 }

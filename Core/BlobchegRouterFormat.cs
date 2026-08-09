@@ -6,31 +6,32 @@ using System.Text;
 namespace Blobcheg
 {
     /// <summary>
-    /// Формат файла роутера. Тот же header, что у базы, плюс пролог и три массива: маска строки,
-    /// начало её оффсетов и сами оффсеты. Строка — нода, бит — база, оффсеты упакованы подряд, без
-    /// дырок под базы, в которых ноды нет.
+    /// The format of a router file. The same header as a base, plus a prolog and three arrays: the
+    /// mask of a row, the start of its offsets and the offsets themselves. A row is a node, a bit is a
+    /// base, the offsets are packed one after another, with no holes for bases that hold no node.
     ///
-    /// Раскладку читатель НЕ вычисляет: оффсеты массивов лежат в прологе. Иначе изменение раскладки
-    /// молча уводило бы старого читателя на 16 байт вместо честного падения по версии.
+    /// The reader does NOT compute the layout: the array offsets lie in the prolog. Otherwise a change
+    /// of layout would quietly send an old reader 16 bytes off instead of failing honestly on the
+    /// version.
     /// </summary>
     public static class BlobchegRouterFormat
     {
-        /// <summary>Пролог идёт сразу за header'ом.</summary>
+        /// <summary>The prolog follows immediately after the header.</summary>
         public const int PrologOffset = BlobchegFormat.HeaderSize;
 
         public const int PrologSize = 32;
 
-        /// <summary>'BRDG' в порядке байтов файла — пролог debug-секции роутера.</summary>
+        /// <summary>'BRDG' in the byte order of the file — the prolog of the router debug section.</summary>
         public const uint DebugMagic = 0x47445242;
 
-        /// <summary>Больше 64 баз в одном роутере — это не «мало бит», а неправильно нарезанный проект.</summary>
+        /// <summary>More than 64 bases in one router is not "too few bits" but a badly sliced project.</summary>
         public const int MaxDomains = 64;
 
         public static int MaskWidthFor(int domainCount)
         {
             if (domainCount <= 0)
                 throw new ArgumentOutOfRangeException(nameof(domainCount),
-                    "Blobcheg: роутер без единой базы — маршрутизировать нечего");
+                    "Blobcheg: a router without a single base — there is nothing to route");
 
             if (domainCount <= 8)
                 return 1;
@@ -42,13 +43,13 @@ namespace Blobcheg
                 return 8;
 
             throw new ArgumentOutOfRangeException(nameof(domainCount),
-                $"Blobcheg: {domainCount} баз в одном роутере, потолок {MaxDomains}");
+                $"Blobcheg: {domainCount} bases in one router, the ceiling is {MaxDomains}");
         }
 
         /// <summary>
-        /// Единственное, что связывает нумерацию бит у кодогена и у едиторной сборки: они приходят к
-        /// ней независимо, поэтому сходимость доказывается хешем, а не честным словом. Алгоритм
-        /// продублирован в генераторе — менять только парно.
+        /// The only thing that ties the bit numbering of the codegen to the one of the editor build:
+        /// they arrive at it independently, so the fact that they agree is proven by a hash, not by
+        /// word of honour. The algorithm is duplicated in the generator — change only in pairs.
         /// </summary>
         public static ulong LayoutHash(IEnumerable<KeyValuePair<string, string>> domainsAndMembers, int maskWidth)
         {
@@ -80,43 +81,44 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>Пролог файла роутера. Ровно <see cref="BlobchegRouterFormat.PrologSize"/> байт.</summary>
+    /// <summary>The prolog of a router file. Exactly <see cref="BlobchegRouterFormat.PrologSize"/> bytes.</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct BlobchegRouterProlog
     {
-        /// <summary>Строк, то есть нод роутера. Он же потолок номера строки в валидном id.</summary>
+        /// <summary>Rows, that is, nodes of the router. Also the ceiling of the row number in a valid id.</summary>
         public uint Count;
 
         public uint DomainCount;
 
-        /// <summary>Хеш нумерации бит: файл и кодоген обязаны сойтись.</summary>
+        /// <summary>The hash of the bit numbering: the file and the codegen are obliged to agree.</summary>
         public ulong LayoutHash;
 
         public uint MasksOffset;
         public uint RowStartOffset;
         public uint OffsetsOffset;
 
-        /// <summary>1, 2, 4 или 8 байт на маску — по числу баз.</summary>
+        /// <summary>1, 2, 4 or 8 bytes per mask — according to the number of bases.</summary>
         public uint MaskWidth;
 
         /// <summary>
-        /// Проверка при подъёме, не hot path. Границы массивов сверяются с длиной файла: битый пролог
-        /// иначе увёл бы чтение в чужую память по первому же <c>Get</c>.
+        /// The check performed on load, not a hot path. Array bounds are checked against the file
+        /// length: otherwise a broken prolog would send the read into foreign memory on the very first
+        /// <c>Get</c>.
         /// </summary>
         public void Validate(string what, int fileLength, int domainCount, ulong layoutHash)
         {
             if (LayoutHash != layoutHash)
                 throw new InvalidOperationException(
-                    $"Blobcheg: роутер '{what}' собран под другой набор баз (в файле {LayoutHash:X16}, " +
-                    $"в коде {layoutHash:X16}) — пересобери базы или собери код");
+                    $"Blobcheg: router '{what}' was built for a different set of bases (the file says {LayoutHash:X16}, " +
+                    $"the code says {layoutHash:X16}) — rebuild the bases or build the code");
 
             if (DomainCount != (uint)domainCount)
                 throw new InvalidOperationException(
-                    $"Blobcheg: роутер '{what}' — в файле {DomainCount} баз, в коде {domainCount}");
+                    $"Blobcheg: router '{what}' — the file holds {DomainCount} bases, the code holds {domainCount}");
 
             if (MaskWidth != (uint)BlobchegRouterFormat.MaskWidthFor(domainCount))
                 throw new InvalidOperationException(
-                    $"Blobcheg: роутер '{what}' — ширина маски {MaskWidth} Б не отвечает {domainCount} базам");
+                    $"Blobcheg: router '{what}' — a mask width of {MaskWidth} B does not answer {domainCount} bases");
 
             var masksEnd = (long)MasksOffset + (long)Count * MaskWidth;
             var rowStartEnd = (long)RowStartOffset + ((long)Count + 1) * 4;
@@ -128,7 +130,7 @@ namespace Blobcheg
                 || OffsetsOffset < rowStartEnd
                 || OffsetsOffset > fileLength)
                 throw new InvalidOperationException(
-                    $"Blobcheg: роутер '{what}' — пролог указывает мимо файла длиной {fileLength} Б");
+                    $"Blobcheg: router '{what}' — the prolog points past a file of {fileLength} B");
         }
     }
 }

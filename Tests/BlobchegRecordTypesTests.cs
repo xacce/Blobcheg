@@ -38,45 +38,45 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// Два вердикта проверки типа: «несёт указатель» и «требует билдер». Второй — не самоочевидный:
-    /// поля <see cref="BlobchegArray{T}"/> — это два int'а, элемент среди полей не встречается, и
-    /// обход обязан входить в тип-аргумент отдельно.
+    /// Two verdicts of the type check: "carries a pointer" and "requires a builder". The second is not
+    /// self-evident: a <see cref="BlobchegArray{T}"/> field is two ints, the element does not occur
+    /// among the fields, and the walk is obliged to enter the type argument separately.
     /// </summary>
     public sealed class BlobchegRecordTypesTests
     {
         [Test]
-        public void Тип_без_массива_билдера_не_требует()
+        public void A_type_without_an_array_requires_no_builder()
         {
             Assert.That(BlobchegRecordTypes.RequiresBuilder(typeof(PlainRecord)), Is.False);
         }
 
         [Test]
-        public void Тип_с_массивом_требует_билдер()
+        public void A_type_with_an_array_requires_a_builder()
         {
             Assert.That(BlobchegRecordTypes.RequiresBuilder(typeof(RecordWithArray)), Is.True);
         }
 
         [Test]
-        public void Массив_на_глубине_вложенности_тоже_требует_билдер()
+        public void An_array_at_depth_requires_a_builder_too()
         {
             Assert.That(BlobchegRecordTypes.RequiresBuilder(typeof(RecordWithDeepArray)), Is.True);
         }
 
         [Test]
-        public void Сам_массив_указателем_не_считается()
+        public void The_array_itself_does_not_count_as_a_pointer()
         {
-            // Два int'а — указателя нет; тип с массивом float'ов обязан проходить проверку.
+            // Two ints — there is no pointer; a type with an array of floats is obliged to pass the check.
             Assert.DoesNotThrow(() => BlobchegRecordTypes.Require(typeof(RecordWithArray)));
         }
 
         [Test]
-        public void Указатель_внутри_элемента_массива_находится()
+        public void A_pointer_inside_an_array_element_is_found()
         {
             var thrown = Assert.Throws<InvalidOperationException>(
                 () => BlobchegRecordTypes.Require(typeof(RecordWithPointerInsideElement)));
 
             StringAssert.Contains("Items[].Address", thrown.Message,
-                "путь ошибки обязан довести до поля внутри элемента");
+                "the error path is obliged to lead to the field inside the element");
         }
     }
 }

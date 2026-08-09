@@ -5,13 +5,14 @@ using Unity.Collections.LowLevel.Unsafe;
 namespace Blobcheg
 {
     /// <summary>
-    /// Резидентная таблица хешей. Всю работу делает она; типизированный фасад
-    /// (<c>[BlobchegHashes]</c>-партиал) — тонкая обёртка сверху, знающая номера бит своих баз.
+    /// The resident hash table. It does all the work; the typed facade (the
+    /// <c>[BlobchegHashes]</c> partial) is a thin wrapper on top that knows the bit numbers of its
+    /// bases.
     ///
-    /// Подъём — это проверка header'а, целостности и пролога плюс шесть указателей. Ни одной
-    /// вставки: таблица посчитана пересборкой и лежит в файле готовой.
+    /// Loading it is a check of the header, the integrity and the prolog plus six pointers. Not a
+    /// single insertion: the table was computed by the rebuild and lies in the file ready to use.
     ///
-    /// Сообщения исключений — литералы: под Бёрстом интерполяция не компилируется.
+    /// The exception messages are literals: interpolation does not compile under Burst.
     /// </summary>
     public unsafe struct BlobchegHashesBlob : IDisposable
     {
@@ -28,15 +29,16 @@ namespace Blobcheg
         byte _tag;
 
         /// <summary>
-        /// Забирает владение буфером. Личность файла — <paramref name="what"/> (имя роутера плюс
-        /// суффикс), а тег для сборки <see cref="BlobchegId"/> считается по
-        /// <paramref name="routerName"/>: это разные имена, и оба приезжают константами из кодогена.
+        /// Takes ownership of the buffer. The identity of the file is <paramref name="what"/> (the
+        /// router name plus the suffix), while the tag for assembling a <see cref="BlobchegId"/> is
+        /// computed from <paramref name="routerName"/>: these are different names, and both arrive as
+        /// constants from the codegen.
         /// </summary>
         public BlobchegHashesBlob(BlobchegBuffer buffer, string what, string routerName,
             int domainCount, ulong layoutHash)
         {
             if (!buffer.IsCreated)
-                throw new ArgumentException($"Blobcheg: пустой буфер таблицы '{what}'", nameof(buffer));
+                throw new ArgumentException($"Blobcheg: an empty buffer for table '{what}'", nameof(buffer));
 
             _buffer = buffer;
             _tag = BlobchegNaming.TagOf(routerName);
@@ -48,7 +50,7 @@ namespace Blobcheg
             header.Validate(what, buffer.Length, contentHash, BlobchegFileKind.Hashes);
 
             if (buffer.Length < BlobchegHashesFormat.PrologOffset + BlobchegHashesFormat.PrologSize)
-                throw new InvalidOperationException($"Blobcheg: таблица '{what}' короче пролога");
+                throw new InvalidOperationException($"Blobcheg: table '{what}' is shorter than the prolog");
 
             ref var prolog = ref UnsafeUtility.AsRef<BlobchegHashesProlog>(
                 buffer.Ptr + BlobchegHashesFormat.PrologOffset);
@@ -65,24 +67,25 @@ namespace Blobcheg
             _backOffsets = (uint*)(buffer.Ptr + prolog.BackOffsetsOffset);
             _backRows = (uint*)(buffer.Ptr + prolog.BackRowsOffset);
 
-            // Длина дорожек лежит в прологе и обязана сойтись с их же границами: расходятся — файл
-            // собран не этим писателем, и дальше проверять нечего.
+            // The length of the lanes lies in the prolog and is obliged to agree with their own bounds:
+            // if they disagree, the file was not assembled by this writer, and there is nothing further
+            // to check.
             if (_backIndex[_domainCount] != prolog.Total)
                 throw new InvalidOperationException(
-                    $"Blobcheg: таблица '{what}' — границы обратных дорожек не сходятся с их длиной");
+                    $"Blobcheg: table '{what}' — the bounds of the reverse lanes do not agree with their length");
         }
 
         public bool IsCreated => _buffer.IsCreated;
 
-        /// <summary>Строк, то есть нод роутера, включая дырки от удалённых.</summary>
+        /// <summary>Rows, that is, nodes of the router, including the holes left by deleted ones.</summary>
         public int Count => (int)_count;
 
-        /// <summary>Тег роутера — старший байт id, которые отдаёт эта таблица.</summary>
+        /// <summary>The router tag — the high byte of the ids this table hands out.</summary>
         public byte Tag => _tag;
 
         /// <summary>
-        /// Номер строки по хешу. Ноль хешем не бывает: им помечен пустой слот, и спрашивать его —
-        /// это спрашивать «не назначено».
+        /// The row number by hash. Zero is never a hash: it marks an empty slot, and asking for it means
+        /// asking for "not assigned".
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetRow(ulong hash, out uint row)
@@ -120,31 +123,31 @@ namespace Blobcheg
         {
             if (!TryGetRow(hash, out var row))
                 throw new InvalidOperationException(
-                    "Blobcheg.Hashes: неизвестный хеш — ноды с таким именем в этом роутере нет");
+                    "Blobcheg.Hashes: unknown hash — this router has no node with that name");
 
             return row;
         }
 
-        /// <summary>Хеш строки по её номеру. Дырка от удалённой ноды — ноль.</summary>
+        /// <summary>The hash of a row by its number. A hole from a deleted node is zero.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ulong HashOfRow(uint row)
         {
             if (row >= _count)
                 throw new InvalidOperationException(
-                    "Blobcheg.Hashes: строки с таким номером в таблице нет");
+                    "Blobcheg.Hashes: the table has no row with that number");
 
             return _rowHash[row];
         }
 
         /// <summary>
-        /// Хеш по адресу записи в базе <paramref name="bit"/>. Путь сейва, не горячий: дорожка
-        /// отсортирована по оффсету, поиск двоичный.
+        /// The hash by the address of a record in base <paramref name="bit"/>. The save path, not a hot
+        /// one: the lane is sorted by offset, the search is binary.
         /// </summary>
         public bool TryHashOfOffset(int bit, uint offset, out ulong hash)
         {
             if (bit < 0 || (uint)bit >= _domainCount)
                 throw new InvalidOperationException(
-                    "Blobcheg.Hashes: номер базы за пределами роутера");
+                    "Blobcheg.Hashes: the base number is outside the router");
 
             var start = _backIndex[bit];
             var end = _backIndex[bit + 1];

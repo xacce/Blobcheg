@@ -1,12 +1,14 @@
 ﻿<#
 .SYNOPSIS
-    Гоняет деструктивный набор Blobcheg (Samples~/AdvancedTests) в указанном Unity-проекте.
+    Runs the destructive Blobcheg set (Samples~/AdvancedTests) in the given Unity project.
 
 .DESCRIPTION
-    Набор лежит в Samples~ и потому невидим для Unity. Скрипт копирует его в Assets проекта,
-    запускает EditMode-прогон с фильтром Blobcheg.AdvancedTests и убирает копию за собой.
+    The set lives in Samples~ and is therefore invisible to Unity. The script copies it into the
+    project's Assets, runs an EditMode pass filtered by Blobcheg.AdvancedTests and removes the copy
+    afterwards.
 
-    Источник истины — Samples~/AdvancedTests. Копия одноразовая: правки вносить в пакет, а не в неё.
+    The source of truth is Samples~/AdvancedTests. The copy is disposable: edits go into the package,
+    not into it.
 
 .EXAMPLE
     ./tools/run-advanced-tests.ps1 -Project C:/Projects/Evuck/EvuckServer
@@ -22,11 +24,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $source = Join-Path $PSScriptRoot '..\Samples~\AdvancedTests'
-if (-not (Test-Path $source)) { throw "Не найден набор: $source" }
+if (-not (Test-Path $source)) { throw "Set not found: $source" }
 
 $project = (Resolve-Path $Project).Path
 $assets = Join-Path $project 'Assets'
-if (-not (Test-Path $assets)) { throw "Это не Unity-проект: $project" }
+if (-not (Test-Path $assets)) { throw "This is not a Unity project: $project" }
 
 $target = Join-Path $assets 'BlobchegAdvancedTests'
 $targetMeta = "$target.meta"
@@ -40,7 +42,7 @@ function Remove-Copy {
 
 Remove-Copy
 Copy-Item -Recurse -Force $source $target
-Write-Host "Набор скопирован в $target"
+Write-Host "The set was copied into $target"
 
 try {
     unity test $project `
@@ -53,14 +55,14 @@ try {
     $code = $LASTEXITCODE
 }
 finally {
-    if (-not $Keep) { Remove-Copy; Write-Host 'Копия убрана' }
-    else { Write-Host "Копия оставлена в $target (-Keep)" }
+    if (-not $Keep) { Remove-Copy; Write-Host 'The copy was removed' }
+    else { Write-Host "The copy was left in $target (-Keep)" }
 }
 
 if (Test-Path $Output) {
     [xml]$xml = Get-Content $Output
     $run = $xml.'test-run'
-    Write-Host "Итог: всего $($run.total), провалено $($run.failed), пропущено $($run.skipped)"
+    Write-Host "Result: total $($run.total), failed $($run.failed), skipped $($run.skipped)"
 }
 
 exit $code

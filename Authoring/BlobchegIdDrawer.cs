@@ -8,8 +8,9 @@ using UnityEngine;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Драйвер поля-id. Роутер держит компилятор параметром типа, а этот слой не даёт положить в
-    /// <c>BlobchegIdRef&lt;GameRouter&gt;</c> носитель чужого роутера — ни пикером, ни перетаскиванием.
+    /// The drawer for an id field. The router is held by the compiler as a type parameter, and this
+    /// layer does not let the carrier of a foreign router be put into a
+    /// <c>BlobchegIdRef&lt;GameRouter&gt;</c> — neither by the picker nor by dragging.
     /// </summary>
     [CustomPropertyDrawer(typeof(BlobchegIdRef<>), true)]
     public sealed class BlobchegIdDrawer : PropertyDrawer
@@ -64,25 +65,26 @@ namespace Blobcheg.Authoring
         static GUIContent Caption(BlobchegIdSo current, string router)
         {
             if (current == null)
-                return new GUIContent("Нет ноды (" + (router ?? "роутер не определён") + ")");
+                return new GUIContent("No node (" + (router ?? "router undetermined") + ")");
 
             return new GUIContent(current.name, AssetPreview.GetMiniThumbnail(current));
         }
 
         static void OpenPicker(Rect field, SerializedProperty property, string router, BlobchegIdSo current)
         {
-            // SerializedProperty живёт до конца кадра, а пикер отвечает позже — поэтому запоминаем
-            // объект и путь, а свойство ищем заново в момент выбора.
+            // A SerializedProperty lives until the end of the frame while the picker answers later —
+            // that is why the object and the path are remembered and the property is looked up again at
+            // the moment of the choice.
             var serialized = property.serializedObject;
             var path = property.propertyPath;
             var candidates = BlobchegIdCatalog.Candidates(router).ConvertAll(c => (ScriptableObject)c);
 
             BlobchegRefPickerWindow.Open(field,
-                router ?? "Ноды роутера",
-                "Нод этого роутера в проекте нет — или пересборка не дошла до носителей id.",
+                router ?? "Router nodes",
+                "There are no nodes of this router in the project — or the rebuild never reached the id carriers.",
                 candidates,
                 current,
-                asset => "строка " + new BlobchegId(((BlobchegIdSo)asset).id).Index,
+                asset => "row " + new BlobchegId(((BlobchegIdSo)asset).id).Index,
                 picked =>
                 {
                     var found = serialized.FindProperty(path);
@@ -124,16 +126,16 @@ namespace Blobcheg.Authoring
         {
             var asset = property.FindPropertyRelative("asset").objectReferenceValue as BlobchegIdSo;
             if (asset == null)
-                return "нода не назначена";
+                return "no node is assigned";
 
             var router = ExpectedRouterName(fieldInfo);
             if (!BlobchegIdCatalog.Matches(asset, router))
-                return $"чужой роутер: '{asset.RouterName}' вместо '{router}'";
+                return $"foreign router: '{asset.RouterName}' instead of '{router}'";
 
             return null;
         }
 
-        /// <summary>Имя роутера из параметра поля.</summary>
+        /// <summary>The router name from the field parameter.</summary>
         static string ExpectedRouterName(FieldInfo field)
         {
             var type = field.FieldType;

@@ -5,51 +5,53 @@ using System.Runtime.InteropServices;
 namespace Blobcheg
 {
     /// <summary>
-    /// Что за файл лежит перед читателем. Вид пишется флагами в header и сверяется на подъёме:
-    /// перепутанные файлы иначе поднимаются и молча отдают чужие байты.
+    /// What kind of file lies in front of the reader. The kind is written as flags in the header and
+    /// checked on load: otherwise mixed-up files come up and quietly hand out someone else's bytes.
     /// </summary>
     public enum BlobchegFileKind
     {
         Database = 0,
         Router = 1,
 
-        /// <summary>Таблица хешей имён — файл сборки <c>Blobcheg.Hashes</c>.</summary>
+        /// <summary>A table of name hashes — the file of the <c>Blobcheg.Hashes</c> build.</summary>
         Hashes = 2,
     }
 
     /// <summary>
-    /// Бинарный формат базы, version 1. Файл — это header и подряд лежащие выровненные байты;
-    /// таблиц в релизном файле нет, смысл записям придаёт только оффсет, сохранённый потребителем.
+    /// The binary format of a base, version 1. A file is a header and aligned bytes lying one after
+    /// another; there are no tables in the release file, and the only thing that gives a record
+    /// meaning is the offset the consumer kept.
     /// </summary>
     public static class BlobchegFormat
     {
-        /// <summary>'BCHG' в порядке байтов файла.</summary>
+        /// <summary>'BCHG' in the byte order of the file.</summary>
         public const uint Magic = 0x47484342;
 
         /// <summary>
-        /// 2 — появился роутер, 3 — у файла появилась личность (хеш имени в header'е), 4 — видов
-        /// файла стало три и они больше не различаются одним булем. Версия общая для всех файлов
-        /// пакета: они производные и пересобираются вместе, а разные версии у базы и роутера были бы
-        /// лишней осью рассинхрона.
+        /// 2 — the router appeared, 3 — the file gained an identity (the name hash in the header),
+        /// 4 — there are now three file kinds and a single bool no longer tells them apart. The
+        /// version is shared by every file of the package: they are derived and rebuilt together, and
+        /// separate versions for the base and the router would be one more axis to fall out of sync
+        /// along.
         /// </summary>
         public const ushort Version = 4;
 
-        /// <summary>Размер header'а и одновременно оффсет первой записи.</summary>
+        /// <summary>The size of the header and at the same time the offset of the first record.</summary>
         public const int HeaderSize = 32;
 
-        /// <summary>Старт каждой записи выровнен на это от начала файла.</summary>
+        /// <summary>The start of every record is aligned to this from the beginning of the file.</summary>
         public const int RecordAlign = 16;
 
-        /// <summary>Бит flags: в файле есть debug-секция.</summary>
+        /// <summary>A flags bit: the file has a debug section.</summary>
         public const ushort FlagHasDebug = 1 << 0;
 
-        /// <summary>Бит flags: файл — роутер, а не база. Перепутанные отбиваются на подъёме.</summary>
+        /// <summary>A flags bit: the file is a router, not a base. Mixed-up ones are rejected on load.</summary>
         public const ushort FlagRouter = 1 << 1;
 
-        /// <summary>Бит flags: файл — таблица хешей.</summary>
+        /// <summary>A flags bit: the file is a hash table.</summary>
         public const ushort FlagHashes = 1 << 2;
 
-        /// <summary>Флаги вида файла — то, что писатель кладёт в header, а читатель сверяет.</summary>
+        /// <summary>The file-kind flags — what the writer puts into the header and the reader checks.</summary>
         public static ushort FlagsOf(BlobchegFileKind kind)
         {
             switch (kind)
@@ -58,13 +60,13 @@ namespace Blobcheg
                 case BlobchegFileKind.Router: return FlagRouter;
                 case BlobchegFileKind.Hashes: return FlagHashes;
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), $"Blobcheg: неизвестный вид файла {kind}");
+                    throw new ArgumentOutOfRangeException(nameof(kind), $"Blobcheg: unknown file kind {kind}");
             }
         }
 
         /// <summary>
-        /// Вид файла по флагам header'а. Два вида сразу — испорченный или собранный чужим
-        /// инструментом файл, и он не «база по умолчанию», а ошибка.
+        /// The file kind from the header flags. Two kinds at once means a corrupted file or one built
+        /// by a foreign tool, and it is not "a base by default" but an error.
         /// </summary>
         public static BlobchegFileKind KindOf(ushort flags)
         {
@@ -77,40 +79,40 @@ namespace Blobcheg
                 case FlagHashes: return BlobchegFileKind.Hashes;
                 default:
                     throw new InvalidOperationException(
-                        $"Blobcheg: в header'е сразу два вида файла (флаги {flags:X4})");
+                        $"Blobcheg: the header claims two file kinds at once (flags {flags:X4})");
             }
         }
 
-        /// <summary>«Это файл ...» — чей файл лежит перед читателем.</summary>
+        /// <summary>"this is a ... file" — whose file lies in front of the reader.</summary>
         public static string NameOf(BlobchegFileKind kind)
         {
             switch (kind)
             {
-                case BlobchegFileKind.Router: return "роутера";
-                case BlobchegFileKind.Hashes: return "таблицы хешей";
-                default: return "базы";
+                case BlobchegFileKind.Router: return "router";
+                case BlobchegFileKind.Hashes: return "hash table";
+                default: return "base";
             }
         }
 
-        /// <summary>«Поднимают его как ...» — чем его считает читатель.</summary>
+        /// <summary>"it is being loaded as a ..." — what the reader takes it for.</summary>
         public static string TargetOf(BlobchegFileKind kind)
         {
             switch (kind)
             {
-                case BlobchegFileKind.Router: return "роутер";
-                case BlobchegFileKind.Hashes: return "таблицу хешей";
-                default: return "базу";
+                case BlobchegFileKind.Router: return "router";
+                case BlobchegFileKind.Hashes: return "hash table";
+                default: return "base";
             }
         }
 
-        /// <summary>«Это файл другого ...» — файлы одного вида, но переставленные местами.</summary>
+        /// <summary>"this is the file of another ..." — files of one kind swapped with each other.</summary>
         public static string OwnerOf(BlobchegFileKind kind)
         {
             switch (kind)
             {
-                case BlobchegFileKind.Router: return "другого роутера";
-                case BlobchegFileKind.Hashes: return "другой таблицы хешей";
-                default: return "другого домена";
+                case BlobchegFileKind.Router: return "another router";
+                case BlobchegFileKind.Hashes: return "another hash table";
+                default: return "another domain";
             }
         }
 
@@ -121,7 +123,7 @@ namespace Blobcheg
         public static uint AlignUp(uint value) => (value + (RecordAlign - 1)) & ~((uint)RecordAlign - 1);
     }
 
-    /// <summary>Начало файла базы. Ровно <see cref="BlobchegFormat.HeaderSize"/> байт.</summary>
+    /// <summary>The start of a base file. Exactly <see cref="BlobchegFormat.HeaderSize"/> bytes.</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct BlobchegHeader
     {
@@ -129,19 +131,19 @@ namespace Blobcheg
         public ushort Version;
         public ushort Flags;
 
-        /// <summary>Полная длина файла — валидация транспорта.</summary>
+        /// <summary>The full length of the file — validation of the transport.</summary>
         public uint FileLength;
 
-        /// <summary>Абсолютный оффсет debug-секции, 0 — секции нет.</summary>
+        /// <summary>The absolute offset of the debug section, 0 means there is none.</summary>
         public uint DebugOffset;
 
-        /// <summary>xxHash3 всего, что после header'а. Integrity, сверяется всегда, без дефайнов.</summary>
+        /// <summary>xxHash3 of everything past the header. Integrity, always checked, behind no define.</summary>
         public ulong ContentHash;
 
         /// <summary>
-        /// Личность файла: <see cref="BlobchegNaming.NameHash"/> имени домена или роутера. Без неё
-        /// два переставленных местами .bcheg поднимаются оба и молча отдают чужие байты — целостность
-        /// у каждого своя и сходится.
+        /// The identity of the file: <see cref="BlobchegNaming.NameHash"/> of the domain or router
+        /// name. Without it two .bcheg files swapped with each other both come up and quietly hand out
+        /// someone else's bytes — each has its own integrity and each adds up.
         /// </summary>
         public ulong NameHash;
 
@@ -149,51 +151,53 @@ namespace Blobcheg
 
         public bool IsRouter => (Flags & BlobchegFormat.FlagRouter) != 0;
 
-        /// <summary>Вид файла по флагам. Испорченные флаги бросают, а не отдают «базу».</summary>
+        /// <summary>The file kind from the flags. Corrupted flags throw rather than return "a base".</summary>
         public BlobchegFileKind Kind => BlobchegFormat.KindOf(Flags);
 
         /// <summary>
-        /// Проверка при подъёме базы. Не hot path — вызывается раз на базу, поэтому не за дефайном.
-        /// Любое расхождение бросает: база либо поднялась целиком, либо игра не поехала.
+        /// The check performed when a base is loaded. Not a hot path — called once per base, which is
+        /// why it sits behind no define. Any discrepancy throws: either the base came up whole, or the
+        /// game did not start.
         /// </summary>
         public void Validate(string what, int actualLength, ulong actualContentHash,
             BlobchegFileKind wantKind = BlobchegFileKind.Database)
         {
             if (Magic != BlobchegFormat.Magic)
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{what}' — не файл blobcheg (magic {Magic:X8}, ожидался {BlobchegFormat.Magic:X8})");
+                    $"Blobcheg: '{what}' is not a blobcheg file (magic {Magic:X8}, expected {BlobchegFormat.Magic:X8})");
 
             if (Version != BlobchegFormat.Version)
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{what}' — версия формата {Version}, читатель понимает {BlobchegFormat.Version}");
+                    $"Blobcheg: '{what}' is format version {Version}, the reader understands {BlobchegFormat.Version}");
 
             var kind = Kind;
             if (kind != wantKind)
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{what}' — это файл {BlobchegFormat.NameOf(kind)}, а поднимают его как " +
+                    $"Blobcheg: '{what}' is a {BlobchegFormat.NameOf(kind)} file, but it is being loaded as a " +
                     $"{BlobchegFormat.TargetOf(wantKind)}");
 
             var wantedName = BlobchegNaming.NameHash(what);
             if (NameHash != wantedName)
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{what}' — это файл {BlobchegFormat.OwnerOf(kind)} " +
-                    $"(в header'е {NameHash:X16}, у '{what}' {wantedName:X16}). Файлы переставлены местами " +
-                    "или пересобраны под другими именами");
+                    $"Blobcheg: '{what}' is the file of {BlobchegFormat.OwnerOf(kind)} " +
+                    $"(the header says {NameHash:X16}, '{what}' is {wantedName:X16}). The files are swapped " +
+                    "with each other or were rebuilt under different names");
 
-            // Переходный: длину читатель узнаёт до тела, и между этими двумя чтениями пересборка
-            // успевает подменить файл — header уже от нового, байты ещё от прежнего. Через кадр то
-            // же чтение проходит, см. BlobchegTransientException.
+            // Transient: the reader learns the length before the body, and between those two reads a
+            // rebuild has time to swap the file — the header already belongs to the new one, the bytes
+            // still to the old one. A frame later the same read goes through, see
+            // BlobchegTransientException.
             if (FileLength != (uint)actualLength)
                 throw new BlobchegTransientException(
-                    $"Blobcheg: '{what}' — обрезан или дописан: в header'е {FileLength} Б, прочитано {actualLength} Б");
+                    $"Blobcheg: '{what}' is truncated or extended: the header says {FileLength} B, {actualLength} B were read");
 
             if (DebugOffset != 0 && (DebugOffset < BlobchegFormat.HeaderSize || DebugOffset >= FileLength))
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{what}' — debug-секция по невозможному оффсету {DebugOffset} при длине {FileLength}");
+                    $"Blobcheg: '{what}' has its debug section at the impossible offset {DebugOffset} for a length of {FileLength}");
 
             if (ContentHash != actualContentHash)
                 throw new InvalidOperationException(
-                    $"Blobcheg: '{what}' — не сошлась целостность: в header'е {ContentHash:X16}, посчитано {actualContentHash:X16}");
+                    $"Blobcheg: '{what}' failed the integrity check: the header says {ContentHash:X16}, {actualContentHash:X16} was computed");
         }
     }
 }

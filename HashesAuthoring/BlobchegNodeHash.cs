@@ -3,35 +3,38 @@ using System;
 namespace Blobcheg.Authoring
 {
     /// <summary>
-    /// Хеш ноды на бейке. Живёт отдельно от <see cref="BlobchegNodeWriter"/> намеренно: основной
-    /// писатель о хешах не знает, а нода, которой хеш нужен в записи, ссылается на эту сборку сама.
+    /// The hash of a node at bake time. It lives apart from <see cref="BlobchegNodeWriter"/> on
+    /// purpose: the main writer knows nothing about hashes, and a node that needs a hash in its record
+    /// references this assembly itself.
     /// </summary>
     public static class BlobchegNodeHash
     {
         /// <summary>
-        /// Хеш имени ноды в этом роутере — его можно положить прямо в запись, как <c>writer.Id</c>.
-        /// Имя известно до <see cref="BlobchegNodeSo.Write"/>: пересборка проставляет его раньше.
+        /// The hash of the node name in this router — it can be put straight into a record, like
+        /// <c>writer.Id</c>. The name is known before <see cref="BlobchegNodeSo.Write"/>: the rebuild
+        /// stamps it earlier.
         /// </summary>
         public static ulong HashIn<TRouter>(this BlobchegNodeSo node)
             where TRouter : unmanaged, IBlobchegRouter
         {
             if (node == null)
-                throw new ArgumentNullException(nameof(node), "Blobcheg: хеш несуществующей ноды");
+                throw new ArgumentNullException(nameof(node), "Blobcheg: the hash of a node that does not exist");
 
             var routerName = default(TRouter).Name;
 
             var name = node.BlobchegName;
             if (string.IsNullOrEmpty(name))
                 throw new InvalidOperationException(
-                    $"Blobcheg: у ноды '{node.name}' пустое имя — хеш считать не от чего. " +
-                    "Пересборка проставляет его сама, значит этот вызов идёт мимо неё");
+                    $"Blobcheg: node '{node.name}' has an empty name — there is nothing to compute a hash from. " +
+                    "The rebuild stamps it itself, so this call is going around it");
 
-            // Нода вне роутера получила бы хеш, которому в таблице нечего отдать: строки у неё там
-            // нет. Молчать об этом нельзя — ошибка вылезла бы только в рантайме, на загрузке сейва.
+            // A node outside the router would get a hash the table has nothing to hand back for: it has
+            // no row there. Staying silent about that is not an option — the error would only surface at
+            // runtime, while loading a save.
             if (!BlobchegRouters.RoutersOf(node).Contains(typeof(TRouter)))
                 throw new InvalidOperationException(
-                    $"Blobcheg: нода '{node.name}' не пишет ни в одну базу роутера '{routerName}' — " +
-                    "строки в его таблице у неё нет, и хеш вёл бы в никуда");
+                    $"Blobcheg: node '{node.name}' writes into no base of router '{routerName}' — " +
+                    "it has no row in its table, and the hash would lead nowhere");
 
             return BlobchegHashKey.Of(routerName, name);
         }

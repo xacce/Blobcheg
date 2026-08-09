@@ -8,9 +8,10 @@ using Microsoft.CodeAnalysis.Text;
 namespace Blobcheg.CodeGen
 {
     /// <summary>
-    /// Дописывает партиал базы по <c>[Blobcheg(typeof(IДомен))]</c> и партиал роутера по
-    /// <c>[BlobchegRouter]</c>. Генератор выпускает ТОЛЬКО структуры и системы: ScriptableObject он
-    /// выпускать не может — у типа из кодогена нет MonoScript, и ассетом такой тип не станет.
+    /// Adds to the partial of a base by <c>[Blobcheg(typeof(IDomain))]</c> and to the partial of a
+    /// router by <c>[BlobchegRouter]</c>. The generator emits ONLY structs and systems: it cannot emit a
+    /// ScriptableObject — a type out of the codegen has no MonoScript, and such a type will never become
+    /// an asset.
     /// </summary>
     [Generator]
     public sealed class BlobchegGenerator : IIncrementalGenerator
@@ -23,55 +24,55 @@ namespace Blobcheg.CodeGen
         const string DisableAutoCreation = "Unity.Entities.DisableAutoCreationAttribute";
 
         static readonly DiagnosticDescriptor NotPartial = new DiagnosticDescriptor(
-            "BCHG001", "База обязана быть partial",
-            "Структура '{0}' помечена [Blobcheg], но не объявлена partial — дописать в неё нечего",
+            "BCHG001", "A base is obliged to be partial",
+            "Struct '{0}' is marked [Blobcheg] but is not declared partial — there is nothing to add to it",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor Nested = new DiagnosticDescriptor(
-            "BCHG002", "База не может быть вложенным типом",
-            "Структура '{0}' помечена [Blobcheg], но вложена в другой тип — вынеси её наружу",
+            "BCHG002", "A base cannot be a nested type",
+            "Struct '{0}' is marked [Blobcheg] but is nested in another type — move it outside",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor BadDomain = new DiagnosticDescriptor(
-            "BCHG003", "Домен обязан быть интерфейсом-маркером",
-            "В [Blobcheg] у структуры '{0}' передан '{1}' — домен объявляется интерфейсом",
+            "BCHG003", "A domain is obliged to be a marker interface",
+            "The [Blobcheg] on struct '{0}' was given '{1}' — a domain is declared by an interface",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor NoRouter = new DiagnosticDescriptor(
-            "BCHG004", "Роутер не определён",
-            "У структуры '{0}' задано имя члена роутера, но роутер не выбран: {1}. " +
-            "Укажи Router = typeof(...) в [Blobcheg]",
+            "BCHG004", "The router is undetermined",
+            "Struct '{0}' has a router member name set, but no router is chosen: {1}. " +
+            "Set Router = typeof(...) in [Blobcheg]",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor RouterNotPartial = new DiagnosticDescriptor(
-            "BCHG005", "Роутер обязан быть partial и не вложенным",
-            "Структура '{0}' помечена [BlobchegRouter], но не объявлена partial или вложена в другой тип",
+            "BCHG005", "A router is obliged to be partial and not nested",
+            "Struct '{0}' is marked [BlobchegRouter] but is not declared partial or is nested in another type",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor RouterClash = new DiagnosticDescriptor(
-            "BCHG006", "Роутер собран из противоречивых баз",
-            "Роутер '{0}': {1}",
+            "BCHG006", "The router is assembled from contradictory bases",
+            "Router '{0}': {1}",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor TooManyDomains = new DiagnosticDescriptor(
-            "BCHG007", "В роутере больше 64 баз",
-            "Роутер '{0}' собран из {1} баз — потолок 64. Это не «мало бит», а неправильно нарезанный проект",
+            "BCHG007", "More than 64 bases in a router",
+            "Router '{0}' is assembled from {1} bases — the ceiling is 64. That is not \"too few bits\" but a badly sliced project",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor NoEntitiesReference = new DiagnosticDescriptor(
-            "BCHG008", "Нет ссылки на Blobcheg.Entities",
-            "Структура '{0}' объявлена IComponentData — под неё выпускается бут-система, а сборка не " +
-            "референсит Blobcheg.Entities. Добавь ссылку или убери IComponentData",
+            "BCHG008", "No reference to Blobcheg.Entities",
+            "Struct '{0}' is declared IComponentData — a boot system is emitted for it, and the assembly does " +
+            "not reference Blobcheg.Entities. Add the reference or drop IComponentData",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor HashesNotPartial = new DiagnosticDescriptor(
-            "BCHG009", "Таблица хешей обязана быть partial и не вложенной",
-            "Структура '{0}' помечена [BlobchegHashes], но не объявлена partial или вложена в другой тип",
+            "BCHG009", "A hash table is obliged to be partial and not nested",
+            "Struct '{0}' is marked [BlobchegHashes] but is not declared partial or is nested in another type",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor HashesNoRouter = new DiagnosticDescriptor(
-            "BCHG010", "Таблица хешей ссылается не на роутер",
-            "В [BlobchegHashes] у структуры '{0}' передан '{1}': {2}",
+            "BCHG010", "The hash table references something that is not a router",
+            "The [BlobchegHashes] on struct '{0}' was given '{1}': {2}",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -98,7 +99,7 @@ namespace Blobcheg.CodeGen
             context.RegisterSourceOutput(hashes.Combine(model), static (source, pair) => EmitHashes(source, pair.Left, pair.Right));
         }
 
-        // ---------------------------------------------------------------- модель
+        // ---------------------------------------------------------------- model
 
         sealed class DbInfo
         {
@@ -107,7 +108,7 @@ namespace Blobcheg.CodeGen
             public string Member;
             public string RouterName;
 
-            /// <summary>Роутер назван, но в этой сборке его нет — значит он в чужой.</summary>
+            /// <summary>The router is named, but it is not in this assembly — so it is in a foreign one.</summary>
             public string RouterElsewhere;
         }
 
@@ -118,12 +119,13 @@ namespace Blobcheg.CodeGen
         }
 
         /// <summary>
-        /// Базы и роутеры ЭТОЙ сборки. Чужие сборки не смотрим намеренно: генератор роутера считает
-        /// биты по списку баз, а видит он только свою компиляцию — база из сборки, которая ссылается
-        /// на роутер, ему не видна, и биты вышли бы посчитанными не по всем.
+        /// The bases and routers of THIS assembly. Foreign assemblies are deliberately not looked at: a
+        /// router's generator computes the bits from the list of bases, and it only sees its own
+        /// compilation — a base in an assembly that references the router is invisible to it, and the
+        /// bits would come out computed over less than all of them.
         ///
-        /// Отсюда правило: роутер и его базы лежат в одной сборке. Обратный порядок ссылок делу не
-        /// помогает — база, видящая роутер, роутеру не видна by construction.
+        /// Hence the rule: a router and its bases lie in one assembly. Reversing the reference order does
+        /// not help — a base that sees the router is invisible to the router by construction.
         /// </summary>
         sealed class Model
         {
@@ -238,7 +240,7 @@ namespace Blobcheg.CodeGen
             }
         }
 
-        // ---------------------------------------------------------------- базы
+        // ---------------------------------------------------------------- bases
 
         static void EmitDatabase(SourceProductionContext source, GeneratorAttributeSyntaxContext ctx, Model model)
         {
@@ -275,10 +277,10 @@ namespace Blobcheg.CodeGen
                 source.ReportDiagnostic(Diagnostic.Create(
                     NoRouter, declaration.Identifier.GetLocation(), symbol.Name,
                     info.RouterElsewhere != null
-                        ? $"роутер '{info.RouterElsewhere}' лежит в другой сборке, а роутер и его базы обязаны быть в одной"
+                        ? $"router '{info.RouterElsewhere}' lies in another assembly, and a router and its bases are obliged to be in one"
                         : model.Routers.Count == 0
-                            ? "в этой сборке нет ни одного [BlobchegRouter]"
-                            : $"роутеров в сборке сразу {model.Routers.Count}"));
+                            ? "this assembly has no [BlobchegRouter] at all"
+                            : $"the assembly holds {model.Routers.Count} routers at once"));
                 return;
             }
 
@@ -288,8 +290,8 @@ namespace Blobcheg.CodeGen
             var domainFull = domain.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             Open(text, symbol, out var space);
 
-            // Без unsafe: тип с указателем внутри держится полем и в безопасном коде, а требовать
-            // от потребителя allowUnsafeCode ради объявления базы незачем.
+            // No unsafe: a type with a pointer inside can be held as a field in safe code too, and there
+            // is no reason to demand allowUnsafeCode from the consumer just to declare a base.
             text.Append("    ").Append(Access(symbol)).Append(" partial struct ")
                 .Append(symbol.Name).AppendLine(" : global::System.IDisposable");
             text.AppendLine("    {");
@@ -302,21 +304,21 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            __blob = new global::Blobcheg.BlobchegBlob(buffer, DomainName);");
             text.AppendLine("        }");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Имя файла базы — его же спрашивает транспорт.</summary>");
+            text.AppendLine("        /// <summary>The file name of the base — the transport asks for the same one.</summary>");
             text.AppendLine("        public static string FileName => global::Blobcheg.BlobchegNaming.FileName(DomainName);");
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __blob.IsCreated;");
             text.AppendLine();
             text.AppendLine("        public int Length => __blob.Length;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Есть ли в файле отладочный контур. В релизном плеере его не бывает.</summary>");
+            text.AppendLine("        /// <summary>Whether the file carries a debug contour. A release player never has one.</summary>");
             text.AppendLine("        public bool HasDebug => __blob.HasDebug;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Имена типа и ноды по оффсету — только для инструментов едитора.</summary>");
+            text.AppendLine("        /// <summary>Type and node names by offset — for editor tools only.</summary>");
             text.AppendLine("        public void Describe(uint offset, out string typeName, out string nodeName)");
             text.AppendLine("            => __blob.Describe(offset, out typeName, out nodeName);");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Чужой домен здесь не компилируется — это единственная проверка, работающая всегда.</summary>");
+            text.AppendLine("        /// <summary>A foreign domain does not compile here — this is the only check that always works.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.Append("        public ref readonly T Read<T>(uint offset) where T : unmanaged, ")
                 .Append(domainFull).AppendLine();
@@ -333,7 +335,7 @@ namespace Blobcheg.CodeGen
             source.AddSource(symbol.Name + ".blobcheg.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
         }
 
-        // ---------------------------------------------------------------- роутер
+        // ---------------------------------------------------------------- router
 
         static void EmitRouter(SourceProductionContext source, GeneratorAttributeSyntaxContext ctx, Model model)
         {
@@ -352,7 +354,7 @@ namespace Blobcheg.CodeGen
             if (router.Dbs.Count == 0)
             {
                 source.ReportDiagnostic(Diagnostic.Create(RouterClash, declaration.Identifier.GetLocation(),
-                    symbol.Name, "ни одна база в него не вступила — назови член в [Blobcheg(typeof(...), \"имя\")]"));
+                    symbol.Name, "not a single base joined it — name the member in [Blobcheg(typeof(...), \"name\")]"));
                 return;
             }
 
@@ -370,14 +372,14 @@ namespace Blobcheg.CodeGen
                 if (!domains.Add(db.DomainMetadata))
                 {
                     source.ReportDiagnostic(Diagnostic.Create(RouterClash, declaration.Identifier.GetLocation(),
-                        symbol.Name, $"домен '{db.DomainMetadata}' вступил в него дважды"));
+                        symbol.Name, $"domain '{db.DomainMetadata}' joined it twice"));
                     return;
                 }
 
                 if (!members.Add(db.Member))
                 {
                     source.ReportDiagnostic(Diagnostic.Create(RouterClash, declaration.Identifier.GetLocation(),
-                        symbol.Name, $"имя члена '{db.Member}' занято дважды"));
+                        symbol.Name, $"the member name '{db.Member}' is taken twice"));
                     return;
                 }
             }
@@ -393,8 +395,8 @@ namespace Blobcheg.CodeGen
             var enumName = symbol.Name + "Db";
             var rowName = symbol.Name + "Row";
 
-            // enum бит: ширина по числу баз — она же ширина маски в файле.
-            text.AppendLine("    /// <summary>Базы роутера. Номер бита — позиция домена в отсортированном списке.</summary>");
+            // The bit enum: its width follows the number of bases — the same width the mask has in the file.
+            text.AppendLine("    /// <summary>The bases of the router. The bit number is the position of the domain in the sorted list.</summary>");
             text.AppendLine("    [global::System.Flags]");
             text.Append("    ").Append(access).Append(" enum ").Append(enumName).Append(" : ")
                 .AppendLine(EnumBase(maskWidth));
@@ -405,7 +407,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    }");
             text.AppendLine();
 
-            text.AppendLine("    /// <summary>Одна нода во всех базах роутера сразу.</summary>");
+            text.AppendLine("    /// <summary>One node across all the bases of the router at once.</summary>");
             text.Append("    ").Append(access).Append(" readonly struct ").AppendLine(rowName);
             text.AppendLine("    {");
             text.AppendLine("        readonly global::Blobcheg.BlobchegRouterRow __row;");
@@ -418,11 +420,11 @@ namespace Blobcheg.CodeGen
             {
                 var db = router.Dbs[i];
                 text.AppendLine();
-                text.Append("        /// <summary>Есть ли запись ноды в базе ").Append(db.DbName).AppendLine(".</summary>");
+                text.Append("        /// <summary>Whether the node has a record in base ").Append(db.DbName).AppendLine(".</summary>");
                 text.Append("        public bool Has").Append(Pascal(db.Member)).Append(" => __row.Has(").Append(i).AppendLine(");");
                 text.AppendLine();
-                text.Append("        /// <summary>Оффсет записи в базе ").Append(db.DbName)
-                    .AppendLine("; записи нет — бросает.</summary>");
+                text.Append("        /// <summary>The offset of the record in base ").Append(db.DbName)
+                    .AppendLine("; if there is no record it throws.</summary>");
                 text.Append("        public uint ").Append(db.Member).Append(" => __row.Offset(").Append(i).AppendLine(");");
             }
 
@@ -434,7 +436,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    {");
             text.Append("        public const string RouterName = \"").Append(symbol.Name).AppendLine("\";");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Хеш нумерации бит. Файл, собранный под другой набор баз, не поднимется.</summary>");
+            text.AppendLine("        /// <summary>The hash of the bit numbering. A file assembled for a different set of bases will not load.</summary>");
             text.Append("        public const ulong LayoutHash = 0x").Append(layoutHash.ToString("X16")).AppendLine("UL;");
             text.AppendLine();
             text.Append("        public const int DomainCount = ").Append(router.Dbs.Count).AppendLine(";");
@@ -446,29 +448,29 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            __router = new global::Blobcheg.BlobchegRouterBlob(buffer, RouterName, DomainCount, LayoutHash);");
             text.AppendLine("        }");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Имя файла роутера — его же спрашивает транспорт.</summary>");
+            text.AppendLine("        /// <summary>The file name of the router — the transport asks for the same one.</summary>");
             text.AppendLine("        public static string FileName => global::Blobcheg.BlobchegNaming.FileName(RouterName);");
             text.AppendLine();
             text.AppendLine("        public string Name => RouterName;");
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __router.IsCreated;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Строк, то есть нод. Он же потолок номера строки в валидном id.</summary>");
+            text.AppendLine("        /// <summary>Rows, that is, nodes. Also the ceiling of the row number in a valid id.</summary>");
             text.AppendLine("        public int Count => __router.Count;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Тег этого роутера — старший байт id, которые он раздаёт.</summary>");
+            text.AppendLine("        /// <summary>The tag of this router — the high byte of the ids it hands out.</summary>");
             text.AppendLine("        public byte Tag => __router.Tag;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Id строки по её номеру — так роутер обходят целиком. Диапазон проверяет Get.</summary>");
+            text.AppendLine("        /// <summary>The id of a row by its number — that is how the router is walked whole. Get checks the range.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.AppendLine("        public global::Blobcheg.BlobchegId IdAt(uint index) => __router.IdAt(index);");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Строка ноды. Неизвестный id — бросает.</summary>");
+            text.AppendLine("        /// <summary>The row of a node. An unknown id throws.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.Append("        public ").Append(rowName).Append(" Get(global::Blobcheg.BlobchegId id) => new ")
                 .Append(rowName).AppendLine("(__router.Get(id));");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Строка ноды без исключений: неизвестный id — false.</summary>");
+            text.AppendLine("        /// <summary>The row of a node without exceptions: an unknown id gives false.</summary>");
             text.Append("        public bool TryGet(global::Blobcheg.BlobchegId id, out ").Append(rowName).AppendLine(" row)");
             text.AppendLine("        {");
             text.AppendLine("            if (!__router.TryGet(id, out var found))");
@@ -487,13 +489,13 @@ namespace Blobcheg.CodeGen
                 var pascal = Pascal(db.Member);
 
                 text.AppendLine();
-                text.Append("        /// <summary>Оффсет в базе ").Append(db.DbName)
-                    .AppendLine(". Неизвестный id или отсутствие записи — бросает.</summary>");
+                text.Append("        /// <summary>The offset in base ").Append(db.DbName)
+                    .AppendLine(". An unknown id or a missing record throws.</summary>");
                 text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
                 text.Append("        public uint Get").Append(pascal)
                     .Append("(global::Blobcheg.BlobchegId id) => __router.Get(id).Offset(").Append(i).AppendLine(");");
                 text.AppendLine();
-                text.AppendLine("        /// <summary>То же без исключений: не бросает никогда.</summary>");
+                text.AppendLine("        /// <summary>The same without exceptions: it never throws.</summary>");
                 text.Append("        public bool TryGet").Append(pascal)
                     .AppendLine("(global::Blobcheg.BlobchegId id, out uint offset)");
                 text.AppendLine("        {");
@@ -523,12 +525,12 @@ namespace Blobcheg.CodeGen
             source.AddSource(symbol.Name + ".blobcheg.router.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
         }
 
-        // ---------------------------------------------------------------- таблица хешей
+        // ---------------------------------------------------------------- hash table
 
         /// <summary>
-        /// Партиал таблицы хешей. Она объявляется отдельно от роутера и знает о нём ровно три
-        /// константы: имя, число баз и хеш нумерации бит. Номера бит здесь те же, что у роутера, —
-        /// оба считаются из одного отсортированного списка баз.
+        /// The partial of a hash table. It is declared apart from the router and knows exactly three
+        /// constants about it: the name, the number of bases and the hash of the bit numbering. The bit
+        /// numbers here are the same as in the router — both are computed from one sorted list of bases.
         /// </summary>
         static void EmitHashes(SourceProductionContext source, GeneratorAttributeSyntaxContext ctx, Model model)
         {
@@ -550,15 +552,15 @@ namespace Blobcheg.CodeGen
             {
                 source.ReportDiagnostic(Diagnostic.Create(HashesNoRouter, declaration.Identifier.GetLocation(),
                     symbol.Name, routerSymbol.Name,
-                    "он не помечен [BlobchegRouter] в этой сборке. Роутер, его базы и его таблица " +
-                    "обязаны лежать в одной сборке: генератор видит только свою компиляцию"));
+                    "it is not marked [BlobchegRouter] in this assembly. A router, its bases and its table " +
+                    "are obliged to lie in one assembly: the generator sees only its own compilation"));
                 return;
             }
 
             if (router.Dbs.Count == 0)
             {
                 source.ReportDiagnostic(Diagnostic.Create(HashesNoRouter, declaration.Identifier.GetLocation(),
-                    symbol.Name, routerSymbol.Name, "в него не вступила ни одна база — маршрутизировать нечего"));
+                    symbol.Name, routerSymbol.Name, "not a single base joined it — there is nothing to route"));
                 return;
             }
 
@@ -576,10 +578,10 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    {");
             text.Append("        public const string RouterName = \"").Append(router.Name).AppendLine("\";");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Личность файла таблицы: имя роутера плюс суффикс.</summary>");
+            text.AppendLine("        /// <summary>The identity of the table file: the router name plus the suffix.</summary>");
             text.Append("        public const string FileIdentity = \"").Append(router.Name).AppendLine("Hashes\";");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Хеш нумерации бит роутера: таблица и роутер обязаны быть одной сборки.</summary>");
+            text.AppendLine("        /// <summary>The hash of the router bit numbering: the table and the router must be of one build.</summary>");
             text.Append("        public const ulong LayoutHash = 0x").Append(layoutHash.ToString("X16")).AppendLine("UL;");
             text.AppendLine();
             text.Append("        public const int DomainCount = ").Append(router.Dbs.Count).AppendLine(";");
@@ -592,23 +594,23 @@ namespace Blobcheg.CodeGen
             text.AppendLine("                buffer, FileIdentity, RouterName, DomainCount, LayoutHash);");
             text.AppendLine("        }");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Имя файла таблицы — его же спрашивает транспорт.</summary>");
+            text.AppendLine("        /// <summary>The file name of the table — the transport asks for the same one.</summary>");
             text.AppendLine("        public static string FileName => global::Blobcheg.BlobchegNaming.FileName(FileIdentity);");
             text.AppendLine();
             text.AppendLine("        public bool IsCreated => __hashes.IsCreated;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Строк, то есть нод роутера, включая дырки от удалённых.</summary>");
+            text.AppendLine("        /// <summary>Rows, that is, nodes of the router, including the holes left by deleted ones.</summary>");
             text.AppendLine("        public int Count => __hashes.Count;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Тег роутера — старший байт id, которые отдаёт эта таблица.</summary>");
+            text.AppendLine("        /// <summary>The router tag — the high byte of the ids this table hands out.</summary>");
             text.AppendLine("        public byte Tag => __hashes.Tag;");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Id ноды по хешу её имени. Неизвестный хеш — бросает.</summary>");
+            text.AppendLine("        /// <summary>The id of a node by the hash of its name. An unknown hash throws.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.AppendLine("        public global::Blobcheg.BlobchegId GetId(ulong hash)");
             text.AppendLine("            => global::Blobcheg.BlobchegId.Make(__hashes.Tag, __hashes.GetRow(hash));");
             text.AppendLine();
-            text.AppendLine("        /// <summary>То же без исключений: ноды с таким именем больше нет — false.</summary>");
+            text.AppendLine("        /// <summary>The same without exceptions: there is no node with that name any more — false.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.AppendLine("        public bool TryGetId(ulong hash, out global::Blobcheg.BlobchegId id)");
             text.AppendLine("        {");
@@ -622,13 +624,13 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            return true;");
             text.AppendLine("        }");
             text.AppendLine();
-            text.AppendLine("        /// <summary>Хеш имени ноды по её id. Дырка от удалённой — ноль.</summary>");
+            text.AppendLine("        /// <summary>The hash of a node's name by its id. A hole from a deleted one is zero.</summary>");
             text.AppendLine("        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             text.AppendLine("        public ulong HashOf(global::Blobcheg.BlobchegId id)");
             text.AppendLine("        {");
             text.AppendLine("            if (id.Tag != __hashes.Tag)");
             text.AppendLine("                throw new global::System.InvalidOperationException(");
-            text.AppendLine("                    \"Blobcheg.Hashes: этот id выдан другим роутером — здесь он не значит ничего\");");
+            text.AppendLine("                    \"Blobcheg.Hashes: this id was handed out by another router — here it means nothing\");");
             text.AppendLine();
             text.AppendLine("            return __hashes.HashOfRow(id.Index);");
             text.AppendLine("        }");
@@ -639,18 +641,18 @@ namespace Blobcheg.CodeGen
                 var pascal = Pascal(db.Member);
 
                 text.AppendLine();
-                text.Append("        /// <summary>Хеш по адресу записи в базе ").Append(db.DbName)
-                    .AppendLine(". Записи по этому адресу нет — бросает.</summary>");
+                text.Append("        /// <summary>The hash by the address of a record in base ").Append(db.DbName)
+                    .AppendLine(". If there is no record at that address it throws.</summary>");
                 text.Append("        public ulong HashOf").Append(pascal).AppendLine("(uint offset)");
                 text.AppendLine("        {");
                 text.Append("            if (!__hashes.TryHashOfOffset(").Append(i).AppendLine(", offset, out var hash))");
                 text.AppendLine("                throw new global::System.InvalidOperationException(");
-                text.AppendLine("                    \"Blobcheg.Hashes: по этому адресу в этой базе записи нет\");");
+                text.AppendLine("                    \"Blobcheg.Hashes: there is no record at that address in that base\");");
                 text.AppendLine();
                 text.AppendLine("            return hash;");
                 text.AppendLine("        }");
                 text.AppendLine();
-                text.AppendLine("        /// <summary>То же без исключений: не бросает никогда.</summary>");
+                text.AppendLine("        /// <summary>The same without exceptions: it never throws.</summary>");
                 text.Append("        public bool TryHashOf").Append(pascal).AppendLine("(uint offset, out ulong hash)");
                 text.Append("            => __hashes.TryHashOfOffset(").Append(i).AppendLine(", offset, out hash);");
             }
@@ -659,7 +661,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        public void Dispose() => __hashes.Dispose();");
             text.AppendLine("    }");
 
-            // Без BlobchegSweep: в буфер таблицы никто из сущностей не указывает, переселять нечего.
+            // No BlobchegSweep: no entity points into the table buffer, there is nothing to move.
             if (boot)
                 EmitBootSystem(text, symbol.Name, access, autoCreate, false);
 
@@ -668,17 +670,18 @@ namespace Blobcheg.CodeGen
             source.AddSource(symbol.Name + ".blobcheg.hashes.g.cs", SourceText.From(text.ToString(), Encoding.UTF8));
         }
 
-        // ---------------------------------------------------------------- бут
+        // ---------------------------------------------------------------- boot
 
         /// <summary>
-        /// Бут-система выпускается на структуру, объявленную <c>IComponentData</c>: это и есть явный
-        /// опт-ин «хочу её синглтоном». Не объявлена — подъём пишется руками, как в v1.
+        /// A boot system is emitted for a struct declared <c>IComponentData</c>: that is the explicit
+        /// opt-in "I want it as a singleton". Not declared — the load is written by hand, as in v1.
         /// </summary>
         static bool Boot(SourceProductionContext source, INamedTypeSymbol symbol,
             StructDeclarationSyntax declaration, Model model, out bool autoCreate)
         {
-            // [DisableAutoCreation] на базе едет на выпущенную систему: «система нужна, но кто её
-            // создаёт — решаю я». Без этого дефолтный мир поднимал бы базу, которой в нём не место.
+            // A [DisableAutoCreation] on the base travels onto the emitted system: "the system is needed,
+            // but I decide who creates it". Without that the default world would load a base that has no
+            // place in it.
             autoCreate = !symbol.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == DisableAutoCreation);
 
             var component = symbol.AllInterfaces.Any(i => i.ToDisplayString() == ComponentData);
@@ -693,24 +696,25 @@ namespace Blobcheg.CodeGen
         }
 
         /// <summary>
-        /// Только SystemState, EntityManager и EntityQuery: генераторы не видят выход друг друга,
-        /// поэтому SystemAPI в выпущенной системе Unity'шный генератор уже не обработает.
+        /// Only SystemState, EntityManager and EntityQuery: generators do not see each other's output,
+        /// so Unity's generator will no longer process a SystemAPI inside an emitted system.
         ///
-        /// Система живёт и в редакторном мире (WorldSystemFilterFlags.Editor): без базы там любой
-        /// проход патча упирается в «домен не поднят», а сущности сабсцен в редакторном мире есть
-        /// всегда. Из-за этого же она в редакторе не гаснет после подъёма, а сторожит номер своего
-        /// файла: пересборка переписала базу — перечитать и переселить слоты. В плеере всё как было,
-        /// один подъём и выключение.
+        /// The system lives in the editor world too (WorldSystemFilterFlags.Editor): without a base any
+        /// patch pass there runs into "the domain is not loaded", and subscene entities are always
+        /// present in the editor world. For the same reason it does not switch itself off after loading
+        /// in the editor but watches the number of its own file: the rebuild rewrote the base — re-read
+        /// it and move the slots. In the player everything is as it was, one load and off.
         ///
-        /// Переходный отказ (<c>BlobchegTransientException</c>: файла ещё нет, чтение поймало его
-        /// посреди перезаписи) в редакторе не исключение, а варнинг: чинить нечего, пересборка
-        /// допишет файл, и подъём поедет заново сам. В плеере он уезжает наверх, как любой другой.
+        /// A transient failure (<c>BlobchegTransientException</c>: the file is not there yet, the read
+        /// caught it mid-rewrite) is a warning in the editor rather than an exception: there is nothing
+        /// to fix, the rebuild will finish writing the file and the load will run again by itself. In the
+        /// player it travels upwards like any other.
         /// </summary>
         static void EmitBootSystem(StringBuilder text, string typeName, string access, bool autoCreate,
             bool sweep = true)
         {
             text.AppendLine();
-            text.Append("    /// <summary>Подъём '").Append(typeName).AppendLine("' в синглтон. Выпущен кодогеном.</summary>");
+            text.Append("    /// <summary>Loading '").Append(typeName).AppendLine("' into a singleton. Emitted by the codegen.</summary>");
             text.AppendLine("    [global::Unity.Entities.WorldSystemFilter(");
             text.AppendLine("        global::Unity.Entities.WorldSystemFilterFlags.Default | global::Unity.Entities.WorldSystemFilterFlags.Editor)]");
             text.AppendLine("    [global::Unity.Entities.UpdateInGroup(typeof(global::Blobcheg.BlobchegBootGroup))]");
@@ -732,13 +736,13 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        {");
             text.Append("            __load = global::Blobcheg.BlobchegTransport.Default.Read(").Append(typeName)
                 .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
-            // Запрос на запись, а не на чтение: перезаливка кладёт им же новый блоб в синглтон.
+            // A write query and not a read one: the reload puts the new blob into the singleton with it.
             text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadWrite<")
                 .Append(typeName).AppendLine(">());");
             text.AppendLine("#if UNITY_EDITOR");
-            text.AppendLine("            // Номер файла берётся в момент СТАРТА чтения, а не в конце: пересборка, попавшая");
-            text.AppendLine("            // в середину чтения, и есть та, из-за которой оно сорвалось, — и её номер обязан");
-            text.AppendLine("            // остаться неувиденным, иначе перечитывать станет нечего и мир замрёт на прежнем.");
+            text.AppendLine("            // The file number is taken at the START of the read and not at its end: the rebuild that");
+            text.AppendLine("            // landed in the middle of the read is the one that broke it, and its number is obliged to");
+            text.AppendLine("            // stay unseen, otherwise there is nothing left to re-read and the world freezes on the old one.");
             text.Append("            __seen = global::Blobcheg.BlobchegFileVersions.Of(").Append(typeName)
                 .AppendLine(".FileName);");
             text.AppendLine("#endif");
@@ -753,8 +757,8 @@ namespace Blobcheg.CodeGen
             text.AppendLine("                return;");
             text.AppendLine("            }");
             text.AppendLine();
-            text.AppendLine("            // Подъём уже срывался — файл битый. Ждём, пока пересборка перепишет его: без этого");
-            text.AppendLine("            // тот же отказ повторялся бы каждый кадр, а починенный файл не доехал бы до мира.");
+            text.AppendLine("            // The load already broke — the file is bad. We wait for the rebuild to rewrite it: without");
+            text.AppendLine("            // that the same failure would repeat every frame and the repaired file would never reach the world.");
             text.AppendLine("            if (__broken)");
             text.AppendLine("            {");
             text.Append("                if (!global::Blobcheg.BlobchegFileVersions.Changed(").Append(typeName)
@@ -789,8 +793,8 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            if (!__ready)");
             text.AppendLine("                return;");
             text.AppendLine();
-            text.AppendLine("            // Владение буфером ушло из чтения: отобьёт файл конструктор — освободить буфер");
-            text.AppendLine("            // больше некому, и каждая попытка подъёма утекала бы целой базой.");
+            text.AppendLine("            // Ownership of the buffer has left the read: if the constructor rejects the file, there is");
+            text.AppendLine("            // nobody left to free the buffer, and every load attempt would leak a whole base.");
             text.AppendLine("            var __buffer = __load.Acquire();");
             text.Append("            ").Append(typeName).AppendLine(" __value;");
             text.AppendLine("            try");
@@ -820,8 +824,8 @@ namespace Blobcheg.CodeGen
             if (sweep)
             {
                 text.AppendLine();
-                text.AppendLine("            // Сущности, приехавшие раньше базы, ждут ровно этого прохода: их слоты остались");
-                text.AppendLine("            // оффсетами, и теперь есть куда их переводить.");
+                text.AppendLine("            // The entities that arrived before the base are waiting for exactly this pass: their slots");
+                text.AppendLine("            // stayed offsets, and now there is somewhere to translate them onto.");
                 text.AppendLine("            global::Blobcheg.BlobchegSweep.Run(state.EntityManager);");
             }
 
@@ -831,17 +835,17 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        }");
             text.AppendLine();
             text.AppendLine("        /// <summary>");
-            text.AppendLine("        /// Подъём сорвался. Настоящий отказ уезжает наверх один раз, а чтение здесь и");
-            text.AppendLine("        /// кончается: повторять его каждым кадром — это тонуть в пересказе последствий.");
-            text.AppendLine("        /// В плеере файл больше не починится, поэтому система гаснет; в редакторе она ждёт");
-            text.AppendLine("        /// пересборки, которая перепишет файл.");
+            text.AppendLine("        /// The load broke. A real failure travels upwards once, and the read ends right here:");
+            text.AppendLine("        /// repeating it every frame is drowning in a retelling of the consequences.");
+            text.AppendLine("        /// In the player the file will not be repaired any more, so the system switches off; in the");
+            text.AppendLine("        /// editor it waits for the rebuild that will rewrite the file.");
             text.AppendLine("        /// </summary>");
             text.AppendLine("        void __Broke(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");
             text.AppendLine("            __load.Dispose();");
             text.AppendLine("#if UNITY_EDITOR");
-            text.AppendLine("            // Номер файла здесь не трогается: он взят на старте чтения, и пересборка, которая");
-            text.AppendLine("            // это чтение и сорвала, обязана остаться неувиденной — иначе чинить будет нечем.");
+            text.AppendLine("            // The file number is not touched here: it was taken at the start of the read, and the");
+            text.AppendLine("            // rebuild that broke that read is obliged to stay unseen — otherwise there is nothing to repair with.");
             text.AppendLine("            __broken = true;");
             text.AppendLine("#else");
             text.AppendLine("            state.Enabled = false;");
@@ -850,9 +854,9 @@ namespace Blobcheg.CodeGen
             text.AppendLine();
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("        /// <summary>");
-            text.AppendLine("        /// Пересборка переписала файл базы — перечитать его в живой мир. Порядок здесь не");
-            text.AppendLine("        /// вкусовой: новый буфер регистрируется первым, чтобы прежний ушёл в отставные");
-            text.AppendLine("        /// поколения, и только по ним слоты со старыми адресами доедут до новых.");
+            text.AppendLine("        /// The rebuild rewrote the base file — re-read it into the live world. The order here is not");
+            text.AppendLine("        /// a matter of taste: the new buffer is registered first so that the previous one moves into the");
+            text.AppendLine("        /// retired generations, and only through those do slots with old addresses reach the new ones.");
             text.AppendLine("        /// </summary>");
             text.AppendLine("        void __Reraise(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");
@@ -865,7 +869,7 @@ namespace Blobcheg.CodeGen
                 .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
             text.AppendLine("            try");
             text.AppendLine("            {");
-            text.AppendLine("                // В редакторе ждать файл можно: это локальный диск, а не StreamingAssets в APK.");
+            text.AppendLine("                // Waiting for the file is allowed in the editor: this is a local disk, not StreamingAssets in an APK.");
             text.AppendLine("                reload.Complete();");
             text.AppendLine("            }");
             text.AppendLine("            catch (global::Blobcheg.BlobchegTransientException __transient)");
@@ -894,13 +898,13 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            }");
             text.AppendLine("            catch");
             text.AppendLine("            {");
-            text.AppendLine("                // Владение уже ушло из чтения: не освободить буфер здесь — значит утечь базой,");
-            text.AppendLine("                // а прежняя в синглтоне пока цела, и мир едет на ней дальше.");
+            text.AppendLine("                // Ownership has already left the read: not freeing the buffer here means leaking a base,");
+            text.AppendLine("                // while the previous one in the singleton is still whole and the world keeps running on it.");
             text.AppendLine("                buffer.Dispose();");
             text.AppendLine("                throw;");
             text.AppendLine("            }");
             text.AppendLine();
-            text.AppendLine("            // Джобы, читающие прежний буфер, обязаны закончить до того, как он освободится.");
+            text.AppendLine("            // The jobs reading the previous buffer are obliged to finish before it is freed.");
             text.AppendLine("            state.EntityManager.CompleteAllTrackedJobs();");
             text.AppendLine();
             text.Append("            var stale = __query.GetSingleton<").Append(typeName).AppendLine(">();");
@@ -915,10 +919,10 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        }");
             text.AppendLine();
             text.AppendLine("        /// <summary>");
-            text.AppendLine("        /// Перезаливка поймала переходный момент. Номер файла возвращается назад — иначе");
-            text.AppendLine("        /// перечитывать было бы нечего до следующей пересборки, и мир молча остался бы на");
-            text.AppendLine("        /// прежней базе. Варнинг при этом один на полосу: файл дописывается кадр-другой, и");
-            text.AppendLine("        /// пересказывать это каждым кадром — тот же поток, от которого спасает «отбить раз».");
+            text.AppendLine("        /// The reload caught a transient moment. The file number is put back — otherwise there would");
+            text.AppendLine("        /// be nothing to re-read until the next rebuild, and the world would silently stay on the old");
+            text.AppendLine("        /// base. The warning is one per streak: the file is being finished over a frame or two, and");
+            text.AppendLine("        /// retelling that every frame is the same flood that saying it once saves from.");
             text.AppendLine("        /// </summary>");
             text.AppendLine("        void __Retry(global::Blobcheg.BlobchegTransientException __transient, int __was)");
             text.AppendLine("        {");
@@ -931,14 +935,14 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        }");
             text.AppendLine();
             text.AppendLine("        /// <summary>");
-            text.AppendLine("        /// Переходный отказ в редакторе — нотификация, а не проблема: чинить нечего, файл");
-            text.AppendLine("        /// допишет пересборка. Красный error здесь врёт про поломку, которой нет.");
+            text.AppendLine("        /// A transient failure in the editor is a notification and not a problem: there is nothing to");
+            text.AppendLine("        /// fix, the rebuild will finish the file. A red error here lies about a breakage that is not there.");
             text.AppendLine("        /// </summary>");
             text.AppendLine("        static void __Notify(global::Blobcheg.BlobchegTransientException __transient)");
             text.AppendLine("        {");
             text.AppendLine("            global::UnityEngine.Debug.LogWarning(__transient.Message +");
-            text.AppendLine("                \" — это нотификация, а не проблема: в редакторе момент переходный, база\" +");
-            text.AppendLine("                \" поднимется сама, как только пересборка перепишет файл.\");");
+            text.AppendLine("                \" — this is a notification and not a problem: in the editor the moment is transient, the base\" +");
+            text.AppendLine("                \" will load by itself as soon as the rebuild rewrites the file.\");");
             text.AppendLine("        }");
             text.AppendLine("#endif");
             text.AppendLine();
@@ -957,7 +961,7 @@ namespace Blobcheg.CodeGen
             text.AppendLine("    }");
         }
 
-        // ---------------------------------------------------------------- мелочь
+        // ---------------------------------------------------------------- odds and ends
 
         static void Open(StringBuilder text, INamedTypeSymbol symbol, out string space)
         {
@@ -1012,7 +1016,7 @@ namespace Blobcheg.CodeGen
             return char.ToUpperInvariant(member[0]) + member.Substring(1);
         }
 
-        /// <summary>Имя как его видит рефлексия: вложенные через '+'. Едитор считает хеш по нему же.</summary>
+        /// <summary>The name as reflection sees it: nested ones through '+'. The editor computes the hash from the same one.</summary>
         static string MetadataName(INamedTypeSymbol symbol)
         {
             var name = symbol.MetadataName;
@@ -1026,9 +1030,9 @@ namespace Blobcheg.CodeGen
         }
 
         /// <summary>
-        /// fnv1a-64 по доменам и именам членов в порядке бит плюс ширина маски. Продублирован в
-        /// <c>BlobchegRouterFormat.LayoutHash</c> — менять только парно, на этом стоит вся сходимость
-        /// нумерации бит между кодогеном и едитором.
+        /// fnv1a-64 over the domains and the member names in bit order plus the mask width. Duplicated in
+        /// <c>BlobchegRouterFormat.LayoutHash</c> — change only in pairs, the whole agreement of the bit
+        /// numbering between the codegen and the editor stands on this.
         /// </summary>
         static ulong LayoutHash(IReadOnlyList<DbInfo> dbs, int maskWidth)
         {
