@@ -51,9 +51,9 @@ lost.
 
 The same read speed on the hot path and — if the patch is applied — the same mapping on entity import as
 blobs have: the component holds an offset, on the loading of a subscene it is remapped into a pointer to
-the record in the resident buffer, and `.Value` reads the memory directly, without a singleton and
+the record in the resident buffer, and `.Value` reads the memory directly, without a base at hand and
 without an addition. Without the patch the ordinary road stays, "an offset plus `Read<T>`" — the
-singleton of the base and one addition.
+resident view of the base (`Resident`) and one addition.
 
 On top of that, what blobs do not have:
 
@@ -137,8 +137,8 @@ The declaration is an attribute on a partial, the body is written by the generat
 ```
 
 The data is filled in by nodes — `ScriptableObject` assets. A weapon node lays its entity out across the
-bases in one `Write` — a record into each declared domain (the node class lives in an Editor-only
-assembly, because `BlobchegNodeSo` lies in `Blobcheg.Authoring`):
+bases in one `Write` — a record into each declared domain (the node class lives in any assembly that
+references `Blobcheg.Authoring`, where `BlobchegNodeSo` lies):
 
 ```csharp
 [CreateAssetMenu(menuName = "Game/Weapon")]
@@ -185,7 +185,7 @@ different, and `Read<T>` will not let them be mixed up.
 Next come all the ways to reach a record, in ascending order.
 
 **An offset without the patch.** The record is picked in the inspector with a typed field, the baker
-puts a bare `uint` into the component, and the read is the singleton of the base plus one addition:
+puts a bare `uint` into the component, and the read is the resident view of the base plus one addition:
 
 ```csharp
 public sealed class TurretAuthoring : MonoBehaviour
@@ -323,7 +323,7 @@ Only two things are switched on separately:
 
 | What | How | Why |
 |---|---|---|
-| The automatic loading of bases in ECS | reference the `Blobcheg.Entities` assembly | the codegen will emit a boot system |
+| The automatic loading of bases in ECS | `AutoLoad = true` in the attribute + reference the `Blobcheg.Entities` assembly | the codegen will emit a boot system |
 | The `BlobchegReference<T>` patch | a fork of `com.unity.entities` + the `BLOBCHEG_ENTITIES_PATCH` define | a reference in a component becomes a pointer |
 | Name hashes | reference the `Blobcheg.Hashes` assembly | `[BlobchegHashes]` and its file appear |
 
@@ -346,10 +346,12 @@ public struct GunData : IHotPathCombatData
 public partial struct CombatDb { }   // the ctor, Read<T>, Dispose and FileName are written by the generator
 ```
 
-### 2. The node — in an Editor-only assembly
+### 2. The node — in an assembly that references `Blobcheg.Authoring`
 
-`BlobchegNodeSo` lives in `Blobcheg.Authoring`, and that one is Editor-only. So the node class has to lie
-in an assembly with `includePlatforms: ["Editor"]`.
+`BlobchegNodeSo` lives in `Blobcheg.Authoring`, a runtime assembly that holds only the node contract; the
+rebuild and the editor tooling are in the Editor-only `Blobcheg.Authoring.Editor`. A node class can
+therefore lie in a runtime assembly, and every assembly that touches a node type has to reference
+`Blobcheg.Authoring` (otherwise `CS0012`).
 
 ```csharp
 [CreateAssetMenu(menuName = "Combat/Gun")]
@@ -387,18 +389,21 @@ public sealed class WeaponAuthoring : MonoBehaviour
 
 ### 4. Loading the base
 
-On Entities it is enough to declare the base an `IComponentData` — the system is emitted by the codegen:
+On Entities it is enough to set `AutoLoad = true` — the system is emitted by the codegen:
 
 ```csharp
-[Blobcheg(typeof(IHotPathCombatData))]
-public partial struct CombatDb : IComponentData { }
+[Blobcheg(typeof(IHotPathCombatData), AutoLoad = true)]
+public partial struct CombatDb { }
 ```
 
-Without Entities the loading is written by hand, see [Loading a base](#loading-a-base).
+Without Entities the loading is written by hand, see [Loading a base](#loading-a-base). A base is not
+a world citizen: declaring it `IComponentData` is the compilation error `BCHG011`; the loaded base is
+reached through `Resident` instead.
 
 ### 5. Reading
 
 ```csharp
+var db = CombatDb.Resident;   // the loaded base, from any thread and from Burst
 ref readonly var gun = ref db.Read<GunData>(weapon.gun);
 ```
 
@@ -557,13 +562,35 @@ when the address of the record moves.
 
 ### On Entities — by codegen
 
-Declare the base or the router an `IComponentData` and reference the `Blobcheg.Entities` assembly. The
-generator will emit a `{Name}BootSystem` in the `BlobchegBootGroup` group.
+Set `AutoLoad = true` on the attribute of the base, the router or the table and reference the
+`Blobcheg.Entities` assembly. The generator will emit a `{Name}BootSystem` in the `BlobchegBootGroup`
+group; the loaded blob is held by that system, not by the world — there is no singleton and no
+component.
 
 ```csharp
-[Blobcheg(typeof(IHotPathCombatData), "combatData")]
-public partial struct CombatDb : IComponentData { }   // CombatDbBootSystem is emitted by the codegen
+[Blobcheg(typeof(IHotPathCombatData), "combatData", AutoLoad = true)]
+public partial struct CombatDb { }   // CombatDbBootSystem is emitted by the codegen
 ```
+
+The door to the loaded data is `Resident`. On a router it is the only door its bases need: the row by
+id, and the typed view of every member base as a property. The view is assembled from the process
+registry (`BlobchegBases`) by keys the generator bakes as constants (`DomainKey` on a base, `RouterKey`
+on a router, `HashesKey` on a table) — there is no world in the road, so it works from managed code and
+from a Burst job alike:
+
+```csharp
+var router = GameRouter.Resident;
+var row = router.Get(id);
+ref readonly var hot = ref router.CombatData.Read<WeaponHotData>(row.combatData);
+
+var save = GameHashes.Resident;                     // the table has its own Resident
+var alone = SettingsDb.Resident;                    // a base OUTSIDE any router gets its own too;
+                                                    // a router member (CombatDb here) has no Resident
+```
+
+A readiness gate does not need a new API: `BlobchegBases.Has(CombatDb.DomainKey)` answers "is the file
+up". The keys share one registry with the bases — its ceiling of 64 entries now counts bases, routers
+and tables together.
 
 `BlobchegBootGroup` stands at the beginning of `InitializationSystemGroup` (`OrderFirst`) and **before**
 `BeginInitializationEntityCommandBufferSystem`: the systems that need the base are obliged to see it
@@ -572,8 +599,9 @@ earlier than their own entities.
 A `[DisableAutoCreation]` on the base itself travels onto the emitted system — "the system is needed, but
 who creates it is my decision". Nobody forbids a loading system of your own: put it into the same group.
 
-There is no reference to `Blobcheg.Entities` while `IComponentData` is declared — the compilation error
-`BCHG008`.
+There is no reference to `Blobcheg.Entities` while `AutoLoad` is set — the compilation error `BCHG008`.
+A base, a router or a table declared `IComponentData` — the compilation error `BCHG011`: the world does
+not hold the data, the loader does.
 
 ### By hand
 
@@ -581,6 +609,7 @@ There is no reference to `Blobcheg.Entities` while `IComponentData` is declared 
 public partial struct CombatDbBootSystem : ISystem
 {
     BlobchegLoad load;
+    CombatDb value;
     bool created;
 
     public void OnCreate(ref SystemState state)
@@ -591,14 +620,14 @@ public partial struct CombatDbBootSystem : ISystem
         // The bare road: a refusal here is obliged to switch the system off — see "A broken file is rejected once".
         if (!load.Poll()) return;
 
-        state.EntityManager.CreateSingleton(new CombatDb(load.Acquire()));
+        value = new CombatDb(load.Acquire());   // the constructor registers the buffer — Resident works from here
         created = true;
         state.Enabled = false;
     }
 
     public void OnDestroy(ref SystemState state)
     {
-        if (created) SystemAPI.GetSingleton<CombatDb>().Dispose();
+        if (created) value.Dispose();
         else load.Dispose();
     }
 }
@@ -620,7 +649,7 @@ there) the loading works differently:
   always there, and without the base any pass of the patch runs into "the domain is not loaded";
 - after the loading the boot system does not switch itself off, it watches the number of its file in
   `BlobchegFileVersions`;
-- the file was rewritten — it re-reads it, puts the new blob into the singleton and runs
+- the file was rewritten — it re-reads it, swaps its held blob for the new one and runs
   `BlobchegSweep.Run`, which moves the slots of the entities from the previous buffer onto the new one;
 - "the domain is not loaded" does not throw on the live road in the editor: the slot stays an offset and
   will reach its address with the very first pass after the base is loaded. In the player it is still an
@@ -647,8 +676,8 @@ itself off in the editor and to add the re-read:
         var fresh = new CombatDb(reload.Acquire());
 
         state.EntityManager.CompleteAllTrackedJobs();   // the jobs have finished reading the previous buffer
-        SystemAPI.GetSingleton<CombatDb>().Dispose();   // and only now may it be freed
-        SystemAPI.SetSingleton(fresh);
+        value.Dispose();                                // and only now may it be freed
+        value = fresh;
 
         BlobchegSweep.Run(state.EntityManager);
     }
@@ -756,7 +785,8 @@ uint offset = router.GetCombatData(id);                // throws both on the id 
 if (router.TryGetCombatData(id, out offset)) { ... }   // never throws
 ```
 
-A router lives as a singleton, exactly like a base.
+A router is reached through `GameRouter.Resident`, exactly like a base outside a router — and its
+member bases through the typed view properties on it (`router.CombatData`).
 
 ### How `BlobchegId` is arranged
 
@@ -779,6 +809,13 @@ An id is the position of a row and not a hash. Editing the values does not move 
 and deletions: an id handed out once lies on the carrier of the node and is inherited by the next
 rebuild, a new node sits down at the tail, a deleted one leaves an empty row behind it. Only the
 [compaction](#compaction) removes the holes.
+
+The row is a field of the id carrier (`row` in the node `.asset`), so it travels in git and a fresh
+checkout hands out the same ids with nothing in `Library`. The carrier also names its `owner` — the GUID
+the row was handed to — so a duplicated asset, which copies the carrier, sits down at the tail as a
+newcomer and the original keeps its row. Two branches that each added a node onto the same row are
+settled by GUID: the lower one keeps it, the other one moves to the tail and the log says `moved`. Nothing remembers the rows past the last held one: when
+the node at the very tail is deleted, the next newcomer takes its row.
 
 A node learns its id **before the write**, so it can put it right into the record in one pass:
 
@@ -825,8 +862,8 @@ The flag switched on for a router that has already handed out numbers **moves** 
 stronger than a journal. The rebuild writes a line into the log for every node that moved (was → became)
 and counts them in the `MovedIds` of the report. A moved id is a different node in a baked subscene and
 in someone else's save, so the numbers are taken from the current manifest of the router
-(`Assets/Blobcheg/<Router>.asset`, where the nodes lie in the order of their ids) and exactly those are
-declared.
+(`BlobchegManifests.Of("<Router>")`, where the nodes lie in the order of their ids) and exactly those
+are declared.
 
 ### LayoutHash
 
@@ -852,8 +889,8 @@ router have no hashes — there is nothing to unfold into.
 ### The declaration
 
 ```csharp
-[BlobchegHashes(typeof(GameRouter))]
-public partial struct GameHashes : IComponentData { }   // the body and the boot system are written by the generator
+[BlobchegHashes(typeof(GameRouter), AutoLoad = true)]
+public partial struct GameHashes { }   // the body and the boot system are written by the generator
 ```
 
 A router, its bases and its table are obliged to lie in one assembly — the generator sees only its own
@@ -908,7 +945,7 @@ the paths of both assets in the text: both mean two things with one address in a
 
 ## BlobchegReference: a pointer instead of an offset
 
-An ordinary read costs the singleton of the base and an addition. If that is not enough, a reference can
+An ordinary read costs the registry lookup of the base (`Resident`) and an addition. If that is not enough, a reference can
 be held so that by the moment of the read it already holds the address of the record. That is exactly
 what Unity does with its own `BlobAssetReference`, and the patch is built into the very place where those
 are patched.
@@ -953,8 +990,8 @@ bump.
 
 **The order of loading is the consumer's concern.** The patch does not wait for a base. Entities that
 arrived earlier than their domain are an explicit error with the name of the component and of the domain
-in the text, and not zeroes in the fields. Set a singleton of base readiness and load the subscenes after
-it.
+in the text, and not zeroes in the fields. Gate the subscene loading on base readiness
+(`BlobchegBases.Has(CombatDb.DomainKey)`).
 
 The patch is idempotent and outlives a rebuild under a live editor: the previous addresses are moved onto
 the new buffer.
@@ -983,54 +1020,160 @@ lies.
 
 ### When it happens
 
-| The event | What it does |
-|---|---|
-| the import, the move or the deletion of a node | an incremental rebuild |
-| entering PlayMode | an incremental rebuild; if it failed, PlayMode does not start |
-| the pre-build (`callbackOrder = -10000`) | a compaction, then a double full rebuild with a demand of idempotency |
-| `Tools → Blobcheg → Rebuild bases` | a full rebuild at a human's demand |
-| `Tools → Blobcheg → Compact bases` | a compaction at a human's demand |
+Nothing happens on an import. The bases are brought up to date by whoever reads them, and "are they
+current" is answered by a hash of what they were built from, not by an event:
 
-The first three events are about changed assets. Files are lost past the assets too: artifacts wiped out
-with a warm Library (`git clean -X`, a fresh worktree) do not make a single node dirty, and the
-automation has nothing to rebuild although there is nowhere to write. That is what the menu command is
-for — it does not move the addresses and the ids, only the compaction moves those.
+| The reader | What it does |
+|---|---|
+| a base is opened — PlayMode, a test, a live world | checks the key, rebuilds what diverged |
+| an address or an id is asked for — the bake, a picker | the same check |
+| `Tools/Blobcheg/Inspector` gets the focus | the same check |
+| the pre-build (`callbackOrder = -10000`) | a full rebuild, the debug contour off for a release player |
+| `Tools → Blobcheg → Rebuild bases` | a full rebuild at a human's demand |
+| `Tools → Blobcheg → Why would it rebuild` | the reason and the nodes, into the log, changing nothing |
+| `Tools → Blobcheg → Work as in a player` | the player path in the editor: everything anew without the contour |
+
+### The key
+
+```
+key = H( the version of the index,
+         the debug contour,
+         the hash of every assembly of Library/ScriptAssemblies,
+         for every node by guid: the hash of its asset + the hash of every asset it reads )
+```
+
+What a node reads is `AssetDatabase.GetDependencies(path, recursive)`, and that list lies in the index
+next to the key: walking it costs 2.4 s on 117 nodes, and a check that costs that is a check nobody
+runs. The list of a node is refreshed by the rebuild that wrote it. Scripts are left out — a code edit
+is a domain reload, and the hash of the assemblies has it.
+
+The check costs 55-80 ms on 117 nodes, and 370 ms the first time in a fresh domain — there it also
+reads the index and hashes the assemblies. Between two imports it costs nothing at all: only an import
+voids the memo of the last answer. Typing into a field, dragging an object in a scene or any other edit
+in memory costs the package 0 ms: the bases follow Ctrl+S, not the screen (measured: 1-3 ms a frame
+while a scene object moves and a node field changes every frame, against 72-1500 ms before).
+
+### What the check decides
+
+| What moved | What is rebuilt |
+|---|---|
+| the hash of a node or of something it reads | that node |
+| the set of nodes, the code, the contour, the version of the index | everything |
+| a file of the output is not on disk | everything |
+
+### Every case a dependency can change in
+
+| The case | What catches it | The test |
+|---|---|---|
+| a node is edited in the inspector and not saved | nothing until Ctrl+S; a rebuild neither writes nor saves it | `An_unsaved_node_rebuilds_nothing_and_stays_unsaved` |
+| a node asset is created while the search index still lags | the `.asset` paths the import wrote down | `A_new_node_gets_its_record` |
+| an asset the node reads is edited and not saved | nothing until Ctrl+S, then its dependency hash | `An_unsaved_edit_of_a_dependency_waits_for_the_save` |
+| an address moves while a node behind it is unsaved | that node is not reimported (a reimport would save it); its own save declares the new numbers | `A_moved_address_saves_no_unsaved_node_and_catches_up_on_its_save` |
+| an asset the node reads is saved, reimported, checked out or merged | its dependency hash | `Editing_a_foreign_asset_reaches_the_record`, `A_reader_of_the_base_picks_up_the_foreign_edit` |
+| an asset the node reads is deleted | the same hash, gone to zero | `Deleting_a_foreign_asset_reaches_the_record` |
+| a node is deleted | its hash goes to zero and the set of guids moves | `A_deleted_node_takes_its_record_away` |
+| a node is renamed or moved | the path inside the hash of the node, and no address moves | `A_rename_breaks_no_reader_and_moves_no_address` |
+| a node reads through another asset, two steps deep | the walk of dependencies is recursive | `A_dependency_of_a_dependency_reaches_the_record` |
+| a node reads a path no reference points at | `CollectExtraDependencies` | `A_path_the_node_reads_past_a_reference_reaches_the_record` |
+| the files are wiped past the assets | the list of the output files | `A_wiped_file_is_assembled_again` |
+| a domain reload: nothing is remembered any more | the index outlives the domain | `A_foreign_edit_lands_when_nothing_is_remembered` |
+| nobody touched anything | the key agrees and there is no work | `Nothing_changed_means_no_work_at_all` |
+
+The fixtures of the whole pipeline — dependencies, the rebuild, routers, fixed indices, hashes, the boot
+system — run twice, as `Editor` and as `AsInPlayer`: the second pass builds the files without the debug
+contour, the way a release player gets them, and every case above is obliged to hold there too.
+`BlobchegModeTests` adds what only the switch can break: the player mode moves no address and no id, and
+a reader flipping the mode rebuilds by itself in both directions.
+
+What is edited and not saved is none of the package's business: the check reads hashes of what lies
+on disk, and the reimport of moved numbers skips an unsaved node (an import of a dirty asset writes it).
+One hole stays: a rebuild that wrote carriers or names (a new node, a rename) has to save, and Unity
+has no save of a single file — `SaveAssetIfDirty` writes every dirty asset, measured. The price of the
+whole rule is a live PlayMode tweak of a node: it reaches the world on Ctrl+S.
+
+Four cases have no test and are closed by construction: an edit of the code (`Write`, the ENV of the
+rift compiler, a record struct, the codegen, the package itself) and the appearance of a domain or a
+router both move the hash of the assemblies; a branch switch is a mass import, that is the hashes of
+the nodes; an asset in `Packages/` instead of `Assets/` is what `GetDependencies` returns anyway.
+The first of them is seen in the log of every editor start after a recompilation: `full rebuild (the
+code changed, a base is being read)`.
 
 ### The API
 
 ```csharp
-BlobchegBuild.RebuildAll();          // incrementally: unchanged nodes hand out their previous bytes
-BlobchegBuild.RebuildFull();         // the cache is forgotten, the project is walked, Write is called on everyone
-BlobchegBuild.Compact();             // the layout from scratch: the holes disappear, the addresses and the ids are handed out anew
-BlobchegBuild.RequireUpToDate(what); // rebuild twice and demand that the second pass changed nothing
+BlobchegFreshness.Ensure(trigger);   // the entry point of a reader: the check, and a rebuild if it diverged
+BlobchegFreshness.Explain();         // why a rebuild would run right now, node by node
+BlobchegFreshness.Key;               // the build key, the one RegisterCustomDependency is given
+BlobchegBuild.RebuildAll(trigger);   // the same dirty set, but the rebuild runs in any case
+BlobchegBuild.RebuildFull(trigger);  // everything anew: Write is called on every node
 ```
 
-All four return/use a `BlobchegBuildReport` — domains, routers, records, how many files, manifests and
+The `trigger` is what asked for the rebuild — it goes into the log line and answers the second question
+a human asks of a stall: it was blobcheg, and who called it.
+
+All of them return a `BlobchegBuildReport` — domains, routers, records, how many files, manifests and
 carriers were rewritten.
 
-### Compaction
+### The layout
 
-The addresses of the records are stable between rebuilds: editing the values, the appearance and the
-deletion of neighbours do not move a foreign address, so untouched subscenes are not re-baked and a
-rebuilt file can be substituted in a build. The compaction is the only thing that moves every address and
-every id at once. It does not happen by itself: baked subscenes and other people's saves have already
-remembered them. There are exactly two places for it — the pre-build, where everything is re-baked
-afterwards anyway, and the menu command, which a human calls themselves.
+The layout is a pure function of the assets: the records of a base lie in the order of (record type,
+node guid), the rows of a router in the order of the ids, and the ids lie on the carriers. There is no
+journal of handed-out addresses, so every machine computes the same numbers and there is nothing to
+share through git beyond the assets themselves. A record that
+changed size moves everyone behind it — and everything baked against those numbers is rebaked, which is
+what the dependency below is for.
+
+### The dependency of a bake on the numbers
+
+The addresses left the assets, so a record that moves changes no byte a baker can depend on. The node
+asset is made to depend on them instead: `BlobchegNodeDependency`, an `AssetPostprocessor`, declares
+`DependsOnCustomDependency(BlobchegDependencies.NameOf(guid))` on every node asset the index knows, and
+the rebuild registers that name with a hash of what a bake of the node can read — its offsets, record
+types and ids, never the record bytes. When the hash moves, the rebuild reimports that node: its file is
+the same, its artifact is new, and every import that loaded it through `DependsOn` — a subscene bake
+included — is redone by Unity itself. Nothing is asked of a baker beyond the `DependsOn(ref.Asset)` it
+already makes, and nothing of Entities.
+
+A value edit moves no number and rebakes nothing that did not read the edited node. A node the index
+does not know yet (a new asset, a fresh `Library`) is reimported once after its first rebuild, and the
+hashes of the index are taken after that reimport, so it costs no second rebuild.
 
 ### The output
 
 | The path | What |
 |---|---|
-| `Assets/StreamingAssets/Blobcheg/{Domain}.bcheg` | the file of a base |
-| `Assets/StreamingAssets/Blobcheg/{Router}.bcheg` | the file of a router |
-| `Assets/StreamingAssets/Blobcheg/{Router}Hashes.bcheg` | the table of name hashes |
-| `Assets/Blobcheg/{Domain}.asset` | the manifest: the file name, the number of records, the hash, the contents, the build time |
-| `Assets/Blobcheg/{Router}.asset` | the manifest of a router; the nodes are listed in the order of their ids |
-| `Assets/Blobcheg/{Router}Hashes.asset` | the manifest of the table; the nodes in the order of the rows |
-| the sub-assets on the nodes | `BlobchegRefSo` and `BlobchegIdSo` |
+| `Library/Blobcheg/{Domain}.bcheg` | the file of a base |
+| `Library/Blobcheg/{Router}.bcheg` | the file of a router |
+| `Library/Blobcheg/{Router}Hashes.bcheg` | the table of name hashes |
+| `Library/BlobchegEditor/manifests.json` | the manifests of every file at once: the name, the number of records, the hash, the composition, the build time |
+| `Library/BlobchegEditor/stamps.json` | the address, the record type and the revision of every record, the id of every node |
+| `Library/BlobchegEditor/index.json` | what the bases were built from: the key, the nodes, their dependencies |
+| the sub-assets on the nodes | `BlobchegRefSo` and `BlobchegIdSo` — the anchors of identity, a domain or a router name and nothing else |
 
-The files and the manifests are derived from the assets — they do not have to go into git. The carriers
-(the sub-assets) do: they hold the journal of the addresses and the ids that were handed out.
+Everything derived lies in `Library` and never reaches git; the pre-build carries the folder of the
+bases into the `StreamingAssets` of the player. The manifests, the stamps and the index stand in a
+folder of their own because that copy takes the folder of the bases as it is.
+
+### What it says about itself
+
+`Tools → Blobcheg → Say what it does` (on by default, remembered per machine) is the package's only
+channel to the log. It exists for one question asked of the editor log after a stall: was that
+half-second mine, or somebody else's.
+
+One line per unit of work the package started on its own, with its price in milliseconds:
+
+| The line | When |
+|---|---|
+| `rebuild (2 node(s) changed, a base is being read) — 340 ms — domains 12, …` | every rebuild, with its trigger and its report |
+| `candidates for a reference field — 900 ms` | a picker walks the project |
+| `a patch pass over the world — 40 ms — 8 types, 1200 entities` | after every apply of a change set and every load of a base |
+
+Under the line of a rebuild goes its breakdown by section, from the expensive to the cheap — the
+freshness check, the walk over the project, `node.Write`, the flush, the batch of carriers. A unit of
+work cheaper than a millisecond with nothing to show says nothing.
+
+Switching the channel off silences the rebuild report too, and that is deliberate: there is one channel,
+and a package that keeps talking after being told to be quiet is worth nothing.
 
 ### When the rebuild refuses to work
 
@@ -1091,9 +1234,10 @@ router.Describe(id);   // the name of the node
 | `BCHG005` | the router is not `partial` or is nested |
 | `BCHG006` | the router is assembled out of contradictory bases: a domain or a member name twice |
 | `BCHG007` | there are more than 64 bases in the router |
-| `BCHG008` | a base is declared `IComponentData` while the assembly does not reference `Blobcheg.Entities` |
+| `BCHG008` | a base sets `AutoLoad = true` while the assembly does not reference `Blobcheg.Entities` |
 | `BCHG009` | the hash table is not `partial` or is nested |
 | `BCHG010` | something that is not a router of this assembly was passed to `[BlobchegHashes]` |
+| `BCHG011` | a base, a router or a hash table is declared `IComponentData` — the world does not hold the data |
 
 ---
 
@@ -1103,7 +1247,9 @@ router.Describe(id);   // the name of the node
 
 ```csharp
 const string DomainName;                  // the name of the marker interface
+const ulong DomainKey;                    // the registry key — fnv1a-64 of the domain name
 static string FileName { get; }           // "{Domain}.bcheg"
+static Db Resident { get; }               // a base OUTSIDE a router only; router members are reached through the router
 Db(BlobchegBuffer buffer);                // takes the ownership of the buffer, validates the file
 bool IsCreated { get; }
 int Length { get; }
@@ -1118,11 +1264,15 @@ void Dispose();
 ```csharp
 const string RouterName;
 const ulong LayoutHash;
+const ulong RouterKey;                    // the registry key — fnv1a-64 of the router name
+const byte RouterTag;                     // mirrors BlobchegNaming.TagOf
 const int DomainCount;
 static string FileName { get; }
+static Router Resident { get; }           // the loaded router — the single door to it and its bases
 Router(BlobchegBuffer buffer);
 int Count { get; }                        // rows, which are also nodes
 byte Tag { get; }
+{Db} {Member} { get; }                    // the typed view of each member base, one property per base
 BlobchegId IdAt(uint index);
 RouterRow Get(BlobchegId id);             // an unknown id throws
 bool TryGet(BlobchegId id, out RouterRow row);
@@ -1142,8 +1292,11 @@ Plus an `enum {Router}Db` — the flags of the bases — and a `struct {Router}R
 const string RouterName;
 const string FileIdentity;                // "{Router}Hashes"
 const ulong LayoutHash;                   // the same as the router's
+const ulong HashesKey;                    // the registry key — fnv1a-64 of the file identity
+const byte RouterTag;                     // mirrors BlobchegNaming.TagOf
 const int DomainCount;
 static string FileName { get; }
+static Hashes Resident { get; }           // the loaded table
 Hashes(BlobchegBuffer buffer);
 int Count { get; }                        // the rows of the router, holes included
 byte Tag { get; }
@@ -1174,14 +1327,17 @@ caught it in the middle of a rewrite. A descendant of `InvalidOperationException
 ### The rebuild (Editor)
 
 ```csharp
+void BlobchegFreshness.Ensure(string trigger);   // the check, and a rebuild if the key diverged
+string BlobchegFreshness.Explain();              // why a rebuild would run right now
+Hash128 BlobchegFreshness.Key;                   // the build key
+void BlobchegFreshness.Invalidate();             // void the memo of the last check
 BlobchegBuildReport BlobchegBuild.RebuildAll();
 BlobchegBuildReport BlobchegBuild.RebuildFull();
-BlobchegBuildReport BlobchegBuild.Compact();
-void BlobchegBuild.RequireUpToDate(string what);
+bool BlobchegBuild.AsInPlayer;                   // the player path in the editor, remembered per machine
 IEnumerable<BlobchegRefSo> BlobchegBuild.RefsOf(BlobchegNodeSo node);
 IEnumerable<BlobchegIdSo> BlobchegBuild.IdsOf(BlobchegNodeSo node);
 List<BlobchegNodeSo> BlobchegBuild.FindNodes();
-void BlobchegHooks.MarkDirty();    // mark the domains dirty from tests and tooling
+string BlobchegDependencies.NameOf(string guid);  // the custom dependency of a node asset
 ```
 
 ---
@@ -1192,11 +1348,13 @@ void BlobchegHooks.MarkDirty();    // mark the domains dirty from tests and tool
 |---|---|---|
 | `Blobcheg.Core` | the file format, the transport, the writer, the hashes | all |
 | `Blobcheg.Runtime` | `[Blobcheg]`, `[BlobchegRouter]`, `BlobchegBlob`, `BlobchegRouterBlob`, `BlobchegId`, the reference fields, the generator | all |
-| `Blobcheg.Entities` | `BlobchegBootGroup` | all, only with Entities |
+| `Blobcheg.Entities` | `BlobchegBootGroup`, `BlobchegSweep` | all, only with Entities |
 | `Blobcheg.Entities.Patch` | the `BlobchegReference<T>` patch on import | all, with the Entities fork and the `BLOBCHEG_ENTITIES_PATCH` define |
 | `Blobcheg.Hashes` | `[BlobchegHashes]`, `BlobchegHashKey`, the format and the resident table | all |
-| `Blobcheg.Authoring` | the nodes, the rebuild, the registries of domains and routers, the field pickers | Editor |
-| `Blobcheg.Hashes.Authoring` | the writer of the table, `HashIn`, the post-pass of the rebuild | Editor |
+| `Blobcheg.Authoring` | the node contract: `BlobchegNodeSo`, `BlobchegNodeWriter`, `BlobchegBuilder`, the registries of domains and routers | all |
+| `Blobcheg.Authoring.Editor` | the rebuild (`BlobchegBuild`), the hooks, the carriers, the cache, the menu, the inspector window, the field pickers | Editor |
+| `Blobcheg.Hashes.Authoring` | `HashIn` (`BlobchegNodeHash`) | all |
+| `Blobcheg.Hashes.Authoring.Editor` | the writer of the table, the post-pass of the rebuild | Editor |
 
 `Blobcheg.Entities` and `Blobcheg.Entities.Patch` switch themselves off through `defineConstraints` if
 the Entities package or the define is missing.
@@ -1207,12 +1365,13 @@ the Entities package or the define is missing.
 
 ### The generator
 
-The source is `Authoring/CodeGen~/`, the assembled `Blobcheg.CodeGen.dll` lies in `Runtime/` with the
+The source is `Authoring/CodeGen~/BlobchegGenerator.cs`, the assembled `Blobcheg.CodeGen.dll` lies in `Runtime/` with the
 labels `RoslynAnalyzer` and `RunOnlyOnAssembliesWithReference`, so it is applied to the assemblies that
 reference `Blobcheg.Runtime`.
 
-To rebuild: `dotnet build -c Release` in `Authoring/CodeGen~/`, then copy the DLL into `Runtime/`. Do not
-touch the `.meta` — it holds the labels and the GUID.
+To rebuild: `dotnet build -c Release` of a `Blobcheg.CodeGen.csproj` in `Authoring/CodeGen~/`, then copy
+the DLL into `Runtime/`. The `.csproj` is not in the repository — the root `.gitignore` drops `*.csproj` —
+so it has to be recreated locally. Do not touch the `.meta` — it holds the labels and the GUID.
 
 ### The tests
 
@@ -1220,10 +1379,17 @@ touch the `.meta` — it holds the labels and the GUID.
 unity test <project> --mode EditMode --filter Blobcheg
 ```
 
-The filter is `Blobcheg` and not `Blobcheg.Tests`: the tests of the boot group and of the patch lie in
-separate assemblies (`Blobcheg.Entities.Tests`, `Blobcheg.EntitiesPatch.Tests`), and they switch
-themselves off without Entities and without the define. The package has to be in the `testables` of the
-project manifest.
+The filter is `Blobcheg` and not `Blobcheg.Tests`: the tests of the boot group, the patch and the hashes
+lie in separate assemblies (`Blobcheg.Entities.Tests`, `Blobcheg.EntitiesPatch.Tests`,
+`Blobcheg.Hashes.Tests`), and they switch themselves off without Entities and without the define. Every
+test assembly has `defineConstraints` `UNITY_INCLUDE_TESTS` + `BLOBCHEG_TESTS`: the project needs the
+`BLOBCHEG_TESTS` scripting define and `com.xacce.blobcheg` in the `testables` of `Packages/manifest.json`.
+
+In the RTC project the four test assemblies under `Packages/blobcheg/Tests/` (including the tests of the
+`BlobchegReference` patch) are additionally gated by `defineConstraints: BLOBCHEG_TESTS`. To run them, add
+`BLOBCHEG_TESTS` to `scriptingDefineSymbols` and **remove it after the run**: otherwise the package's test
+domains (`IPatch*`, `ITest*`, `Test*Router*`) travel into the built bases under
+`Assets/StreamingAssets/Blobcheg` and into the game build.
 
 ### The destructive set
 

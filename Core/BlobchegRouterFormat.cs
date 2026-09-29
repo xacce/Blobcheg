@@ -5,27 +5,16 @@ using System.Text;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The format of a router file. The same header as a base, plus a prolog and three arrays: the
-    /// mask of a row, the start of its offsets and the offsets themselves. A row is a node, a bit is a
-    /// base, the offsets are packed one after another, with no holes for bases that hold no node.
-    ///
-    /// The reader does NOT compute the layout: the array offsets lie in the prolog. Otherwise a change
-    /// of layout would quietly send an old reader 16 bytes off instead of failing honestly on the
-    /// version.
-    /// </summary>
+    // Array offsets live in the prolog, so a layout change fails an old reader instead of misreading.
     public static class BlobchegRouterFormat
     {
-        /// <summary>The prolog follows immediately after the header.</summary>
         public const int PrologOffset = BlobchegFormat.HeaderSize;
 
         public const int PrologSize = 32;
 
-        /// <summary>'BRDG' in the byte order of the file — the prolog of the router debug section.</summary>
-        public const uint DebugMagic = 0x47445242;
+        public const uint DebugMagic = 0x47445242; // 'BRDG'
 
-        /// <summary>More than 64 bases in one router is not "too few bits" but a badly sliced project.</summary>
-        public const int MaxDomains = 64;
+        public const int MaxDomains = 64; // more bases in one router means a badly sliced project
 
         public static int MaskWidthFor(int domainCount)
         {
@@ -46,11 +35,7 @@ namespace Blobcheg
                 $"Blobcheg: {domainCount} bases in one router, the ceiling is {MaxDomains}");
         }
 
-        /// <summary>
-        /// The only thing that ties the bit numbering of the codegen to the one of the editor build:
-        /// they arrive at it independently, so the fact that they agree is proven by a hash, not by
-        /// word of honour. The algorithm is duplicated in the generator — change only in pairs.
-        /// </summary>
+        // Proves codegen and editor build agree on bit numbering; duplicated in the generator, edit both.
         public static ulong LayoutHash(IEnumerable<KeyValuePair<string, string>> domainsAndMembers, int maskWidth)
         {
             const ulong offsetBasis = 14695981039346656037;
@@ -81,30 +66,22 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>The prolog of a router file. Exactly <see cref="BlobchegRouterFormat.PrologSize"/> bytes.</summary>
     [StructLayout(LayoutKind.Sequential)]
-    public struct BlobchegRouterProlog
+    public struct BlobchegRouterProlog // exactly BlobchegRouterFormat.PrologSize bytes
     {
-        /// <summary>Rows, that is, nodes of the router. Also the ceiling of the row number in a valid id.</summary>
-        public uint Count;
+        public uint Count; // also the row ceiling of a valid id
 
         public uint DomainCount;
 
-        /// <summary>The hash of the bit numbering: the file and the codegen are obliged to agree.</summary>
         public ulong LayoutHash;
 
         public uint MasksOffset;
         public uint RowStartOffset;
         public uint OffsetsOffset;
 
-        /// <summary>1, 2, 4 or 8 bytes per mask — according to the number of bases.</summary>
         public uint MaskWidth;
 
-        /// <summary>
-        /// The check performed on load, not a hot path. Array bounds are checked against the file
-        /// length: otherwise a broken prolog would send the read into foreign memory on the very first
-        /// <c>Get</c>.
-        /// </summary>
+        // Bounds checked against file length: a broken prolog would read foreign memory on first Get.
         public void Validate(string what, int fileLength, int domainCount, ulong layoutHash)
         {
             if (LayoutHash != layoutHash)

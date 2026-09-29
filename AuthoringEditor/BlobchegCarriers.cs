@@ -3,16 +3,7 @@ using UnityEditor;
 
 namespace Blobcheg.Authoring
 {
-    /// <summary>
-    /// The carriers of the nodes, read once per rebuild: the ref assets with record addresses and the
-    /// id carriers. That is the journal of handed-out addresses — it lies on the nodes themselves,
-    /// travels into git with them and outlives a checkout without a .bcheg, which is why there is no
-    /// separate "node → address" manifest file: it would be a duplicate and an eternal question of
-    /// which of the two is right.
-    ///
-    /// It is read before the layout: the writer needs the address BEFORE Flush, and earlier the carriers
-    /// were fetched after it — one <c>LoadAllAssetsAtPath</c> per record instead of one per node.
-    /// </summary>
+    // Which carrier a node already has: read once, so the rebuild breeds no second one for a pair.
     sealed class BlobchegCarriers
     {
         readonly Dictionary<BlobchegNodeSo, List<BlobchegRefSo>> _refs =
@@ -29,49 +20,6 @@ namespace Blobcheg.Authoring
                 carriers.ReadOne(node);
 
             return carriers;
-        }
-
-        /// <summary>
-        /// The same thing, but the carriers of untouched nodes are taken from the cache: the sub-assets
-        /// of a node are only changed by the rebuild, and it is the rebuild that puts what it wrote into
-        /// the cache.
-        /// </summary>
-        public static BlobchegCarriers Read(IReadOnlyList<BlobchegCache.Entry> entries)
-        {
-            var carriers = new BlobchegCarriers();
-
-            foreach (var entry in entries)
-            {
-                if (!entry.Dirty && Alive(entry.Refs) && Alive(entry.Ids))
-                {
-                    carriers._refs[entry.Node] = entry.Refs;
-                    carriers._ids[entry.Node] = entry.Ids;
-                    continue;
-                }
-
-                carriers.ReadOne(entry.Node);
-            }
-
-            return carriers;
-        }
-
-        /// <summary>
-        /// A reimport may have destroyed the objects the cache holds references to. A destroyed carrier
-        /// compares equal to null, the rebuild decides that there is no carrier and creates a second
-        /// one — which is why such a list is unfit as a whole.
-        /// </summary>
-        static bool Alive<T>(List<T> carriers) where T : UnityEngine.Object
-        {
-            if (carriers == null)
-                return false;
-
-            foreach (var carrier in carriers)
-            {
-                if (carrier == null)
-                    return false;
-            }
-
-            return true;
         }
 
         void ReadOne(BlobchegNodeSo node)
@@ -157,12 +105,5 @@ namespace Blobcheg.Authoring
             if (_ids.TryGetValue(node, out var ids))
                 ids.Remove(carrier);
         }
-
-        /// <summary>The carrier lists of a node — the cache keeps the same ones so as not to read the asset again.</summary>
-        public List<BlobchegRefSo> RefListOf(BlobchegNodeSo node)
-            => _refs.TryGetValue(node, out var found) ? found : new List<BlobchegRefSo>();
-
-        public List<BlobchegIdSo> IdListOf(BlobchegNodeSo node)
-            => _ids.TryGetValue(node, out var found) ? found : new List<BlobchegIdSo>();
     }
 }

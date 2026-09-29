@@ -5,11 +5,13 @@
         "Blobcheg.Core",
         "Blobcheg.Runtime",
         "Blobcheg.Authoring",
+        "Blobcheg.Authoring.Editor",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics",
         "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner"
+        "UnityEditor.TestRunner",
+        "Blobcheg.Hashes.Authoring.Editor"
     ],
     "includePlatforms": [
         "Editor"

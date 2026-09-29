@@ -3,26 +3,9 @@ using System.Text;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The key of a hash table: <c>"{Router}:{Name}"</c>, folded into a <c>ulong</c>. A pure function —
-    /// it needs neither a table, nor a rebuild, nor a loaded base, which is why it is called the same
-    /// way by a node at bake time, by a tool, and by a consumer who keeps the name as a string in a
-    /// config.
-    ///
-    /// There is no domain in the key, on purpose. A hash unfolds into a router row number, and a row is
-    /// a notion of the router: there is one per node regardless of how many domains it writes into. A
-    /// domain in the key would give one node several hashes leading into one and the same row.
-    ///
-    /// The router in the key is mandatory for the same reason the tag lives in <see cref="BlobchegId"/>:
-    /// without it two nodes with the same name in different routers give one hash for two different
-    /// rows.
-    ///
-    /// The algorithm is fnv1a-64, the same as in <see cref="BlobchegNaming.NameHash"/>: there is no
-    /// second family of hashes in the package.
-    /// </summary>
+    // fnv1a-64 of "{Router}:{Name}"; no domain on purpose: a hash names one router row, not a domain.
     public static class BlobchegHashKey
     {
-        /// <summary>The separator between the router name and the node name.</summary>
         public const byte Separator = (byte)':';
 
         const ulong OffsetBasis = 14695981039346656037;
@@ -44,11 +27,7 @@ namespace Blobcheg
 
             Feed(ref hash, Encoding.UTF8.GetBytes(name));
 
-            // Zero is taken: it marks an empty table slot and it is also what any field that has not
-            // been given a hash yet is initialised to. One more step is computed — the product of an odd
-            // number by an odd number is never zero, so the step is exactly one and it is
-            // deterministic.
-            if (hash == 0)
+            if (hash == 0) // zero marks an empty slot / unset field; one odd*odd step never lands on zero
             {
                 hash ^= 0xFF;
                 hash *= Prime;
@@ -57,7 +36,6 @@ namespace Blobcheg
             return hash;
         }
 
-        /// <summary>The router name is taken from the type parameter, not written by hand.</summary>
         public static ulong Of<TRouter>(string name) where TRouter : unmanaged, IBlobchegRouter
             => Of(default(TRouter).Name, name);
 

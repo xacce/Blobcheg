@@ -19,31 +19,22 @@ namespace Blobcheg.Tests
     {
     }
 
-    /// <summary>The router of this assembly. Its own, because a table and a router must be of one compilation.</summary>
-    [BlobchegRouter]
+    [BlobchegRouter] // a table and its router must live in one compilation
     public partial struct TestBootRouter
     {
     }
 
-    /// <summary>
-    /// A table declared <c>IComponentData</c>: the generator emits a
-    /// <c>TestBootHashesBootSystem</c> for it. If it did not, this file does not build.
-    /// </summary>
-    [BlobchegHashes(typeof(TestBootRouter))]
+    [BlobchegHashes(typeof(TestBootRouter), AutoLoad = true)] // emits TestBootHashesBootSystem, or no build
     [DisableAutoCreation]
-    public partial struct TestBootHashes : IComponentData
+    public partial struct TestBootHashes
     {
     }
 
-    /// <summary>
-    /// This router has no nodes in the project and the table is assembled empty — what has to be proven
-    /// here is the load and not the lookup: the lookup is proven in Blobcheg.Hashes.Tests, which has its
-    /// own nodes.
-    /// </summary>
+    // The table is empty here: this proves the load; the lookup is proven in Blobcheg.Hashes.Tests.
     public sealed class BlobchegHashesBootTests
     {
         [Test]
-        public void The_boot_system_loads_the_table_into_a_singleton()
+        public void The_boot_system_loads_the_table_onto_the_register()
         {
             BlobchegBuild.RebuildAll();
 
@@ -51,21 +42,23 @@ namespace Blobcheg.Tests
             try
             {
                 var system = world.CreateSystem<TestBootHashesBootSystem>();
-                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootHashes>());
 
                 var clock = Stopwatch.StartNew();
-                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                while (!BlobchegBases.Has(TestBootHashes.HashesKey) && clock.ElapsedMilliseconds < 5000)
                 {
                     system.Update(world.Unmanaged);
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                    "the boot system is obliged to put the table down as a singleton within five seconds");
+                Assert.That(BlobchegBases.Has(TestBootHashes.HashesKey), Is.True,
+                    "the boot system is obliged to put the table onto the register within five seconds");
 
-                var table = query.GetSingleton<TestBootHashes>();
+                var table = TestBootHashes.Resident;
                 Assert.That(table.IsCreated, Is.True);
                 Assert.That(table.Tag, Is.EqualTo(BlobchegNaming.TagOf(TestBootHashes.RouterName)));
+                Assert.That(TestBootHashes.HashesKey,
+                    Is.EqualTo(BlobchegNaming.NameHash(TestBootHashes.FileIdentity)),
+                    "the generator's fnv1a drifted from BlobchegNaming.NameHash — Resident looks up a key nobody registers");
             }
             finally
             {
@@ -82,24 +75,22 @@ namespace Blobcheg.Tests
             try
             {
                 var system = world.CreateSystem<TestBootHashesBootSystem>();
-                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootHashes>());
 
                 var clock = Stopwatch.StartNew();
-                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                while (!BlobchegBases.Has(TestBootHashes.HashesKey) && clock.ElapsedMilliseconds < 5000)
                 {
                     system.Update(world.Unmanaged);
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "the table did not load — there is nothing further to check");
+                Assert.That(BlobchegBases.Has(TestBootHashes.HashesKey), Is.True, "the table did not load — there is nothing further to check");
 
-                // A rebuild in the editor ends with exactly this: the file number is bumped.
-                BlobchegFileVersions.Bump(TestBootHashes.FileName);
+                BlobchegFileVersions.Bump(TestBootHashes.FileName); // what an editor rebuild ends with
                 system.Update(world.Unmanaged);
 
-                var table = query.GetSingleton<TestBootHashes>();
+                var table = TestBootHashes.Resident;
                 Assert.That(table.IsCreated, Is.True,
-                    "the singleton is obliged to hold the new blob and not the freed old one");
+                    "Resident is obliged to hand out the new blob and not the freed old one");
             }
             finally
             {

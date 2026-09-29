@@ -23,11 +23,7 @@ namespace Blobcheg.Tests
         public BlobchegArray<TestRow> Rows;
     }
 
-    /// <summary>
-    /// Reading a <see cref="BlobchegArray{T}"/> over bytes assembled by hand: the layout of the tail is
-    /// assigned here by the test and not by the builder, so exactly the runtime contract is visible —
-    /// the self-relative offset, emptiness without dereferencing, the refusal on a copy of the record.
-    /// </summary>
+    // Bytes are assembled by hand, not by the builder, so the tests pin the runtime layout contract.
     public sealed class BlobchegArrayTests
     {
         string _dir;
@@ -55,10 +51,7 @@ namespace Blobcheg.Tests
             return (File.ReadAllBytes(Path.Combine(_dir, "ArrayDomain.bcheg")), writer.OffsetOf(ticket));
         }
 
-        /// <summary>
-        /// TestCurve by hand: Levels in [0,4), the array field in [4,12), the float tail from 12.
-        /// The offset is measured from the field address: 12 - 4 = 8.
-        /// </summary>
+        // Levels [0,4), array field [4,12), float tail from 12; the offset is field-relative: 12 - 4 = 8.
         static byte[] CurveBytes(int levels, params float[] values)
         {
             var stream = new MemoryStream();
@@ -134,8 +127,7 @@ namespace Blobcheg.Tests
         [Test]
         public void A_nested_array_is_read()
         {
-            // TestTable by hand: the Rows field in [0,8), the rows in [8,24), their tails from 24.
-            // The offset of every row is measured from the address of its own Cells field.
+            // Rows field [0,8), rows [8,24), tails from 24; each row offset is relative to its Cells field.
             var stream = new MemoryStream();
             var w = new BinaryWriter(stream);
             w.Write(8);     // Rows._offset: the rows lie from 8, the field is at 0
@@ -181,12 +173,7 @@ namespace Blobcheg.Tests
             }
         }
 
-        /// <summary>
-        /// Proof that readonly is placed correctly, from both sides at once: an ordinary read through a
-        /// ref readonly does NOT make a defensive copy (otherwise the tests above would have gone red),
-        /// while an explicit copy into a local variable is caught by the address check, names the type
-        /// and says it is about a copy.
-        /// </summary>
+        // A ref readonly read makes no defensive copy (tests above prove it); an explicit copy must throw.
         [Test]
         public void A_copy_of_the_record_throws_instead_of_handing_out_garbage()
         {

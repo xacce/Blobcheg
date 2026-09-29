@@ -5,21 +5,7 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// A typed variable-length array inside a record: eight bytes — a self-relative offset and a
-    /// length. The offset is measured from the address of THIS field, the tail lies inside the byte
-    /// block of the same record, so the record stays an opaque block that travels through the file as a
-    /// whole: neither Flush, nor integrity, nor the revision, nor the reference patch knows about the
-    /// array.
-    ///
-    /// Every member is readonly on purpose. <see cref="BlobchegBlob.Read{T}"/> hands out a
-    /// <c>ref readonly</c>, and access to a non-readonly member through such a reference is served by
-    /// the compiler with a defensive copy — and a copy has a different address, so a self-relative
-    /// offset taken from it leads nowhere, silently and on the normal path.
-    ///
-    /// Only the record builder in the editor fills the field. A zero offset means an empty array, and
-    /// it is read without dereferencing.
-    /// </summary>
+    // Members stay readonly: a defensive copy via ref readonly would break the self-relative offset.
     public unsafe struct BlobchegArray<T> where T : unmanaged
     {
         internal int _offset;   // bytes from the address of this field to the first element; 0 means empty
@@ -42,12 +28,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// A pointer to the first element — the shape for a hot loop: the address is checked once and
-        /// the loop after that is free. An empty array has no pointer — <c>null</c> without
-        /// dereferencing.
-        /// </summary>
-        public readonly T* GetUnsafePtr()
+        public readonly T* GetUnsafePtr() // for hot loops: the span is checked once, not per element
         {
             if (_length == 0)
                 return null;
@@ -69,13 +50,6 @@ namespace Blobcheg
             CheckSpan(element, element + sizeof(T) - 1);
         }
 
-        /// <summary>
-        /// The first and the last byte of the span are obliged to lie in the buffer of some loaded
-        /// base. Divisibility is checked on the absolute address of the element, not on the offset
-        /// itself: the array field may sit at 4 inside a record while the element is 8 bytes wide, and
-        /// then the offset is not divisible even though the element is aligned correctly — what matters
-        /// is the address that is read from.
-        /// </summary>
         [Conditional("ENABLE_UNITY_COLLECTIONS_CHECKS")]
         readonly void CheckSpan(byte* first, byte* last)
         {
@@ -83,7 +57,7 @@ namespace Blobcheg
                 throw new InvalidOperationException(
                     "Blobcheg: a non-empty array has a zero offset — the field was never filled by a record builder");
 
-            if ((ulong)first % (ulong)UnsafeUtility.AlignOf<T>() != 0)
+            if ((ulong)first % (ulong)UnsafeUtility.AlignOf<T>() != 0) // the address, not the offset: field may sit at 4
                 throw new InvalidOperationException(
                     "Blobcheg: the element address is not a multiple of its type alignment — the array offset is broken");
 
@@ -97,12 +71,7 @@ namespace Blobcheg
                 "address. Hold the record as ref readonly, do not copy it into a local variable");
         }
 
-        /// <summary>
-        /// The managed version of the same error, carrying the element type name: this is the most
-        /// frequent human mistake, and it must be visible without guessing. Under Burst the method is
-        /// discarded — there the literal text above is what throws.
-        /// </summary>
-        [BurstDiscard]
+        [BurstDiscard] // managed message naming T; under Burst the literal above throws
         static void ThrowCopied()
             => throw new InvalidOperationException(
                 $"Blobcheg: the array of '{typeof(T).FullName}' elements is read from a copy of the record — " +

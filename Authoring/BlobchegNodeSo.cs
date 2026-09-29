@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Blobcheg.Authoring
@@ -10,23 +11,24 @@ namespace Blobcheg.Authoring
     /// </summary>
     public abstract class BlobchegNodeSo : ScriptableObject
     {
-        [Tooltip("The stable name of the node. It outlives a rename of the asset, a compaction and the "
-                 + "deletion of neighbours — the hash a save addresses the record with is computed from "
-                 + "it. An empty one is filled once with the asset name; after that the name must not be "
-                 + "changed, other people's saves already remember it.")]
+        [Tooltip("The stable name of the node. It outlives a rename of the asset and the deletion of "
+                 + "neighbours — the hash a save addresses the record with is computed from it. An empty "
+                 + "one is filled once with the asset name; after that the name must not be changed, "
+                 + "other people's saves already remember it.")]
         [SerializeField] string blobchegName;
 
-        /// <summary>
-        /// The stable name of the node. Everything else about it — the GUID, the file name, the offsets,
-        /// the id — is either invisible to the consumer or does not outlive everything: addresses and
-        /// ids move on a compaction, and the file name is changed by a human with the mouse.
-        /// </summary>
+        // An address and an id are a function of what the project holds right now, the name is not.
         public string BlobchegName => blobchegName;
 
         /// <summary>The domains the node promises to write into. A disagreement with the fact is a build error.</summary>
         public abstract Type[] OutTypes { get; }
 
         public abstract void Write(ref BlobchegNodeWriter writer);
+
+        // What the node reads past a serialised reference. The dependency walk cannot see such a path.
+        public virtual void CollectExtraDependencies(List<string> paths)
+        {
+        }
 
         /// <summary>
         /// An empty name is filled with the asset name. Called only by the rebuild and only before

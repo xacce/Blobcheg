@@ -6,14 +6,6 @@ using UnityEngine;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// Installs the patch into the fork: it builds the slot table and hands the fork two entry points —
-    /// a Burst function for running over elements and a managed handler for the live path.
-    ///
-    /// Building the table requires an initialised TypeManager, so <see cref="TypeManager.Initialize"/>
-    /// is called explicitly: it is idempotent, and the order of the domain initialisers gives no
-    /// guarantees.
-    /// </summary>
     public static unsafe class BlobchegPatchInstall
     {
         static bool s_Installed;
@@ -24,7 +16,7 @@ namespace Blobcheg
             if (s_Installed)
                 return;
 
-            TypeManager.Initialize();
+            TypeManager.Initialize(); // idempotent; the domain initialiser order is not guaranteed
             BlobchegPatchTableBuilder.Build();
 
             BlobchegPatchHook.PatchElementsHook =
@@ -32,18 +24,9 @@ namespace Blobcheg
             BlobchegPatchHook.AfterApplyChangeSet = BlobchegLiveSweep.Run;
             BlobchegPatchHook.AfterSerializeWorld = () => BlobchegPatchErrors.ThrowIfAny();
 
-            // The same pass is handed outwards: everyone who loaded a base uses it — the generated boot
-            // system and a hand-written load alike.
-            BlobchegSweep.Hook = BlobchegLiveSweep.Run;
+            BlobchegSweep.Hook = BlobchegLiveSweep.Run; // shared with every base loader, generated or not
 
-            // The diagnostics of building the table do NOT go into the log, and that is not
-            // forgetfulness. The walk sees every type in the process, including the package's own test
-            // fixtures that are declared wrongly on purpose — so the consumer's console would get an
-            // error about someone else's test right after installation. The real signal exists anyway
-            // and is more precise: a slot left as an offset throws on the first Value, at the place and
-            // with the type name. The list stays in BlobchegPatchTableBuilder.Diagnostics for tools and
-            // tests.
-            s_Installed = true;
+            s_Installed = true; // table diagnostics stay out of the log: package test fixtures are wrong on purpose
         }
 
 #if UNITY_EDITOR
@@ -52,8 +35,7 @@ namespace Blobcheg
         {
             Install();
 
-            // The table holds persistent memory, and a domain reload wipes the managed side but not the
-            // native one. Without uninstalling, every recompilation would leave a leak behind.
+            // A domain reload keeps the table's native memory; without uninstalling every recompile leaks.
             UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += Uninstall;
         }
 #endif
@@ -70,35 +52,26 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>
-    /// The live path. An open subscene does not go through deserialisation: the baking world is diffed
-    /// against the shadow one and the result is applied to the game world as a change set — and after
-    /// that the slots hold offsets.
-    ///
-    /// There is no need to take the change set apart: the patch is idempotent by its range check, so
-    /// walking every entity carrying our components is cheaper than finding out which ones the apply
-    /// actually rewrote.
-    ///
-    /// The load of a base uses the same pass: it both translates the slots that arrived before their
-    /// base and moves them from the previous domain buffer onto the new one after a rebuild.
-    /// </summary>
-    public static unsafe class BlobchegLiveSweep
+    public static unsafe class BlobchegLiveSweep // change sets leave offsets; the patch is idempotent, sweep all
     {
         public static void Run(EntityManager entityManager)
         {
             if (!BlobchegPatchTable.IsBuilt)
                 return;
 
-            foreach (var componentType in BlobchegPatchTableBuilder.RegisteredTypes)
-                Sweep(entityManager, componentType);
+            // Runs on every apply of a change set: the price grows with the world, not with the edit.
+            using var work = BlobchegProfile.Begin("a patch pass over the world");
+            var touched = 0;
 
-            // "The domain is not loaded" is no trouble here: this pass lives where authoring happens,
-            // and the order in which bases load in the editor world does not obey it. The slot stayed an
-            // offset, and the pass right after the base loads will bring it to an address.
-            BlobchegPatchErrors.ThrowIfAny(whileBasesRise: true);
+            foreach (var componentType in BlobchegPatchTableBuilder.RegisteredTypes)
+                touched += Sweep(entityManager, componentType);
+
+            work.Note($"{BlobchegPatchTableBuilder.RegisteredTypes.Count} types, {touched} entities");
+
+            BlobchegPatchErrors.ThrowIfAny(whileBasesRise: true); // editor base load order is not ours: an unloaded domain is resolved by the pass after the load.
         }
 
-        static void Sweep(EntityManager entityManager, ComponentType componentType)
+        static int Sweep(EntityManager entityManager, ComponentType componentType)
         {
             var types = new NativeList<ComponentType>(1, Allocator.Temp) { componentType };
 
@@ -111,15 +84,18 @@ namespace Blobcheg
             {
                 query.Dispose();
                 types.Dispose();
-                return;
+                return 0;
             }
 
             var handle = entityManager.GetDynamicComponentTypeHandle(componentType);
             var typeIndex = componentType.TypeIndex.Value;
             var chunks = query.ToArchetypeChunkArray(Allocator.Temp);
+            var touched = 0;
 
             foreach (var chunk in chunks)
             {
+                touched += chunk.Count;
+
                 if (componentType.IsBuffer)
                 {
                     var accessor = chunk.GetUntypedBufferAccessor(ref handle);
@@ -146,23 +122,11 @@ namespace Blobcheg
             chunks.Dispose();
             query.Dispose();
             types.Dispose();
+            return touched;
         }
     }
 
-    /// <summary>
-    /// Shows the failures of the patch to a human. The patch itself lives in Burst code and drops them
-    /// into a box silently; without this system "the entities arrived before the base" would look like
-    /// zeroes in fields.
-    ///
-    /// It stands in the boot group, that is, at the very start of initialisation — a frame later than
-    /// the streaming of the section, but with a full message.
-    ///
-    /// The system is needed in the editor world too (otherwise failures would pile up there silently),
-    /// but there it forgives "the domain is not loaded": in the editor world subscenes are loaded by
-    /// Unity whenever it finds convenient, while bases are loaded by reading a file, and one overtaking
-    /// the other is lawful here. In the player the order is ours, and an entity that arrived before the
-    /// base stays an error.
-    /// </summary>
+    // Surfaces the Burst patch's silent failures; the editor world forgives entities that beat their base.
     [WorldSystemFilter(WorldSystemFilterFlags.Default | WorldSystemFilterFlags.Editor)]
     [UpdateInGroup(typeof(BlobchegBootGroup))]
     public partial struct BlobchegPatchErrorSystem : ISystem

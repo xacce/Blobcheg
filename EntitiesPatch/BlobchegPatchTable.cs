@@ -4,41 +4,21 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace Blobcheg
 {
-    /// <summary>One slot in a component: where it lies and which domain its record comes from.</summary>
     public struct BlobchegFieldSlot
     {
         public int Offset;
         public ulong DomainKey;
 
-        /// <summary>
-        /// The identity of the record type — the same one the base writer puts into the debug contour.
-        /// By it the patch checks that it reached its own record rather than the neighbouring one:
-        /// without that check a shifted layout hands out someone else's bytes silently.
-        /// </summary>
-        public uint RecordTypeHash;
+        public uint RecordTypeHash; // lets a shifted layout fail loudly instead of reading a neighbour
     }
 
-    /// <summary>The stretch of the flat slot list that belongs to one component type.</summary>
     public struct BlobchegSlotRange
     {
         public int Start;
         public int Count;
     }
 
-    /// <summary>
-    /// Where the <see cref="BlobchegReference{T}"/> slots lie inside components. The same thing in
-    /// meaning as Unity's <c>TypeInfo.BlobAssetRefOffsets</c>, only on the side: adding a fifth kind of
-    /// offset into <c>TypeInfo</c> would mean editing the TypeManager reflection, the IL post-processor
-    /// and the static type registry — for the sake of a table that lives its own life perfectly well.
-    ///
-    /// The key is a <c>TypeIndex</c>, because that is exactly what the patch has in hand: the chunk
-    /// loop knows the archetype type, not <c>T</c>.
-    ///
-    /// There is not a single managed static in this type, and it must stay that way: Burst code reads
-    /// it, and Burst drags the whole static constructor of the class along. The list of registered
-    /// types and all the assembly reflection live in <see cref="BlobchegPatchTableBuilder"/> for exactly
-    /// that reason.
-    /// </summary>
+    // Side table of reference offsets by TypeIndex, read from Burst: no managed statics may live here.
     public static unsafe class BlobchegPatchTable
     {
         internal struct Data
@@ -57,10 +37,6 @@ namespace Blobcheg
             set => s_Data.Data = value;
         }
 
-        /// <summary>
-        /// The slots of a type. Called from Burst code, which is why it hands out a raw pointer and a
-        /// count rather than a list.
-        /// </summary>
         public static bool TryGetSlots(int typeIndex, out BlobchegFieldSlot* slots, out int count)
         {
             var data = s_Data.Data;

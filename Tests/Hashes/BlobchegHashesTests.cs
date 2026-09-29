@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using Blobcheg.Authoring;
+using Blobcheg.Tests;
 using NUnit.Framework;
 using Unity.Collections;
 using UnityEditor;
@@ -13,8 +14,14 @@ namespace Blobcheg.HashTests
     /// The end-to-end path of the table: node name → key → file → lookup. And the main property the
     /// whole thing exists for: the addresses move, the hash stays.
     /// </summary>
+    [TestFixture(BlobchegTestMode.Editor)]
+    [TestFixture(BlobchegTestMode.AsInPlayer)]
     public sealed class BlobchegHashesTests
     {
+        readonly BlobchegTestMode _mode;
+
+        public BlobchegHashesTests(BlobchegTestMode mode) => _mode = mode;
+
         static readonly string[] Artifacts =
         {
             "ITestHashHot", "ITestHashCold", "TestHashRouter", "TestHashRouterHashes",
@@ -28,6 +35,7 @@ namespace Blobcheg.HashTests
         [SetUp]
         public void SetUp()
         {
+            BlobchegTestModes.Enter(_mode);
             var name = "BlobchegHashTemp_" + Guid.NewGuid().ToString("N");
             _folder = "Assets/" + name;
             AssetDatabase.CreateFolder("Assets", name);
@@ -44,12 +52,11 @@ namespace Blobcheg.HashTests
         [TearDown]
         public void TearDown()
         {
+            BlobchegTestModes.Leave();
             AssetDatabase.DeleteAsset(_folder);
 
             foreach (var artifact in Artifacts)
             {
-                AssetDatabase.DeleteAsset(BlobchegBuild.ManifestFolder + "/" + artifact + ".asset");
-
                 var file = Path.Combine(BlobchegBuild.OutputDirectory, BlobchegNaming.FileName(artifact));
                 if (File.Exists(file))
                     File.Delete(file);
@@ -74,6 +81,7 @@ namespace Blobcheg.HashTests
             serialized.FindProperty("blobchegName").stringValue = name;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(node);
+            AssetDatabase.SaveAssetIfDirty(node);
         }
 
         static string PathOf(string identity)
@@ -82,7 +90,7 @@ namespace Blobcheg.HashTests
         static BlobchegBuffer Read(string identity)
         {
             var path = PathOf(identity);
-            Assert.That(File.Exists(path), Is.True, $"file '{path}' must land in StreamingAssets");
+            Assert.That(File.Exists(path), Is.True, $"file '{path}' must land in the output folder");
             return BlobchegBuffer.From(File.ReadAllBytes(path), Allocator.Persistent);
         }
 
@@ -97,11 +105,11 @@ namespace Blobcheg.HashTests
         static BlobchegId IdOf(BlobchegNodeSo node)
         {
             var carrier = BlobchegBuild.IdsOf(node).Single(c => c.RouterName == TestHashRouter.RouterName);
-            return new BlobchegId(carrier.id);
+            return carrier.Id;
         }
 
         static uint OffsetOf(BlobchegNodeSo node, string domainName)
-            => BlobchegBuild.RefsOf(node).Single(r => r.DomainName == domainName).offset;
+            => BlobchegBuild.RefsOf(node).Single(r => r.DomainName == domainName).Offset;
 
         [Test]
         public void The_key_is_computed_from_the_router_name_and_the_node_name()
@@ -266,7 +274,7 @@ namespace Blobcheg.HashTests
         }
 
         [Test]
-        public void A_compaction_moves_the_addresses_and_the_hash_stays()
+        public void A_deleted_node_moves_no_row_and_the_hash_still_leads_there()
         {
             BlobchegBuild.RebuildAll();
 
@@ -278,20 +286,19 @@ namespace Blobcheg.HashTests
 
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
             BlobchegBuild.RebuildAll();
-            BlobchegBuild.Compact();
 
             var nowId = IdOf(survivor);
-            Assert.That(nowId, Is.Not.EqualTo(wasId), "the compaction is obliged to shift the row number — otherwise the test catches nothing");
+            Assert.That(nowId, Is.EqualTo(wasId), "a deletion elsewhere moves no row");
             Assert.That(BlobchegHashKey.Of<TestHashRouter>(survivor.BlobchegName), Is.EqualTo(hash),
-                "the hash does not depend on the compaction: it is computed from the name");
+                "the hash does not depend on the layout: it is computed from the name");
 
             var table = LoadTable();
             var hot = LoadHot();
             var router = LoadRouter();
             try
             {
-                Assert.That(table.TryGetId(hash, out var found), Is.True, "the old hash is obliged to be found after a compaction");
-                Assert.That(found, Is.EqualTo(nowId), "and to lead to the NEW row number");
+                Assert.That(table.TryGetId(hash, out var found), Is.True, "the hash is obliged to be found after the deletion");
+                Assert.That(found, Is.EqualTo(nowId), "and to lead to the same row");
 
                 ref readonly var record = ref hot.Read<TestHashHotRecord>(router.Get(found).hot);
                 Assert.That(record.Self, Is.EqualTo(hash));
@@ -413,8 +420,7 @@ namespace Blobcheg.HashTests
         {
             BlobchegBuild.RebuildAll();
 
-            var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(
-                BlobchegBuild.ManifestFolder + "/" + TestHashTable.FileIdentity + ".asset");
+            var manifest = BlobchegManifests.Of(TestHashTable.FileIdentity);
 
             Assert.That(manifest, Is.Not.Null);
             Assert.That(manifest.kind, Is.EqualTo(BlobchegFileKind.Hashes));
@@ -423,12 +429,13 @@ namespace Blobcheg.HashTests
             var file = File.ReadAllBytes(PathOf(TestHashTable.FileIdentity));
             Assert.That(manifest.ContentHash, Is.EqualTo(BitConverter.ToUInt64(file, 16)));
 
-            for (var i = 0; i < manifest.nodes.Length; i++)
+            for (var i = 0; i < manifest.NodeCount; i++)
             {
-                if (manifest.nodes[i] == null)
+                var node = manifest.NodeAt(i);
+                if (node == null)
                     continue;
 
-                Assert.That(IdOf(manifest.nodes[i]).Index, Is.EqualTo((uint)i),
+                Assert.That(IdOf(node).Index, Is.EqualTo((uint)i),
                     "the nodes lie in the manifest in row order");
             }
         }

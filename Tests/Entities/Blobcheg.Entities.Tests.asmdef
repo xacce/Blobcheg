@@ -5,6 +5,8 @@
         "Blobcheg.Core",
         "Blobcheg.Runtime",
         "Blobcheg.Authoring",
+        "Blobcheg.Authoring.Editor",
+        "Blobcheg.Tests",
         "Blobcheg.Entities",
         "Blobcheg.Hashes",
         "Unity.Burst",
@@ -12,7 +14,8 @@
         "Unity.Mathematics",
         "Unity.Entities",
         "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner"
+        "UnityEditor.TestRunner",
+        "Blobcheg.Hashes.Authoring.Editor"
     ],
     "includePlatforms": [
         "Editor"
@@ -26,6 +29,7 @@
     "autoReferenced": false,
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS",
+        "BLOBCHEG_TESTS",
         "UNITY_ENTITIES"
     ],
     "versionDefines": [

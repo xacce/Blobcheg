@@ -4,11 +4,9 @@ using System.IO;
 
 namespace Blobcheg
 {
-    /// <summary>One cell of a router row: which base the node lies in and at which offset.</summary>
     public readonly struct BlobchegRouterCell
     {
-        /// <summary>The bit number of the base, also the position of the domain in the router's sorted list.</summary>
-        public readonly int Bit;
+        public readonly int Bit; // also the domain's position in the router's sorted list
 
         public readonly uint Offset;
 
@@ -19,14 +17,7 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>
-    /// The router writer. Rows are added in id order — the id is exactly the order of the
-    /// <see cref="Append"/> calls, which is why handing out ids lives with whoever knows the nodes, not
-    /// here.
-    ///
-    /// Offsets arrive ready-made: the router is assembled AFTER the <c>Flush</c> of every base,
-    /// otherwise the offsets do not exist yet.
-    /// </summary>
+    // Append order is the id order; built after every base Flush, so offsets arrive ready-made.
     public sealed class BlobchegRouterWriter
     {
         readonly List<ulong> _masks = new List<ulong>();
@@ -63,8 +54,7 @@ namespace Blobcheg
         public static BlobchegRouterWriter Open(string directory, string routerName, int domainCount, ulong layoutHash)
             => new BlobchegRouterWriter(directory, routerName, domainCount, layoutHash);
 
-        /// <summary>Puts down a row and returns its number. An empty row is allowed — a node with no records.</summary>
-        public uint Append(string nodeName, IReadOnlyList<BlobchegRouterCell> cells)
+        public uint Append(string nodeName, IReadOnlyList<BlobchegRouterCell> cells) // empty row = node without records
         {
             if (_flushed)
                 throw new InvalidOperationException(
@@ -73,8 +63,7 @@ namespace Blobcheg
             var mask = 0ul;
             var start = _offsets.Count;
 
-            // Cells are laid out by ascending bit: the lookup takes the popcount of the lower bits, and
-            // the order in the file is obliged to answer that.
+            // Sorted by bit: the lookup indexes cells by the popcount of the lower mask bits.
             var sorted = new List<BlobchegRouterCell>(cells);
             sorted.Sort((a, b) => a.Bit.CompareTo(b.Bit));
 
@@ -106,8 +95,7 @@ namespace Blobcheg
 
             var count = _masks.Count;
 
-            // A router without rows has nothing to describe — see the same argument at the base writer.
-            withDebug &= count > 0;
+            withDebug &= count > 0; // no rows, nothing to describe
 
             var masksOffset = BlobchegFormat.AlignUp(BlobchegRouterFormat.PrologOffset + BlobchegRouterFormat.PrologSize);
             var rowStartOffset = BlobchegFormat.AlignUp(masksOffset + count * _maskWidth);
@@ -156,7 +144,7 @@ namespace Blobcheg
             FileChanged = BlobchegBytes.WriteIfChanged(Directory, FilePath, file, ContentHash);
         }
 
-        /// <summary>The node name by id — for editor tools only, so it does not travel into a release player.</summary>
+        // Node names by id serve editor tools only, so they stay out of release players.
         byte[] BuildDebugSection(uint sectionOffset)
         {
             var count = _masks.Count;

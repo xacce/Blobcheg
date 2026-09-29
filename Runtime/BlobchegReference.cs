@@ -5,52 +5,22 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The slot of a reference to a record inside a component. Eight bytes, and two different things
-    /// live in them in turn: before the patch the offset of the record in the file, after the patch its
-    /// address in the loaded buffer. Unity's <c>BlobAssetReferenceData</c> is built exactly the same
-    /// way and for the same reason: the serialisable form is obliged to outlive the process, while the
-    /// read should happen without an addition.
-    ///
-    /// The type is separate and untyped because the field walk recognises our slots inside a foreign
-    /// struct by it — by comparing the field type, not the name. Zero means "not assigned" for free:
-    /// offsets start at <see cref="BlobchegFormat.HeaderSize"/>, and there is no such thing as a zero
-    /// address.
-    /// </summary>
-    public struct BlobchegReferenceData
+    // Eight bytes: the file offset before the patch, the loaded-buffer address after it.
+    public struct BlobchegReferenceData // the field walk finds slots by this type; 0 = unassigned
     {
         public ulong Value;
     }
 
-    /// <summary>
-    /// A reference to a record living inside an entity component. Put down by the baker as an offset,
-    /// turned into an address by the patch on scene import; read without a base and without an
-    /// addition.
-    ///
-    /// This is not a replacement for <see cref="BlobchegRef{T}"/>: that one is the editor field
-    /// carrying an address, this one is the runtime slot in a component. The usual "offset plus
-    /// <c>Read</c>" path is not going anywhere.
-    /// </summary>
     public unsafe struct BlobchegReference<T> : IEquatable<BlobchegReference<T>> where T : unmanaged
     {
-        public BlobchegReferenceData Data;
+        public BlobchegReferenceData Data; // runtime slot in a component, unlike the editor-side BlobchegRef<T>
 
-        /// <summary>From a record address in the editor: <c>new BlobchegReference&lt;GunData&gt;(a.gun.Offset)</c>.</summary>
         public BlobchegReference(uint offset) => Data = new BlobchegReferenceData { Value = offset };
 
         public bool IsSet => Data.Value != 0;
 
-        /// <summary>
-        /// Whether the field is patched. Not "valid": an unpatched field is the normal state of an
-        /// entity that has not reached the patch yet.
-        /// </summary>
-        public bool IsResolved => Data.Value != 0 && BlobchegBases.IsKnownAddress(Data.Value);
+        public bool IsResolved => Data.Value != 0 && BlobchegBases.IsKnownAddress(Data.Value); // unpatched is normal before the patch, not invalid
 
-        /// <summary>
-        /// The record itself. In release a pure reinterpretation at the address; in the editor and in a
-        /// development build it is checked that the slot really holds the address of a loaded base and
-        /// not a leftover offset.
-        /// </summary>
         public ref readonly T Value
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -61,12 +31,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// Two references are equal if they hold the same thing. The comparison is obliged to answer the
-        /// same way before and after the patch — otherwise the familiar <c>if (a == b)</c> in game code
-        /// starts lying right after a scene load; both states are compared by the content of the slot,
-        /// and both agree.
-        /// </summary>
+        // Compares the raw slot, so a == b answers the same before and after the patch.
         public bool Equals(BlobchegReference<T> other) => Data.Value == other.Data.Value;
 
         public override bool Equals(object obj) => obj is BlobchegReference<T> other && Equals(other);
@@ -91,12 +56,7 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>
-    /// The same without a parameter — for records from <c>AddBytes</c>, which have no type. It hands out
-    /// bytes because there is nothing to reinterpret: the hole is in exactly the same place as in
-    /// <see cref="BlobchegRawRef"/>.
-    /// </summary>
-    public unsafe struct BlobchegRawReference
+    public unsafe struct BlobchegRawReference // untyped, for AddBytes records: hands out bytes
     {
         public BlobchegReferenceData Data;
 

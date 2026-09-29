@@ -62,8 +62,6 @@ namespace Blobcheg.AdvancedTests
 
             foreach (var name in Artifacts)
             {
-                AssetDatabase.DeleteAsset(BlobchegBuild.ManifestFolder + "/" + name + ".asset");
-
                 var file = FileOf(name);
                 if (File.Exists(file))
                     File.Delete(file);
@@ -138,7 +136,7 @@ namespace Blobcheg.AdvancedTests
         {
             var reference = BlobchegBuild.RefsOf(node).SingleOrDefault(r => r.DomainName == domainName);
             Assert.That(reference, Is.Not.Null, $"node '{node.name}' has no ref asset for domain '{domainName}'");
-            return reference.offset;
+            return reference.Offset;
         }
 
         protected static BlobchegRefSo RefOf(BlobchegNodeSo node, string domainName)
@@ -148,7 +146,7 @@ namespace Blobcheg.AdvancedTests
         {
             var carrier = BlobchegBuild.IdsOf(node).SingleOrDefault(c => c.RouterName == routerName);
             Assert.That(carrier, Is.Not.Null, $"node '{node.name}' has no id carrier for router '{routerName}'");
-            return new BlobchegId(carrier.id);
+            return carrier.Id;
         }
 
         // ------------------------------------------------------------- files

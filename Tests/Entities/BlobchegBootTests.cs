@@ -21,16 +21,16 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>
-    /// A base declared <c>IComponentData</c>: the generator emits a <c>TestBootDbBootSystem</c> boot
+    /// A base with <c>AutoLoad = true</c>: the generator emits a <c>TestBootDbBootSystem</c> boot
     /// system for it. If it did not, this file does not build.
     ///
     /// The <c>[DisableAutoCreation]</c> travels onto the emitted system: a test base has no business in
     /// the consumer's default world, all the more so since its file does not exist yet on a fresh
     /// checkout. The test creates a world of its own for it.
     /// </summary>
-    [Blobcheg(typeof(ITestBootData))]
+    [Blobcheg(typeof(ITestBootData), AutoLoad = true)]
     [DisableAutoCreation]
-    public partial struct TestBootDb : IComponentData
+    public partial struct TestBootDb
     {
     }
 
@@ -38,10 +38,34 @@ namespace Blobcheg.Tests
     /// The boot system emitted by the generator. A world of its own is created: what has to be proven is
     /// the system itself and not the order in which the editor's default world created it.
     /// </summary>
+    [TestFixture(BlobchegTestMode.Editor)]
+    [TestFixture(BlobchegTestMode.AsInPlayer)]
     public sealed unsafe class BlobchegBootTests
     {
+        readonly BlobchegTestMode _mode;
+
+        public BlobchegBootTests(BlobchegTestMode mode) => _mode = mode;
+
+        bool _log;
+
+        // These tests read the log itself: the profiling channel of the package is noise inside them.
+        [SetUp]
+        public void SetUp()
+        {
+            BlobchegTestModes.Enter(_mode);
+            _log = BlobchegProfile.Enabled;
+            BlobchegProfile.Enabled = false;
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            BlobchegProfile.Enabled = _log;
+            BlobchegTestModes.Leave();
+        }
+
         [Test]
-        public void A_rebuild_under_a_live_world_reaches_the_singleton()
+        public void A_rebuild_under_a_live_world_reaches_the_register()
         {
             BlobchegBuild.RebuildAll();
 
@@ -49,37 +73,34 @@ namespace Blobcheg.Tests
             try
             {
                 var system = world.CreateSystem<TestBootDbBootSystem>();
-                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
                 var clock = Stopwatch.StartNew();
-                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                while (!BlobchegBases.Has(TestBootDb.DomainKey) && clock.ElapsedMilliseconds < 5000)
                 {
                     system.Update(world.Unmanaged);
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "the base did not load — there is nothing further to check");
-
-                var key = BlobchegNaming.NameHash(TestBootDb.DomainName);
-                Assert.That(BlobchegBases.TryGet(key, out var before, out var length), Is.True);
+                Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.True, "the base did not load — there is nothing further to check");
+                Assert.That(BlobchegBases.TryGet(TestBootDb.DomainKey, out var before, out var length), Is.True);
 
                 // A rebuild in the editor ends with exactly this: the file number is bumped. Watching it
                 // after that is the business of whoever loaded the base.
                 BlobchegFileVersions.Bump(TestBootDb.FileName);
                 system.Update(world.Unmanaged);
 
-                Assert.That(BlobchegBases.TryGet(key, out var after, out var lengthAfter), Is.True);
+                Assert.That(BlobchegBases.TryGet(TestBootDb.DomainKey, out var after, out var lengthAfter), Is.True);
                 Assert.That((ulong)after, Is.Not.EqualTo((ulong)before),
                     "the file was rewritten — the world is obliged to end up with the NEW buffer and not the old bytes");
                 Assert.That(lengthAfter, Is.EqualTo(length), "the file is the same, so the length is the same");
 
-                var database = query.GetSingleton<TestBootDb>();
-                Assert.That(database.IsCreated, Is.True, "the singleton is obliged to hold the new blob and not the freed old one");
+                var database = TestBootDb.Resident;
+                Assert.That(database.IsCreated, Is.True, "Resident is obliged to hand out the new blob and not the freed old one");
                 Assert.That(database.Length, Is.EqualTo(lengthAfter));
 
                 // A second update without a rebuild touches nothing: otherwise the base would be re-read every frame.
                 system.Update(world.Unmanaged);
-                Assert.That(BlobchegBases.TryGet(key, out var idle, out _), Is.True);
+                Assert.That(BlobchegBases.TryGet(TestBootDb.DomainKey, out var idle, out _), Is.True);
                 Assert.That((ulong)idle, Is.EqualTo((ulong)after));
             }
             finally
@@ -89,12 +110,16 @@ namespace Blobcheg.Tests
         }
 
         [Test]
+        public void The_emitted_domain_key_matches_the_naming()
+            => Assert.That(TestBootDb.DomainKey, Is.EqualTo(BlobchegNaming.NameHash(TestBootDb.DomainName)),
+                "the generator's fnv1a drifted from BlobchegNaming.NameHash — Resident looks up a key nobody registers");
+
+        [Test]
         public void A_broken_file_is_rejected_once_and_repaired_by_a_rebuild()
         {
             BlobchegBuild.RebuildAll();
 
-            var path = Path.Combine(
-                Application.streamingAssetsPath, BlobchegNaming.DefaultFolder, TestBootDb.FileName);
+            var path = PathOfDatabase();
             var sane = File.ReadAllBytes(path);
 
             var world = new World("blobcheg-boot-broken-tests");
@@ -109,20 +134,21 @@ namespace Blobcheg.Tests
 
                 LogAssert.Expect(LogType.Exception, new Regex("format version 3"));
 
-                var system = world.CreateSystem<TestBootDbBootSystem>();
-                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
-
-                // The frames keep going, and the failure is obliged to stay a single one. Otherwise the
-                // real cause is drowned by a retelling of its consequences: the read was taken away, and
-                // every following Poll runs into that.
                 var clock = Stopwatch.StartNew();
-                while (clock.ElapsedMilliseconds < 2000)
+                SystemHandle system;
+                using (var log = new LogTrap())
                 {
-                    system.Update(world.Unmanaged);
-                    System.Threading.Thread.Sleep(1);
-                }
+                    system = world.CreateSystem<TestBootDbBootSystem>();
 
-                LogAssert.NoUnexpectedReceived();
+                    // The frames keep going; one failure, not a retelling of it on every Poll.
+                    while (clock.ElapsedMilliseconds < 2000)
+                    {
+                        system.Update(world.Unmanaged);
+                        System.Threading.Thread.Sleep(1);
+                    }
+
+                    Assert.That(log.Loud.Single(), Does.Contain("format version 3"));
+                }
 
                 // The rebuild rewrote the file — now the load is obliged to run again, without a domain
                 // reload: otherwise a world that broke is repaired by nothing at all.
@@ -130,14 +156,14 @@ namespace Blobcheg.Tests
                 BlobchegFileVersions.Bump(TestBootDb.FileName);
 
                 clock.Restart();
-                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                while (!BlobchegBases.Has(TestBootDb.DomainKey) && clock.ElapsedMilliseconds < 5000)
                 {
                     system.Update(world.Unmanaged);
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                    "the repaired file is obliged to reach the singleton");
+                Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.True,
+                    "the repaired file is obliged to reach the register");
             }
             finally
             {
@@ -151,7 +177,7 @@ namespace Blobcheg.Tests
         /// back in the finally, and the rebuild assembles it again anyway.
         /// </summary>
         static string PathOfDatabase()
-            => Path.Combine(Application.streamingAssetsPath, BlobchegNaming.DefaultFolder, TestBootDb.FileName);
+            => Path.Combine(BlobchegBuild.OutputDirectory, TestBootDb.FileName);
 
         /// <summary>
         /// Collects the log over the run. The warning here is the subject of the check, and
@@ -210,23 +236,22 @@ namespace Blobcheg.Tests
                     File.Delete(path);
 
                     var system = world.CreateSystem<TestBootDbBootSystem>();
-                    var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
                     Spin(system, world, 1000);
 
                     Assert.That(log.Loud, Is.Empty, "a transient moment is not an error, there must be no red in the log");
                     Assert.That(log.Notifications, Is.EqualTo(1),
                         "there is obliged to be a warning, and exactly one: the frames keep going and there is nothing to say twice");
-                    Assert.That(query.CalculateEntityCount(), Is.Zero, "there is nothing to load yet");
+                    Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.False, "there is nothing to load yet");
 
                     // The rebuild wrote the file and bumped its number — from there the system is obliged to manage on its own.
                     File.WriteAllBytes(path, sane);
                     BlobchegFileVersions.Bump(TestBootDb.FileName);
 
-                    Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
+                    Spin(system, world, 5000, () => BlobchegBases.Has(TestBootDb.DomainKey));
 
-                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                        "the written file is obliged to reach the singleton without a domain reload");
+                    Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.True,
+                        "the written file is obliged to reach the register without a domain reload");
                 }
                 finally
                 {
@@ -257,20 +282,19 @@ namespace Blobcheg.Tests
                     File.WriteAllBytes(path, sane.Concat(new byte[] { 0 }).ToArray());
 
                     var system = world.CreateSystem<TestBootDbBootSystem>();
-                    var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
                     Spin(system, world, 1000);
 
                     Assert.That(log.Loud, Is.Empty, "an unfinished file is a moment and not a breakage");
                     Assert.That(log.Notifications, Is.EqualTo(1));
-                    Assert.That(query.CalculateEntityCount(), Is.Zero);
+                    Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.False);
 
                     File.WriteAllBytes(path, sane);
                     BlobchegFileVersions.Bump(TestBootDb.FileName);
 
-                    Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
+                    Spin(system, world, 5000, () => BlobchegBases.Has(TestBootDb.DomainKey));
 
-                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1));
+                    Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.True);
                 }
                 finally
                 {
@@ -292,7 +316,7 @@ namespace Blobcheg.Tests
 
             var path = PathOfDatabase();
             var sane = File.ReadAllBytes(path);
-            var key = BlobchegNaming.NameHash(TestBootDb.DomainName);
+            var key = TestBootDb.DomainKey;
 
             var world = new World("blobcheg-boot-torn-reraise-tests");
             using (var log = new LogTrap())
@@ -300,10 +324,9 @@ namespace Blobcheg.Tests
                 try
                 {
                     var system = world.CreateSystem<TestBootDbBootSystem>();
-                    var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
-                    Spin(system, world, 5000, () => query.CalculateEntityCount() == 1);
-                    Assert.That(query.CalculateEntityCount(), Is.EqualTo(1), "the base did not load — there is nothing further to check");
+                    Spin(system, world, 5000, () => BlobchegBases.Has(key));
+                    Assert.That(BlobchegBases.Has(key), Is.True, "the base did not load — there is nothing further to check");
                     Assert.That(BlobchegBases.TryGet(key, out var before, out _), Is.True);
 
                     // The rebuild "rewrites" the file: the number is bumped while the bytes on disk are unfinished.
@@ -327,7 +350,7 @@ namespace Blobcheg.Tests
                     Assert.That(BlobchegBases.TryGet(key, out var after, out _), Is.True);
                     Assert.That((ulong)after, Is.Not.EqualTo((ulong)before),
                         "the finished file is obliged to reach the world by itself — otherwise it would quietly stay on yesterday's bytes");
-                    Assert.That(query.GetSingleton<TestBootDb>().IsCreated, Is.True);
+                    Assert.That(TestBootDb.Resident.IsCreated, Is.True);
                 }
                 finally
                 {
@@ -350,7 +373,7 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void The_boot_system_loads_the_base_into_a_singleton()
+        public void The_boot_system_loads_the_base_onto_the_register()
         {
             // The base file is obliged to lie on disk: a writer is opened for every declared domain, so
             // an empty ITestBootData gets assembled too.
@@ -360,19 +383,18 @@ namespace Blobcheg.Tests
             try
             {
                 var system = world.CreateSystem<TestBootDbBootSystem>();
-                var query = world.EntityManager.CreateEntityQuery(ComponentType.ReadOnly<TestBootDb>());
 
                 var clock = Stopwatch.StartNew();
-                while (query.CalculateEntityCount() == 0 && clock.ElapsedMilliseconds < 5000)
+                while (!BlobchegBases.Has(TestBootDb.DomainKey) && clock.ElapsedMilliseconds < 5000)
                 {
                     system.Update(world.Unmanaged);
                     System.Threading.Thread.Sleep(1);
                 }
 
-                Assert.That(query.CalculateEntityCount(), Is.EqualTo(1),
-                    "the boot system is obliged to put the base down as a singleton within five seconds");
+                Assert.That(BlobchegBases.Has(TestBootDb.DomainKey), Is.True,
+                    "the boot system is obliged to put the base onto the register within five seconds");
 
-                var database = query.GetSingleton<TestBootDb>();
+                var database = TestBootDb.Resident;
                 Assert.That(database.IsCreated, Is.True);
                 Assert.That(database.Length, Is.GreaterThanOrEqualTo(BlobchegFormat.HeaderSize));
             }

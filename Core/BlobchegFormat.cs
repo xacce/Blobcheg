@@ -4,54 +4,31 @@ using System.Runtime.InteropServices;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// What kind of file lies in front of the reader. The kind is written as flags in the header and
-    /// checked on load: otherwise mixed-up files come up and quietly hand out someone else's bytes.
-    /// </summary>
+    // Kind flags are checked on load, so a mixed-up file cannot quietly hand out foreign bytes
     public enum BlobchegFileKind
     {
         Database = 0,
         Router = 1,
 
-        /// <summary>A table of name hashes — the file of the <c>Blobcheg.Hashes</c> build.</summary>
         Hashes = 2,
     }
 
-    /// <summary>
-    /// The binary format of a base, version 1. A file is a header and aligned bytes lying one after
-    /// another; there are no tables in the release file, and the only thing that gives a record
-    /// meaning is the offset the consumer kept.
-    /// </summary>
-    public static class BlobchegFormat
+    public static class BlobchegFormat // no tables: a record means only the offset the consumer kept
     {
-        /// <summary>'BCHG' in the byte order of the file.</summary>
-        public const uint Magic = 0x47484342;
+        public const uint Magic = 0x47484342; // 'BCHG' in file byte order
 
-        /// <summary>
-        /// 2 — the router appeared, 3 — the file gained an identity (the name hash in the header),
-        /// 4 — there are now three file kinds and a single bool no longer tells them apart. The
-        /// version is shared by every file of the package: they are derived and rebuilt together, and
-        /// separate versions for the base and the router would be one more axis to fall out of sync
-        /// along.
-        /// </summary>
-        public const ushort Version = 4;
+        public const ushort Version = 4; // shared by every file kind: they are rebuilt together
 
-        /// <summary>The size of the header and at the same time the offset of the first record.</summary>
-        public const int HeaderSize = 32;
+        public const int HeaderSize = 32; // also the offset of the first record
 
-        /// <summary>The start of every record is aligned to this from the beginning of the file.</summary>
-        public const int RecordAlign = 16;
+        public const int RecordAlign = 16; // from the start of the file
 
-        /// <summary>A flags bit: the file has a debug section.</summary>
         public const ushort FlagHasDebug = 1 << 0;
 
-        /// <summary>A flags bit: the file is a router, not a base. Mixed-up ones are rejected on load.</summary>
         public const ushort FlagRouter = 1 << 1;
 
-        /// <summary>A flags bit: the file is a hash table.</summary>
         public const ushort FlagHashes = 1 << 2;
 
-        /// <summary>The file-kind flags — what the writer puts into the header and the reader checks.</summary>
         public static ushort FlagsOf(BlobchegFileKind kind)
         {
             switch (kind)
@@ -64,10 +41,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// The file kind from the header flags. Two kinds at once means a corrupted file or one built
-        /// by a foreign tool, and it is not "a base by default" but an error.
-        /// </summary>
+        // Two kind bits at once is a corrupt or foreign file: an error, not "a base by default"
         public static BlobchegFileKind KindOf(ushort flags)
         {
             var kindBits = flags & (FlagRouter | FlagHashes);
@@ -83,8 +57,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>"this is a ... file" — whose file lies in front of the reader.</summary>
-        public static string NameOf(BlobchegFileKind kind)
+        public static string NameOf(BlobchegFileKind kind) // "this is a ... file"
         {
             switch (kind)
             {
@@ -94,8 +67,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>"it is being loaded as a ..." — what the reader takes it for.</summary>
-        public static string TargetOf(BlobchegFileKind kind)
+        public static string TargetOf(BlobchegFileKind kind) // "it is being loaded as a ..."
         {
             switch (kind)
             {
@@ -105,8 +77,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>"this is the file of another ..." — files of one kind swapped with each other.</summary>
-        public static string OwnerOf(BlobchegFileKind kind)
+        public static string OwnerOf(BlobchegFileKind kind) // "this is the file of another ..."
         {
             switch (kind)
             {
@@ -123,42 +94,28 @@ namespace Blobcheg
         public static uint AlignUp(uint value) => (value + (RecordAlign - 1)) & ~((uint)RecordAlign - 1);
     }
 
-    /// <summary>The start of a base file. Exactly <see cref="BlobchegFormat.HeaderSize"/> bytes.</summary>
     [StructLayout(LayoutKind.Sequential)]
-    public struct BlobchegHeader
+    public struct BlobchegHeader // exactly BlobchegFormat.HeaderSize bytes
     {
         public uint Magic;
         public ushort Version;
         public ushort Flags;
 
-        /// <summary>The full length of the file — validation of the transport.</summary>
-        public uint FileLength;
+        public uint FileLength; // transport validation
 
-        /// <summary>The absolute offset of the debug section, 0 means there is none.</summary>
-        public uint DebugOffset;
+        public uint DebugOffset; // absolute; 0 means none
 
-        /// <summary>xxHash3 of everything past the header. Integrity, always checked, behind no define.</summary>
-        public ulong ContentHash;
+        public ulong ContentHash; // xxHash3 of everything past the header, always checked
 
-        /// <summary>
-        /// The identity of the file: <see cref="BlobchegNaming.NameHash"/> of the domain or router
-        /// name. Without it two .bcheg files swapped with each other both come up and quietly hand out
-        /// someone else's bytes — each has its own integrity and each adds up.
-        /// </summary>
-        public ulong NameHash;
+        public ulong NameHash; // name identity: swapped files each pass their own integrity check
 
         public bool HasDebug => (Flags & BlobchegFormat.FlagHasDebug) != 0;
 
         public bool IsRouter => (Flags & BlobchegFormat.FlagRouter) != 0;
 
-        /// <summary>The file kind from the flags. Corrupted flags throw rather than return "a base".</summary>
         public BlobchegFileKind Kind => BlobchegFormat.KindOf(Flags);
 
-        /// <summary>
-        /// The check performed when a base is loaded. Not a hot path — called once per base, which is
-        /// why it sits behind no define. Any discrepancy throws: either the base came up whole, or the
-        /// game did not start.
-        /// </summary>
+        // Once per base load, so no define: any mismatch throws rather than half-loading a base
         public void Validate(string what, int actualLength, ulong actualContentHash,
             BlobchegFileKind wantKind = BlobchegFileKind.Database)
         {
@@ -183,10 +140,7 @@ namespace Blobcheg
                     $"(the header says {NameHash:X16}, '{what}' is {wantedName:X16}). The files are swapped " +
                     "with each other or were rebuilt under different names");
 
-            // Transient: the reader learns the length before the body, and between those two reads a
-            // rebuild has time to swap the file — the header already belongs to the new one, the bytes
-            // still to the old one. A frame later the same read goes through, see
-            // BlobchegTransientException.
+            // Transient: a rebuild can swap the file between the length and body reads; next frame passes
             if (FileLength != (uint)actualLength)
                 throw new BlobchegTransientException(
                     $"Blobcheg: '{what}' is truncated or extended: the header says {FileLength} B, {actualLength} B were read");

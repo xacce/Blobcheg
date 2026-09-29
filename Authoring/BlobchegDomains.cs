@@ -1,15 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEditor;
 
 namespace Blobcheg.Authoring
 {
-    /// <summary>
-    /// The registry of domains. A domain is a marker interface declared through
-    /// <see cref="BlobchegAttribute"/>: one base, one file. The registry is gathered from the attributes
-    /// rather than from a hand-written list — a hand-written list is one more place to forget in.
-    /// </summary>
+    // Gathered from [Blobcheg] attributes, not a hand-written list: one fewer place to forget.
     public static class BlobchegDomains
     {
         static Type[] _all;
@@ -19,7 +14,7 @@ namespace Blobcheg.Authoring
             get
             {
                 if (_all == null)
-                    _all = TypeCache.GetTypesWithAttribute<BlobchegAttribute>()
+                    _all = BlobchegTypeScan.WithAttribute<BlobchegAttribute>()
                         .Select(db => db.GetCustomAttributes(typeof(BlobchegAttribute), false))
                         .Where(attributes => attributes.Length > 0)
                         .Select(attributes => ((BlobchegAttribute)attributes[0]).Domain)
@@ -35,10 +30,6 @@ namespace Blobcheg.Authoring
 
         public static string NameOf(Type domain) => domain.Name;
 
-        /// <summary>
-        /// The domain of a record is derived from its marker interface. No domain at all or more than
-        /// one is an error: a record is obliged to belong to exactly one base.
-        /// </summary>
         public static Type DomainOf(Type recordType)
         {
             var domains = All;

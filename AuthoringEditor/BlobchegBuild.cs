@@ -18,6 +18,10 @@ namespace Blobcheg.Authoring
         public int ChangedRefs;
         public int RemovedRefs;
 
+        // Addresses, record types and ids written next to the bases; stale ones dropped there.
+        public int ChangedStamps;
+        public int RemovedStamps;
+
         /// <summary>Nodes whose empty name the rebuild filled in. A second run is obliged to give zero.</summary>
         public int NamedNodes;
 
@@ -25,30 +29,23 @@ namespace Blobcheg.Authoring
         public int MovedIds;
 
         public bool Changed => ChangedFiles > 0 || ChangedRefs > 0 || RemovedRefs > 0
-                               || ChangedManifests > 0 || NamedNodes > 0;
+                               || ChangedManifests > 0 || ChangedStamps > 0 || RemovedStamps > 0
+                               || NamedNodes > 0;
+
+        // Only the carriers and the node names are assets; everything else the rebuild writes is a file.
+        public bool AssetsTouched => ChangedRefs > 0 || RemovedRefs > 0 || NamedNodes > 0;
 
         public override string ToString()
             => $"domains {Domains}, routers {Routers}, records {Records}, files rewritten {ChangedFiles}, " +
-               $"manifests {ChangedManifests}, refs updated {ChangedRefs}, removed {RemovedRefs}, " +
+               $"manifests {ChangedManifests}, stamps {ChangedStamps}, dropped {RemovedStamps}, " +
+               $"carriers added {ChangedRefs}, removed {RemovedRefs}, " +
                $"nodes named {NamedNodes}, ids moved {MovedIds}";
     }
 
-    /// <summary>
-    /// The rebuild of the bases. There is deliberately no Save button: it only gives a chance to forget
-    /// about itself — a blob assembled an hour ago looks alive next to fresh assets and lies. The
-    /// rebuild is called by the import hooks, by entering PlayMode and by the pre-build, and the menu
-    /// command is the case they do not see: the files were wiped past the assets, and there is no dirty
-    /// node for the rebuild to start from.
-    ///
-    /// The layout is deterministic, so the rebuild is idempotent: if nothing changed, not a file and
-    /// not a single asset is rewritten, and nothing gets rebaked.
-    /// </summary>
+    // The layout is deterministic, so the rebuild is idempotent: nothing changed, nothing is rewritten.
     public static class BlobchegBuild
     {
-        public const string ManifestFolder = "Assets/Blobcheg";
-
-        public static string OutputDirectory
-            => Path.Combine(Application.streamingAssetsPath, BlobchegNaming.DefaultFolder);
+        public static string OutputDirectory => BlobchegEditorOutput.Directory;
 
         /// <summary>
         /// Whether the debug contour is written into the files. In the editor always: the read-time type
@@ -59,47 +56,31 @@ namespace Blobcheg.Authoring
 
         internal static bool DebugContour = true;
 
-        /// <summary>A rebuild is running inside — an import of its own carriers is no news to the cache.</summary>
+        // The editor reads the bases by the player path: the same files, assembled the release way.
+        public static bool AsInPlayer
+        {
+            get => EditorPrefs.GetBool(PlayerMode, false);
+            set
+            {
+                EditorPrefs.SetBool(PlayerMode, value);
+                DebugContour = !value;
+            }
+        }
+
+        const string PlayerMode = "Blobcheg.AsInPlayer";
+
         public static bool Building { get; private set; }
 
-        /// <summary>
-        /// The ordinary rebuild: what did not change is taken from memory. The import hooks call it —
-        /// that is, it happens on every save of a node, and it is obliged to cost as much as changed.
-        /// </summary>
-        public static BlobchegBuildReport RebuildAll() => Rebuild(true, false);
+        // Write is called on what the index says has moved; the rest hand back the bytes they wrote.
+        public static BlobchegBuildReport RebuildAll(string trigger = null)
+            => Rebuild(BlobchegFreshness.DirtyNow(), trigger);
 
-        /// <summary>
-        /// A rebuild from scratch: the cache is forgotten, the project is walked, Write is called on all
-        /// of them. The pre-build goes this way, and so does everything where "it built" is obliged to
-        /// mean "it built from the assets and not from memory".
-        /// </summary>
-        public static BlobchegBuildReport RebuildFull()
-        {
-            BlobchegCache.Drop();
-            return Rebuild(false, false);
-        }
+        // Everything anew, from the assets and not from memory: the pre-build and the menu go this way.
+        public static BlobchegBuildReport RebuildFull(string trigger = null) => Rebuild(null, trigger);
 
-        /// <summary>
-        /// A compaction: the layout is computed from scratch, the holes left by deleted nodes disappear,
-        /// the addresses and ids are handed out anew and consecutively. It never happens by itself —
-        /// EVERY address moves, and everything that once remembered them is tied to them through
-        /// DependsOn.
-        ///
-        /// There are exactly two places: the pre-build, where everything gets rebaked right afterwards
-        /// anyway, and the editor command a human calls themselves.
-        /// </summary>
-        public static BlobchegBuildReport Compact()
+        internal static BlobchegBuildReport Rebuild(IReadOnlyCollection<string> dirty, string trigger)
         {
-            BlobchegCache.Drop();
-            return Rebuild(false, true);
-        }
-
-        static BlobchegBuildReport Rebuild(bool incremental, bool compact)
-        {
-            // Reentrancy is rejected here and not at the import hook: a node may touch the AssetDatabase
-            // with anything inside its Write and enter a rebuild from the middle of a rebuild. A nested
-            // run goes over a half-filled collector and half-handed-out ids, and "the file is built"
-            // after it means nothing.
+            // A nested run goes over a half-filled collector and half-handed-out ids.
             if (Building)
                 throw new InvalidOperationException(
                     "Blobcheg: the rebuild entered itself — most likely a node calls RebuildAll " +
@@ -109,10 +90,15 @@ namespace Blobcheg.Authoring
             var report = new BlobchegBuildReport();
             var collector = new BlobchegCollector(OutputDirectory);
 
+            var kind = dirty != null ? "rebuild" : "full rebuild";
+            using var work = BlobchegProfile.Begin(trigger == null ? kind : kind + " (" + trigger + ")");
+
             Building = true;
             try
             {
-                return Run(collector, incremental, compact, ref report);
+                var done = Run(collector, dirty, ref report);
+                work.Note(done.ToString());
+                return done;
             }
             finally
             {
@@ -120,22 +106,26 @@ namespace Blobcheg.Authoring
             }
         }
 
-        static BlobchegBuildReport Run(BlobchegCollector collector, bool incremental, bool compact,
+        // Node files the rebuild wrote carriers or names into: the only ones it saves.
+        static readonly HashSet<string> Written = new HashSet<string>(StringComparer.Ordinal);
+
+        static BlobchegBuildReport Run(BlobchegCollector collector, IReadOnlyCollection<string> dirty,
             ref BlobchegBuildReport report)
         {
-            IReadOnlyList<BlobchegCache.Entry> entries;
+            List<BlobchegNodeEntry> entries;
             using (BlobchegProfile.Section("Node list"))
-                entries = BlobchegCache.Fill();
+                entries = BlobchegNodes.Gather(dirty);
+
+            BlobchegManifests.BeginRebuild();
+            BlobchegStampStore.BeginRebuild();
+            Written.Clear();
 
             var nodes = new List<BlobchegNodeSo>(entries.Count);
+            var guids = new Dictionary<BlobchegNodeSo, string>(entries.Count);
             foreach (var entry in entries)
             {
                 nodes.Add(entry.Node);
-
-                // An edit in the inspector gives no import: the asset is dirty in memory and still old on
-                // disk. The rebuild is obliged to see what the human sees on the screen.
-                if (!incremental || EditorUtility.IsDirty(entry.Node))
-                    entry.Dirty = true;
+                guids[entry.Node] = entry.Guid;
             }
 
             // A node needs its name before it writes: a record may put the hash of its own name into
@@ -150,21 +140,21 @@ namespace Blobcheg.Authoring
 
                     entry.Dirty = true;
                     EditorUtility.SetDirty(entry.Node);
+                    Written.Add(entry.Guid);
                     report.NamedNodes++;
                 }
             }
 
-            // The carriers are read once for the whole rebuild: they are both the journal of the
-            // addresses already handed out and what will have to be checked and rewritten at the end.
+            // The carriers are read once for the whole rebuild: which pairs already have a sub-asset.
             BlobchegCarriers carriers;
             using (BlobchegProfile.Section("Reading the carriers"))
-                carriers = BlobchegCarriers.Read(entries);
+                carriers = BlobchegCarriers.Read(nodes);
 
             // The ids are handed out BEFORE the write: they are derived from OutTypes and not from what
             // the node wrote, so a node can put its own id straight into a record in one pass.
             BlobchegIdTable ids;
             using (BlobchegProfile.Section("Assigning ids"))
-                ids = BlobchegIdTable.Assign(nodes, compact ? null : carriers);
+                ids = BlobchegIdTable.Assign(nodes, (node, router) => HeldRow(carriers.Id(node, router), guids[node]));
 
             // A writer is opened for EVERY declared domain, even an empty one: otherwise a domain whose
             // last node was deleted would stay on disk as the old file.
@@ -179,23 +169,6 @@ namespace Blobcheg.Authoring
 
             using (BlobchegProfile.Section("Records to the writers"))
                 collector.Handover();
-
-            // The addresses of the previous rebuild go to the writer BEFORE Flush: the layout is obliged
-            // to leave the untouched records in their places, otherwise every new node moves someone
-            // else's addresses, and baked subscenes are tied to those through DependsOn.
-            using (BlobchegProfile.Section("Claims on the previous addresses"))
-            {
-                foreach (var entry in collector.Entries)
-                {
-                    // A compaction is a refusal of the previous addresses: there are no claims at all.
-                    if (compact)
-                        break;
-
-                    var reference = carriers.Ref(entry.Node, BlobchegDomains.NameOf(entry.Domain));
-                    if (reference != null)
-                        collector.Writers[entry.Domain].Claim(entry.Ticket, reference.offset);
-                }
-            }
 
             using (BlobchegProfile.Section("Flush of the bases"))
             {
@@ -229,17 +202,14 @@ namespace Blobcheg.Authoring
             // The carriers are written as a batch: a per-item AddObjectToAsset reimports the node for
             // every sub-asset, and on a large project that is what the whole rebuild is. A measurement on
             // 500 nodes: 34 ms per carrier without the batch against 9 ms with it.
-            //
-            // The manifests stay outside: they are saved by address, and a save by address does not fire
-            // inside a batch — see the comment in SyncManifest.
             AssetDatabase.StartAssetEditing();
             try
             {
                 using (BlobchegProfile.Section("SyncRefs"))
-                    SyncRefs(collector, carriers, nodes, ref report);
+                    SyncRefs(collector, carriers, nodes, guids, ref report);
 
                 using (BlobchegProfile.Section("SyncIds"))
-                    SyncIds(ids, carriers, nodes, ref report);
+                    SyncIds(ids, carriers, nodes, guids, ref report);
             }
             finally
             {
@@ -247,35 +217,37 @@ namespace Blobcheg.Authoring
                     AssetDatabase.StopAssetEditing();
             }
 
-            using (BlobchegProfile.Section("SyncManifests"))
-                SyncManifests(collector, nodes, ref report);
+            using (BlobchegProfile.Section("SyncStamps"))
+                report.RemovedStamps += BlobchegStampStore.Flush();
 
-            if (report.Changed)
+            using (BlobchegProfile.Section("SyncManifests"))
             {
+                SyncManifests(collector, nodes, ref report);
+                report.ChangedManifests += BlobchegManifests.Flush();
+            }
+
+            if (report.AssetsTouched)
+            {
+                // Unity has no save of one file: this writes every dirty asset, as SaveAssets would.
                 using (BlobchegProfile.Section("SaveAssets"))
-                    AssetDatabase.SaveAssets();
+                {
+                    foreach (var guid in Written)
+                        AssetDatabase.SaveAssetIfDirty(new GUID(guid));
+                }
 
                 using (BlobchegProfile.Section("Refresh"))
                     AssetDatabase.Refresh();
             }
 
-            // The cache is updated at the very end and only with what the rebuild actually wrote.
-            foreach (var entry in entries)
-            {
-                entry.Refs = carriers.RefListOf(entry.Node);
-                entry.Ids = carriers.IdListOf(entry.Node);
-                entry.Dirty = false;
-            }
+            // The index is written last and only over what the rebuild has actually just handed out.
+            BlobchegNodes.Keep(entries);
+            BlobchegFreshness.Publish(entries);
 
             return report;
         }
 
-        /// <summary>
-        /// A node nobody touched hands back its previous bytes: <c>Write</c> is not called on it at all.
-        /// The bytes are the very same ones the collector received last time, so the layout does not
-        /// depend on this — only the price does.
-        /// </summary>
-        static void WriteNode(BlobchegCache.Entry entry, BlobchegCollector collector, BlobchegIdTable ids)
+        // A node nobody touched hands back its previous bytes: Write is not called on it at all.
+        static void WriteNode(BlobchegNodeEntry entry, BlobchegCollector collector, BlobchegIdTable ids)
         {
             var node = entry.Node;
             var now = IdsNow(node, ids);
@@ -292,6 +264,7 @@ namespace Blobcheg.Authoring
             }
 
             using var _ = BlobchegProfile.Section("  node computed anew");
+            using var __ = BlobchegProfile.Section("    " + node.GetType().Name);
 
             var start = collector.Entries.Count;
 
@@ -316,11 +289,11 @@ namespace Blobcheg.Authoring
                         $"Blobcheg: node '{node.name}' declared domain '{domain.Name}' in OutTypes but wrote nothing into it");
             }
 
-            var records = new List<BlobchegCache.Written>();
+            var records = new List<BlobchegWritten>();
             for (var i = start; i < collector.Entries.Count; i++)
             {
                 var written = collector.Entries[i];
-                records.Add(new BlobchegCache.Written
+                records.Add(new BlobchegWritten
                 {
                     Domain = written.Domain,
                     RecordType = written.RecordType,
@@ -360,35 +333,8 @@ namespace Blobcheg.Authoring
         }
 
         /// <summary>
-        /// The pre-build gate: rebuild, then rebuild once more and demand that the second run change
-        /// nothing. The first run repairs a stale blob, the second proves that the layout is
-        /// deterministic — otherwise what would travel into the build is something that will be
-        /// different on the next build.
-        ///
-        /// Both runs are full: what travels into the build is obliged to be what was assembled from the
-        /// assets and not from the editor's memory. As a bonus this is the only check of the cache that
-        /// is possible at all: if it diverged from the assets, the second run will see it.
-        /// </summary>
-        public static void RequireUpToDate(string what)
-        {
-            RebuildFull();
-
-            var again = RebuildFull();
-            if (again.Changed)
-                throw new InvalidOperationException(
-                    $"Blobcheg: {what} — the rebuild did not agree with itself ({again}). " +
-                    "The layout is obliged to be deterministic; shipping with such a base is not allowed");
-        }
-
-        /// <summary>
         /// The contents of a domain are found by scanning the project rather than taken from a
         /// hand-written list: a list is one more place to forget in.
-        ///
-        /// There are two walks and both are mandatory, because they lag on different events: the search
-        /// index <c>FindAssets("t:...")</c> lags behind the import (in batch mode a freshly created node
-        /// is not found in it at all), and the full walk <c>GetAllAssetPaths</c> lags behind a move of an
-        /// asset. The identity of a node here is the GUID and not the path: under two paths it is one and
-        /// the same asset.
         ///
         /// There is a state in which NO walk finds a node: right after a rename its path is already the
         /// new one and the GUID is known, while the type and the object at it do not load yet, and
@@ -417,7 +363,7 @@ namespace Blobcheg.Authoring
             }
 
             if (lost != null)
-                throw new InvalidOperationException(
+                throw new BlobchegTransientException(
                     $"Blobcheg: node '{lost}' disappeared from the walk while its file lies on disk — the " +
                     "asset database has not digested the rename yet. A rebuild in this state would throw " +
                     "its record out of the file and shift the ids of its neighbours, and silently at that, " +
@@ -427,26 +373,31 @@ namespace Blobcheg.Authoring
             return found;
         }
 
-        /// <summary>
-        /// The GUIDs of the nodes the pipeline knows about in this session: both the walk and the cache
-        /// put them here — a node created between full walks is known only to the cache. The set outlives
-        /// <c>BlobchegCache.Drop</c> and does not outlive a domain reload — exactly the window in which a
-        /// node gets lost: an asset renamed before a reload is fully imported after it.
-        /// </summary>
+        // The nodes the walk has seen in this session. It dies with the domain — the rename window.
         static readonly HashSet<string> Seen = new HashSet<string>(StringComparer.Ordinal);
-
-        internal static void Remember(string guid)
-        {
-            if (!string.IsNullOrEmpty(guid))
-                Seen.Add(guid);
-        }
 
         static Dictionary<string, BlobchegNodeSo> Walk()
         {
-            var byGuid = new Dictionary<string, BlobchegNodeSo>(StringComparer.Ordinal);
+            using var _ = BlobchegProfile.Section("walk over the project");
 
-            foreach (var path in AssetDatabase.GetAllAssetPaths())
-                Consider(path, null, byGuid);
+            var byGuid = new Dictionary<string, BlobchegNodeSo>(StringComparer.Ordinal);
+            var guids = new List<string>();
+            var paths = new List<string>();
+
+            // Index guids follow a move; importer paths cover a lagging search. Sweep only with no index.
+            if (BlobchegFreshness.Candidates(guids, paths))
+            {
+                foreach (var guid in guids)
+                    Consider(AssetDatabase.GUIDToAssetPath(guid), guid, byGuid);
+
+                foreach (var path in paths)
+                    Consider(path, null, byGuid);
+            }
+            else
+            {
+                foreach (var path in AssetDatabase.GetAllAssetPaths())
+                    Consider(path, null, byGuid);
+            }
 
             foreach (var guid in AssetDatabase.FindAssets("t:" + nameof(BlobchegNodeSo)))
             {
@@ -530,14 +481,14 @@ namespace Blobcheg.Authoring
         }
 
         static void SyncRefs(BlobchegCollector collector, BlobchegCarriers carriers,
-            List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
+            List<BlobchegNodeSo> nodes, Dictionary<BlobchegNodeSo, string> guids, ref BlobchegBuildReport report)
         {
             var wanted = new HashSet<BlobchegRefSo>();
 
             foreach (var entry in collector.Entries)
             {
                 var writer = collector.Writers[entry.Domain];
-                var reference = Upsert(entry, writer, carriers, ref report);
+                var reference = Upsert(entry, writer, carriers, guids, ref report);
                 wanted.Add(reference);
             }
 
@@ -549,6 +500,7 @@ namespace Blobcheg.Authoring
 
                 foreach (var stale in staleRefs)
                 {
+                    Written.Add(guids[node]);
                     carriers.Forget(node, stale);
                     AssetDatabase.RemoveObjectFromAsset(stale);
                     UnityEngine.Object.DestroyImmediate(stale, true);
@@ -558,12 +510,14 @@ namespace Blobcheg.Authoring
         }
 
         static BlobchegRefSo Upsert(BlobchegEntry entry, BlobchegWriter writer, BlobchegCarriers carriers,
-            ref BlobchegBuildReport report)
+            Dictionary<BlobchegNodeSo, string> guids, ref BlobchegBuildReport report)
         {
             var domainName = BlobchegDomains.NameOf(entry.Domain);
             var wantedName = entry.Node.name + "_" + domainName;
-            var offset = writer.OffsetOf(entry.Ticket);
-            var revision = unchecked((long)writer.RevisionOf(entry.Ticket));
+
+            if (BlobchegStampStore.SyncRecord(guids[entry.Node], domainName, entry.RecordType,
+                    writer.OffsetOf(entry.Ticket), writer.RevisionOf(entry.Ticket)))
+                report.ChangedStamps++;
 
             var reference = carriers.Ref(entry.Node, domainName);
 
@@ -577,19 +531,15 @@ namespace Blobcheg.Authoring
 
                 carriers.Add(entry.Node, reference);
             }
-            else if (reference.offset == offset
-                     && reference.revision == revision
-                     && string.Equals(reference.recordType, entry.RecordType, StringComparison.Ordinal)
-                     && reference.name == wantedName)
+            else if (reference.name == wantedName && reference.domainName == domainName)
             {
                 return reference;
             }
 
+            // Only a rename touches the asset: what was re-stamped here lies next to the bases now.
+            Written.Add(guids[entry.Node]);
             reference.name = wantedName;
             reference.domainName = domainName;
-            reference.recordType = entry.RecordType;
-            reference.offset = offset;
-            reference.revision = revision;
 
             using (BlobchegProfile.Section("  refs: SetDirty"))
                 EditorUtility.SetDirty(reference);
@@ -600,8 +550,7 @@ namespace Blobcheg.Authoring
 
         // There are no labels on the carriers any more. Nobody read them — neither the picker (it walks
         // the nodes and looks at recordType) nor the bake — while every AssetDatabase.SetLabels cost
-        // 4.7 ms: on 500 nodes that is 7.1 s out of a 14.4 s cold build. Measurement:
-        // docs/blobcheg-editor-scale.md.
+        // 4.7 ms: on 500 nodes that is 7.1 s out of a 14.4 s cold build.
 
         /// <summary>The ref assets of a node — one per domain it writes into.</summary>
         public static IEnumerable<BlobchegRefSo> RefsOf(BlobchegNodeSo node)
@@ -706,7 +655,7 @@ namespace Blobcheg.Authoring
 
         /// <summary>The id carriers: one sub-asset per (node × router) pair.</summary>
         static void SyncIds(BlobchegIdTable ids, BlobchegCarriers carriers,
-            List<BlobchegNodeSo> nodes, ref BlobchegBuildReport report)
+            List<BlobchegNodeSo> nodes, Dictionary<BlobchegNodeSo, string> guids, ref BlobchegBuildReport report)
         {
             var wanted = new HashSet<BlobchegIdSo>();
 
@@ -714,12 +663,11 @@ namespace Blobcheg.Authoring
             {
                 var name = BlobchegRouters.NameOf(router);
                 var members = ids.NodesOf(router);
-                var declared = BlobchegRouters.IsFixed(router);
 
                 foreach (var node in members)
                 {
                     if (node != null)
-                        wanted.Add(UpsertId(node, name, ids.Of(node, router), carriers, declared, ref report));
+                        wanted.Add(UpsertId(node, name, ids.Of(node, router), carriers, guids, ref report));
                 }
             }
 
@@ -729,6 +677,7 @@ namespace Blobcheg.Authoring
 
                 foreach (var stale in staleIds)
                 {
+                    Written.Add(guids[node]);
                     carriers.Forget(node, stale);
                     AssetDatabase.RemoveObjectFromAsset(stale);
                     UnityEngine.Object.DestroyImmediate(stale, true);
@@ -737,43 +686,59 @@ namespace Blobcheg.Authoring
             }
         }
 
+        static int HeldRow(BlobchegIdSo carrier, string guid)
+        {
+            if (carrier == null)
+                return -1;
+
+            // No owner is a carrier from before owners existed: its row was handed out to this very node.
+            return string.IsNullOrEmpty(carrier.owner) || carrier.owner == guid ? carrier.row : -1;
+        }
+
         static BlobchegIdSo UpsertId(BlobchegNodeSo node, string routerName, BlobchegId id,
-            BlobchegCarriers carriers, bool declared, ref BlobchegBuildReport report)
+            BlobchegCarriers carriers, Dictionary<BlobchegNodeSo, string> guids, ref BlobchegBuildReport report)
         {
             var wantedName = node.name + "_" + routerName;
+            var guid = guids[node];
 
-            var carrier = carriers.Id(node, routerName);
-
-            // The flag was switched on for a router that had already handed out numbers — everyone who
-            // declared something other than what lies in the journal will move. Forbidding it is not an
-            // option: on the first rebuild after the switch everyone moves, and an error would block the
-            // migration itself. So the move does not stay silent.
-            if (declared && carrier != null && carrier.id != id.Value && new BlobchegId(carrier.id).IsValid)
+            // Not an error but a migration: everything baked against the old number is baked again.
+            if (BlobchegStampStore.TryPriorId(guid, routerName, out var was) && was != id.Value
+                && new BlobchegId(was).IsValid)
             {
                 Debug.Log($"Blobcheg: node '{node.name}' in router '{routerName}' moved: " +
-                          $"{new BlobchegId(carrier.id)} → {id}");
+                          $"{new BlobchegId(was)} → {id}");
 
                 report.MovedIds++;
             }
+
+            if (BlobchegStampStore.SyncId(guid, routerName, id.Value))
+                report.ChangedStamps++;
+
+            var carrier = carriers.Id(node, routerName);
 
             if (carrier == null)
             {
                 carrier = ScriptableObject.CreateInstance<BlobchegIdSo>();
                 carrier.name = wantedName;
                 carrier.routerName = routerName;
+                carrier.row = (int)id.Index;
+                carrier.owner = guid;
                 using (BlobchegProfile.Section("  ids: AddObjectToAsset"))
                     AssetDatabase.AddObjectToAsset(carrier, node);
 
                 carriers.Add(node, carrier);
             }
-            else if (carrier.id == id.Value && carrier.name == wantedName)
+            else if (carrier.name == wantedName && carrier.routerName == routerName && carrier.row == (int)id.Index
+                     && carrier.owner == guid)
             {
                 return carrier;
             }
 
+            Written.Add(guid);
             carrier.name = wantedName;
             carrier.routerName = routerName;
-            carrier.id = id.Value;
+            carrier.row = (int)id.Index;
+            carrier.owner = guid;
 
             using (BlobchegProfile.Section("  ids: SetDirty"))
                 EditorUtility.SetDirty(carrier);
@@ -827,80 +792,27 @@ namespace Blobcheg.Authoring
             }
         }
 
-        /// <summary>
-        /// The manifest is rewritten if ANYTHING in it diverged from what was assembled — not only the
-        /// hash. Otherwise a manifest created in a run where nothing else changed stays on disk as an
-        /// empty stub: <c>CreateAsset</c> writes it before the fields are filled, and <c>SaveAssets</c>
-        /// is not called at all in such a run.
-        /// </summary>
         internal static void SyncManifest(string name, BlobchegFileKind kind, BlobchegNodeSo[] members,
             int recordCount, ulong contentHash, bool fileChanged, ref BlobchegBuildReport report)
         {
-            var fileName = BlobchegNaming.FileName(name);
-            var manifest = LoadOrCreateManifest(name, out var created);
-
-            var same = !created
-                       && !fileChanged
-                       && manifest.kind == kind
-                       && manifest.domainName == name
-                       && manifest.fileName == fileName
-                       && manifest.recordCount == recordCount
-                       && manifest.ContentHash == contentHash
-                       && SameNodes(manifest.nodes, members);
-
-            if (same)
-                return;
-
-            manifest.kind = kind;
-            manifest.domainName = name;
-            manifest.fileName = fileName;
-            manifest.recordCount = recordCount;
-            manifest.nodes = members;
-            manifest.ContentHash = contentHash;
-            manifest.builtAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-
-            // Written by address and not by the common SaveAssets at the end: the database manages to
-            // re-read a manifest freshly created by CreateAsset from disk (as the empty stub it was
-            // before the fields were filled), and the filling is lost silently.
-            EditorUtility.SetDirty(manifest);
-            AssetDatabase.SaveAssetIfDirty(manifest);
-            report.ChangedManifests++;
+            if (BlobchegManifests.Sync(name, kind, GuidsOf(members), recordCount, contentHash, fileChanged))
+                report.ChangedManifests++;
         }
 
-        static bool SameNodes(BlobchegNodeSo[] were, BlobchegNodeSo[] are)
+        // A hole left by a deleted node keeps its place in the order and has no guid to name it by.
+        static string[] GuidsOf(BlobchegNodeSo[] members)
         {
-            if (were == null || were.Length != are.Length)
-                return false;
+            var guids = new string[members.Length];
 
-            // Compared with Unity's == and not with ReferenceEquals: a reimport of an asset changes the
-            // managed wrapper while leaving the same object — with ReferenceEquals the manifest would
-            // "change" on every rebuild.
-            for (var i = 0; i < are.Length; i++)
+            for (var i = 0; i < members.Length; i++)
             {
-                if (were[i] != are[i])
-                    return false;
+                guids[i] = members[i] != null
+                           && AssetDatabase.TryGetGUIDAndLocalFileIdentifier(members[i], out var guid, out long _)
+                    ? guid
+                    : string.Empty;
             }
 
-            return true;
-        }
-
-        static BlobchegDomainSo LoadOrCreateManifest(string domainName, out bool created)
-        {
-            var path = ManifestFolder + "/" + domainName + ".asset";
-            var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(path);
-            created = manifest == null;
-            if (manifest != null)
-                return manifest;
-
-            Directory.CreateDirectory(ManifestFolder);
-            AssetDatabase.ImportAsset(ManifestFolder);
-
-            manifest = ScriptableObject.CreateInstance<BlobchegDomainSo>();
-            AssetDatabase.CreateAsset(manifest, path);
-
-            // From here on we work with the object the database holds and not with the one it was given:
-            // after CreateAsset those are not necessarily the same instance.
-            return AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(path) ?? manifest;
+            return guids;
         }
     }
 }

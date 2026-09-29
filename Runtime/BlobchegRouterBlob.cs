@@ -1,22 +1,16 @@
 using System;
 using System.Runtime.CompilerServices;
+using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// A router row: one node across all bases at once. The mask says which bases it is in, the offsets
-    /// lie one after another with no holes — hence <c>flag → index</c> is the popcount of the lower
-    /// bits.
-    ///
-    /// The exception messages are literals: interpolation does not compile under Burst.
-    /// </summary>
+    // Offsets are packed with no holes, so a bit's index is the popcount of the lower mask bits.
     public readonly unsafe struct BlobchegRouterRow
     {
-        // A pointer into someone else's buffer: a row lives exactly as long as the loaded router.
         [NativeDisableUnsafePtrRestriction]
-        readonly uint* _offsets;
+        readonly uint* _offsets; // into the router buffer: lives exactly as long as the loaded router
 
         readonly ulong _mask;
 
@@ -26,23 +20,17 @@ namespace Blobcheg
             _mask = mask;
         }
 
-        /// <summary>The bit mask of the bases the node is in. The codegen hands it out as its own enum.</summary>
         public ulong Mask => _mask;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Has(int bit) => (_mask & (1ul << bit)) != 0;
 
-        /// <summary>
-        /// The offset of the record in base <paramref name="bit"/>. If there is no record it throws:
-        /// there is no "no record" sentinel in the package, and a silent zero would travel into
-        /// <c>Read</c> and land in someone else's bytes.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public uint Offset(int bit)
+        public uint Offset(int bit) // throws: a silent zero would reach Read and land in foreign bytes
         {
             if (!Has(bit))
                 throw new InvalidOperationException(
-                    "Blobcheg.Router: this node has no record in this base — ask Has or TryGet");
+                    "Blobcheg.Router: this node has no record in this base — ask Has or TryGet"); // literal: Burst
 
             return _offsets[math.countbits(_mask & ((1ul << bit) - 1))];
         }
@@ -61,19 +49,11 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>
-    /// The resident buffer of a router. It does all the work; the typed facade (the
-    /// <c>[BlobchegRouter]</c> partial) is a thin wrapper on top that knows the bit numbers of its
-    /// bases.
-    /// </summary>
     public unsafe struct BlobchegRouterBlob : IDisposable
     {
         BlobchegBuffer _buffer;
 
-        // Three pointers into that same immutable buffer. The attribute sits here and not on the
-        // reader: a router enters a job as a field, and without it the safety system kills the schedule
-        // over a raw pointer — naming a field of the package the consumer has no business with. Safe by
-        // construction: the buffer lives for the whole session and is only read.
+        // Attribute here, not on the reader: a router enters jobs as a field; the buffer is read-only.
         [NativeDisableUnsafePtrRestriction]
         byte* _masks;
 
@@ -86,9 +66,9 @@ namespace Blobcheg
         uint _count;
         uint _maskWidth;
         uint _debugOffset;
+        ulong _identityKey;
         byte _tag;
 
-        /// <summary>Takes ownership of the buffer, validates the header, the integrity and the prolog.</summary>
         public BlobchegRouterBlob(BlobchegBuffer buffer, string what, int domainCount, ulong layoutHash)
         {
             if (!buffer.IsCreated)
@@ -124,29 +104,42 @@ namespace Blobcheg
 
                 _debugOffset = header.DebugOffset;
             }
+
+            // The register is how Resident finds the router past any world, as the bases do.
+            _identityKey = BlobchegNaming.NameHash(what);
+            BlobchegDomainNames.Remember(_identityKey, what);
+            BlobchegBases.Register(_identityKey, buffer.Ptr, buffer.Length, _debugOffset);
+        }
+
+        public static BlobchegRouterBlob FromRegistry(byte* ptr, int length, byte tag, uint debugOffset) // non-owning
+        {
+            ref var prolog = ref UnsafeUtility.AsRef<BlobchegRouterProlog>(ptr + BlobchegRouterFormat.PrologOffset);
+
+            return new BlobchegRouterBlob
+            {
+                _buffer = new BlobchegBuffer { Ptr = ptr, Length = length, Allocator = Allocator.None },
+                _tag = tag,
+                _count = prolog.Count,
+                _maskWidth = prolog.MaskWidth,
+                _masks = ptr + prolog.MasksOffset,
+                _rowStart = (uint*)(ptr + prolog.RowStartOffset),
+                _offsets = (uint*)(ptr + prolog.OffsetsOffset),
+                _debugOffset = debugOffset,
+            };
         }
 
         public bool IsCreated => _buffer.IsCreated;
 
-        /// <summary>How many rows, that is, nodes. Also the ceiling of the row number in a valid id.</summary>
-        public int Count => (int)_count;
+        public int Count => (int)_count; // also the row-number ceiling of a valid id
 
         public bool HasDebug => _debugOffset != 0;
 
-        /// <summary>The tag of this router — the high byte of the ids it hands out.</summary>
-        public byte Tag => _tag;
+        public byte Tag => _tag; // the high byte of the ids it hands out
 
-        /// <summary>
-        /// The id of a row by its number. The range is NOT checked here — that is <see cref="Get"/>'s
-        /// business; the path of tools and tests, a consumer does not assemble ids.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public BlobchegId IdAt(uint index) => BlobchegId.Make(_tag, index);
+        public BlobchegId IdAt(uint index) => BlobchegId.Make(_tag, index); // unchecked: tools and tests
 
-        /// <summary>
-        /// The row of a node. Neither check sits behind a define: they are two comparisons, and a
-        /// foreign or stale id would read foreign memory in a build.
-        /// </summary>
+        // Checks are not behind a define: a foreign or stale id would read foreign memory in a build.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public BlobchegRouterRow Get(BlobchegId id)
         {
@@ -176,6 +169,12 @@ namespace Blobcheg
 
         public void Dispose()
         {
+            if (_identityKey != 0)
+            {
+                BlobchegBases.Unregister(_identityKey, _buffer.Ptr);
+                _identityKey = 0;
+            }
+
             _buffer.Dispose();
             _masks = null;
             _rowStart = null;
@@ -184,8 +183,7 @@ namespace Blobcheg
             _debugOffset = 0;
         }
 
-        /// <summary>The node name by id — for editor tools only; a release player carries no section.</summary>
-        public string Describe(BlobchegId id)
+        public string Describe(BlobchegId id) // editor tools only: a release file has no debug section
         {
             if (_debugOffset == 0)
                 throw new InvalidOperationException(

@@ -108,29 +108,23 @@ namespace Blobcheg.AdvancedTests
             }
         }
 
-        /// <summary>
-        /// The other side: a compaction moves addresses on purpose. What matters here is that it does not
-        /// leave the consumer with a stale number silently — the carriers are rewritten, and at the old
-        /// address either the wrong record lies or nothing does.
-        /// </summary>
+        // A deleted neighbour moves addresses, and the consumer is not left with a stale number.
         [Test]
-        public void A_compaction_moves_the_address_and_rewrites_the_carrier()
+        public void A_deleted_neighbour_moves_the_address_and_the_old_one_stops_reading()
         {
             var armor = Node<AdvArmorNodeSo>("Armor");
             var gun = Node<AdvComboNodeSo>("Combo");
             Rebuild();
 
+            var withHole = OffsetOf(gun, "IAdvCombat");
+
             Kill(armor);
             Rebuild();
 
-            var withHole = OffsetOf(gun, "IAdvCombat");
-
-            BlobchegBuild.Compact();
-
             var compacted = OffsetOf(gun, "IAdvCombat");
-            Assert.That(compacted, Is.LessThan(withHole), "the compaction removed the hole and pulled the record in");
+            Assert.That(compacted, Is.LessThan(withHole), "the record was pulled into the place of the departed");
             Assert.That(compacted, Is.EqualTo((uint)BlobchegFormat.HeaderSize),
-                "after a compaction the only record lies right after the header");
+                "the only record lies right after the header");
 
             var db = Combat();
             try
@@ -197,10 +191,9 @@ namespace Blobcheg.AdvancedTests
             Node<AdvComboNodeSo>("Combo");
             Rebuild();
 
-            var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(
-                BlobchegBuild.ManifestFolder + "/IAdvCombat.asset");
+            var manifest = BlobchegManifests.Of("IAdvCombat");
 
-            Assert.That(manifest, Is.Not.Null, "the manifest is what a developer sees with their eyes in the project");
+            Assert.That(manifest, Is.Not.Null, "the manifest is what a developer sees in the inspector window");
             Assert.That(manifest.recordCount, Is.GreaterThan(0));
 
             File.Delete(FileOf("IAdvCombat"));

@@ -61,8 +61,8 @@ namespace Blobcheg.CodeGen
 
         static readonly DiagnosticDescriptor NoEntitiesReference = new DiagnosticDescriptor(
             "BCHG008", "No reference to Blobcheg.Entities",
-            "Struct '{0}' is declared IComponentData — a boot system is emitted for it, and the assembly does " +
-            "not reference Blobcheg.Entities. Add the reference or drop IComponentData",
+            "Struct '{0}' sets AutoLoad = true — a boot system is emitted for it, and the assembly does " +
+            "not reference Blobcheg.Entities. Add the reference or drop AutoLoad",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         static readonly DiagnosticDescriptor HashesNotPartial = new DiagnosticDescriptor(
@@ -73,6 +73,12 @@ namespace Blobcheg.CodeGen
         static readonly DiagnosticDescriptor HashesNoRouter = new DiagnosticDescriptor(
             "BCHG010", "The hash table references something that is not a router",
             "The [BlobchegHashes] on struct '{0}' was given '{1}': {2}",
+            "Blobcheg", DiagnosticSeverity.Error, true);
+
+        static readonly DiagnosticDescriptor ComponentDataBanned = new DiagnosticDescriptor(
+            "BCHG011", "A base is not a world citizen",
+            "Struct '{0}' is declared IComponentData — a Blobcheg base, router or hash table must not be " +
+            "a component. Loading is opted in with AutoLoad = true on the attribute; access goes through Resident",
             "Blobcheg", DiagnosticSeverity.Error, true);
 
         public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -104,6 +110,10 @@ namespace Blobcheg.CodeGen
         sealed class DbInfo
         {
             public string DbName;
+
+            /// <summary>The fully qualified name — the router emits typed views of foreign-namespace bases.</summary>
+            public string DbFull;
+
             public string DomainMetadata;
             public string Member;
             public string RouterName;
@@ -176,6 +186,7 @@ namespace Blobcheg.CodeGen
                     var info = new DbInfo
                     {
                         DbName = pair.Type.Name,
+                        DbFull = pair.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                         DomainMetadata = MetadataName(domain),
                         Member = pair.Attribute.ConstructorArguments.Length > 1
                             ? pair.Attribute.ConstructorArguments[1].Value as string
@@ -284,7 +295,7 @@ namespace Blobcheg.CodeGen
                 return;
             }
 
-            var boot = Boot(source, symbol, declaration, model, out var autoCreate);
+            var boot = Boot(source, symbol, declaration, model, attribute, out var autoCreate);
 
             var text = new StringBuilder();
             var domainFull = domain.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -296,6 +307,9 @@ namespace Blobcheg.CodeGen
                 .Append(symbol.Name).AppendLine(" : global::System.IDisposable");
             text.AppendLine("    {");
             text.Append("        public const string DomainName = \"").Append(domain.Name).AppendLine("\";");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The registry key of this base — the file identity, fnv1a-64 of the domain name.</summary>");
+            text.Append("        public const ulong DomainKey = 0x").Append(Fnv1a(domain.Name).ToString("X16")).AppendLine("UL;");
             text.AppendLine();
             text.AppendLine("        global::Blobcheg.BlobchegBlob __blob;");
             text.AppendLine();
@@ -325,6 +339,26 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            => ref __blob.Read<T>(offset);");
             text.AppendLine();
             text.AppendLine("        public void Dispose() => __blob.Dispose();");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>A non-owning view over the loaded base — assembled from the registry, valid from any thread and from Burst.</summary>");
+            text.Append("        internal static unsafe ").Append(symbol.Name).AppendLine(" __FromRegistry()");
+            text.AppendLine("        {");
+            text.AppendLine("            if (!global::Blobcheg.BlobchegBases.TryGetDebug(DomainKey, out var __ptr, out var __dbg))");
+            text.AppendLine("                throw new global::System.InvalidOperationException(");
+            text.Append("                    \"Blobcheg: base '").Append(symbol.Name).AppendLine("' is not loaded — there is nothing to hand out\");");
+            text.AppendLine();
+            text.AppendLine("            global::Blobcheg.BlobchegBases.TryGet(DomainKey, out _, out var __len);");
+            text.Append("            return new ").Append(symbol.Name)
+                .AppendLine(" { __blob = global::Blobcheg.BlobchegBlob.FromRegistry(__ptr, __len, __dbg, DomainKey) };");
+            text.AppendLine("        }");
+
+            if (info == null || info.Member == null)
+            {
+                text.AppendLine();
+                text.AppendLine("        /// <summary>The loaded base. Take it where you stand — no world, no singleton.</summary>");
+                text.Append("        public static ").Append(symbol.Name).AppendLine(" Resident => __FromRegistry();");
+            }
+
             text.AppendLine("    }");
 
             if (boot)
@@ -386,7 +420,7 @@ namespace Blobcheg.CodeGen
 
             var maskWidth = MaskWidthFor(router.Dbs.Count);
             var layoutHash = LayoutHash(router.Dbs, maskWidth);
-            var boot = Boot(source, symbol, declaration, model, out var autoCreate);
+            var boot = Boot(source, symbol, declaration, model, ctx.Attributes[0], out var autoCreate);
 
             var text = new StringBuilder();
             Open(text, symbol, out var space);
@@ -440,6 +474,12 @@ namespace Blobcheg.CodeGen
             text.Append("        public const ulong LayoutHash = 0x").Append(layoutHash.ToString("X16")).AppendLine("UL;");
             text.AppendLine();
             text.Append("        public const int DomainCount = ").Append(router.Dbs.Count).AppendLine(";");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The registry key of the router file — fnv1a-64 of the router name.</summary>");
+            text.Append("        public const ulong RouterKey = 0x").Append(Fnv1a(symbol.Name).ToString("X16")).AppendLine("UL;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The high byte of the ids this router hands out — mirrors BlobchegNaming.TagOf.</summary>");
+            text.Append("        public const byte RouterTag = ").Append(TagOf(symbol.Name)).AppendLine(";");
             text.AppendLine();
             text.AppendLine("        global::Blobcheg.BlobchegRouterBlob __router;");
             text.AppendLine();
@@ -515,6 +555,31 @@ namespace Blobcheg.CodeGen
 
             text.AppendLine();
             text.AppendLine("        public void Dispose() => __router.Dispose();");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The loaded router. Take it where you stand — no world, no singleton.</summary>");
+            text.Append("        public static unsafe ").Append(symbol.Name).AppendLine(" Resident");
+            text.AppendLine("        {");
+            text.AppendLine("            get");
+            text.AppendLine("            {");
+            text.AppendLine("                if (!global::Blobcheg.BlobchegBases.TryGetDebug(RouterKey, out var __ptr, out var __dbg))");
+            text.AppendLine("                    throw new global::System.InvalidOperationException(");
+            text.Append("                        \"Blobcheg: router '").Append(symbol.Name).AppendLine("' is not loaded — there is nothing to hand out\");");
+            text.AppendLine();
+            text.AppendLine("                global::Blobcheg.BlobchegBases.TryGet(RouterKey, out _, out var __len);");
+            text.Append("                return new ").Append(symbol.Name)
+                .AppendLine(" { __router = global::Blobcheg.BlobchegRouterBlob.FromRegistry(__ptr, __len, RouterTag, __dbg) };");
+            text.AppendLine("            }");
+            text.AppendLine("        }");
+
+            for (var i = 0; i < router.Dbs.Count; i++)
+            {
+                var db = router.Dbs[i];
+                text.AppendLine();
+                text.Append("        /// <summary>The typed view of base ").Append(db.DbName).AppendLine(" — assembled from the registry.</summary>");
+                text.Append("        public ").Append(db.DbFull).Append(' ').Append(Pascal(db.Member))
+                    .Append(" => ").Append(db.DbFull).AppendLine(".__FromRegistry();");
+            }
+
             text.AppendLine("    }");
 
             if (boot)
@@ -566,7 +631,7 @@ namespace Blobcheg.CodeGen
 
             var maskWidth = MaskWidthFor(router.Dbs.Count);
             var layoutHash = LayoutHash(router.Dbs, maskWidth);
-            var boot = Boot(source, symbol, declaration, model, out var autoCreate);
+            var boot = Boot(source, symbol, declaration, model, attribute, out var autoCreate);
 
             var text = new StringBuilder();
             Open(text, symbol, out var space);
@@ -585,6 +650,12 @@ namespace Blobcheg.CodeGen
             text.Append("        public const ulong LayoutHash = 0x").Append(layoutHash.ToString("X16")).AppendLine("UL;");
             text.AppendLine();
             text.Append("        public const int DomainCount = ").Append(router.Dbs.Count).AppendLine(";");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The registry key of the table file — fnv1a-64 of the file identity.</summary>");
+            text.Append("        public const ulong HashesKey = 0x").Append(Fnv1a(router.Name + "Hashes").ToString("X16")).AppendLine("UL;");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The high byte of the ids this table hands out — mirrors BlobchegNaming.TagOf.</summary>");
+            text.Append("        public const byte RouterTag = ").Append(TagOf(router.Name)).AppendLine(";");
             text.AppendLine();
             text.AppendLine("        global::Blobcheg.BlobchegHashesBlob __hashes;");
             text.AppendLine();
@@ -659,6 +730,20 @@ namespace Blobcheg.CodeGen
 
             text.AppendLine();
             text.AppendLine("        public void Dispose() => __hashes.Dispose();");
+            text.AppendLine();
+            text.AppendLine("        /// <summary>The loaded table. Take it where you stand — no world, no singleton.</summary>");
+            text.Append("        public static unsafe ").Append(symbol.Name).AppendLine(" Resident");
+            text.AppendLine("        {");
+            text.AppendLine("            get");
+            text.AppendLine("            {");
+            text.AppendLine("                if (!global::Blobcheg.BlobchegBases.TryGet(HashesKey, out var __ptr, out var __len))");
+            text.AppendLine("                    throw new global::System.InvalidOperationException(");
+            text.Append("                        \"Blobcheg: hash table '").Append(symbol.Name).AppendLine("' is not loaded — there is nothing to hand out\");");
+            text.AppendLine();
+            text.Append("                return new ").Append(symbol.Name)
+                .AppendLine(" { __hashes = global::Blobcheg.BlobchegHashesBlob.FromRegistry(__ptr, __len, RouterTag) };");
+            text.AppendLine("            }");
+            text.AppendLine("        }");
             text.AppendLine("    }");
 
             // No BlobchegSweep: no entity points into the table buffer, there is nothing to move.
@@ -673,19 +758,26 @@ namespace Blobcheg.CodeGen
         // ---------------------------------------------------------------- boot
 
         /// <summary>
-        /// A boot system is emitted for a struct declared <c>IComponentData</c>: that is the explicit
-        /// opt-in "I want it as a singleton". Not declared — the load is written by hand, as in v1.
+        /// A boot system is emitted for a struct whose attribute sets <c>AutoLoad = true</c>: that is
+        /// the explicit opt-in "load me at world boot". Not set — the load is written by hand, as in v1.
+        /// Declaring the struct <c>IComponentData</c> is an error: a base is not a world citizen.
         /// </summary>
         static bool Boot(SourceProductionContext source, INamedTypeSymbol symbol,
-            StructDeclarationSyntax declaration, Model model, out bool autoCreate)
+            StructDeclarationSyntax declaration, Model model, AttributeData attribute, out bool autoCreate)
         {
             // A [DisableAutoCreation] on the base travels onto the emitted system: "the system is needed,
             // but I decide who creates it". Without that the default world would load a base that has no
             // place in it.
             autoCreate = !symbol.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == DisableAutoCreation);
 
-            var component = symbol.AllInterfaces.Any(i => i.ToDisplayString() == ComponentData);
-            if (!component)
+            if (symbol.AllInterfaces.Any(i => i.ToDisplayString() == ComponentData))
+            {
+                source.ReportDiagnostic(Diagnostic.Create(ComponentDataBanned, declaration.Identifier.GetLocation(), symbol.Name));
+                return false;
+            }
+
+            var autoLoad = attribute.NamedArguments.Any(a => a.Key == "AutoLoad" && a.Value.Value is bool on && on);
+            if (!autoLoad)
                 return false;
 
             if (model.HasEntities)
@@ -714,7 +806,8 @@ namespace Blobcheg.CodeGen
             bool sweep = true)
         {
             text.AppendLine();
-            text.Append("    /// <summary>Loading '").Append(typeName).AppendLine("' into a singleton. Emitted by the codegen.</summary>");
+            text.Append("    /// <summary>Loading '").Append(typeName)
+                .AppendLine("' — the blob is held by this system; access goes through Resident. Emitted by the codegen.</summary>");
             text.AppendLine("    [global::Unity.Entities.WorldSystemFilter(");
             text.AppendLine("        global::Unity.Entities.WorldSystemFilterFlags.Default | global::Unity.Entities.WorldSystemFilterFlags.Editor)]");
             text.AppendLine("    [global::Unity.Entities.UpdateInGroup(typeof(global::Blobcheg.BlobchegBootGroup))]");
@@ -724,7 +817,7 @@ namespace Blobcheg.CodeGen
                 .AppendLine("BootSystem : global::Unity.Entities.ISystem");
             text.AppendLine("    {");
             text.AppendLine("        global::Blobcheg.BlobchegLoad __load;");
-            text.AppendLine("        global::Unity.Entities.EntityQuery __query;");
+            text.Append("        ").Append(typeName).AppendLine(" __value;");
             text.AppendLine("        bool __created;");
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("        int __seen;");
@@ -736,9 +829,6 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        {");
             text.Append("            __load = global::Blobcheg.BlobchegTransport.Default.Read(").Append(typeName)
                 .AppendLine(".FileName, global::Unity.Collections.Allocator.Persistent);");
-            // A write query and not a read one: the reload puts the new blob into the singleton with it.
-            text.Append("            __query = state.GetEntityQuery(global::Unity.Entities.ComponentType.ReadWrite<")
-                .Append(typeName).AppendLine(">());");
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("            // The file number is taken at the START of the read and not at its end: the rebuild that");
             text.AppendLine("            // landed in the middle of the read is the one that broke it, and its number is obliged to");
@@ -796,7 +886,6 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            // Ownership of the buffer has left the read: if the constructor rejects the file, there is");
             text.AppendLine("            // nobody left to free the buffer, and every load attempt would leak a whole base.");
             text.AppendLine("            var __buffer = __load.Acquire();");
-            text.Append("            ").Append(typeName).AppendLine(" __value;");
             text.AppendLine("            try");
             text.AppendLine("            {");
             text.Append("                __value = new ").Append(typeName).AppendLine("(__buffer);");
@@ -817,7 +906,6 @@ namespace Blobcheg.CodeGen
             text.AppendLine("                throw;");
             text.AppendLine("            }");
             text.AppendLine();
-            text.AppendLine("            state.EntityManager.CreateSingleton(__value);");
             text.AppendLine("            __created = true;");
             text.AppendLine("#if UNITY_EDITOR");
             text.AppendLine("            __quiet = false;");
@@ -907,10 +995,8 @@ namespace Blobcheg.CodeGen
             text.AppendLine("            // The jobs reading the previous buffer are obliged to finish before it is freed.");
             text.AppendLine("            state.EntityManager.CompleteAllTrackedJobs();");
             text.AppendLine();
-            text.Append("            var stale = __query.GetSingleton<").Append(typeName).AppendLine(">();");
-            text.AppendLine("            stale.Dispose();");
-            text.AppendLine();
-            text.AppendLine("            __query.SetSingleton(fresh);");
+            text.AppendLine("            __value.Dispose();");
+            text.AppendLine("            __value = fresh;");
             text.AppendLine("            __quiet = false;");
 
             if (sweep)
@@ -949,14 +1035,9 @@ namespace Blobcheg.CodeGen
             text.AppendLine("        public void OnDestroy(ref global::Unity.Entities.SystemState state)");
             text.AppendLine("        {");
             text.AppendLine("            if (__created)");
-            text.AppendLine("            {");
-            text.Append("                var value = __query.GetSingleton<").Append(typeName).AppendLine(">();");
-            text.AppendLine("                value.Dispose();");
-            text.AppendLine("            }");
+            text.AppendLine("                __value.Dispose();");
             text.AppendLine("            else");
-            text.AppendLine("            {");
             text.AppendLine("                __load.Dispose();");
-            text.AppendLine("            }");
             text.AppendLine("        }");
             text.AppendLine("    }");
         }
@@ -1060,5 +1141,26 @@ namespace Blobcheg.CodeGen
                 }
             }
         }
+
+        /// <summary>
+        /// Must mirror <c>BlobchegNaming.NameHash</c> byte for byte — the emitted key IS the registry
+        /// key of the file. The boot tests hold the two together.
+        /// </summary>
+        static ulong Fnv1a(string name)
+        {
+            const ulong prime = 1099511628211;
+            var hash = 14695981039346656037;
+
+            foreach (var b in Encoding.UTF8.GetBytes(name ?? string.Empty))
+            {
+                hash ^= b;
+                hash *= prime;
+            }
+
+            return hash;
+        }
+
+        /// <summary>Must mirror <c>BlobchegNaming.TagOf</c> — the emitted tag assembles Resident router views.</summary>
+        static byte TagOf(string routerName) => (byte)(Fnv1a(routerName) % 255 + 1);
     }
 }

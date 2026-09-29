@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using UnityEditor;
 
 namespace Blobcheg.Authoring
 {
@@ -49,10 +48,7 @@ namespace Blobcheg.Authoring
 
         public static string NameOf(Type router) => router.Name;
 
-        /// <summary>
-        /// A router whose row numbers are declared by the nodes. The rebuild does not hand them out and
-        /// does not read carriers for them — neither on an ordinary run nor on a compaction.
-        /// </summary>
+        // A router whose row numbers are declared by the nodes, so the rebuild hands out none of them.
         public static bool IsFixed(Type router)
         {
             Build();
@@ -152,7 +148,7 @@ namespace Blobcheg.Authoring
             if (_all != null)
                 return;
 
-            var routers = TypeCache.GetTypesWithAttribute<BlobchegRouterAttribute>()
+            var routers = BlobchegTypeScan.WithAttribute<BlobchegRouterAttribute>()
                 .OrderBy(type => type.Name, StringComparer.Ordinal)
                 .ToArray();
 
@@ -172,7 +168,7 @@ namespace Blobcheg.Authoring
             var byDomain = new Dictionary<Type, Membership>();
             var domains = routers.ToDictionary(router => router, _ => new List<Type>());
 
-            foreach (var database in TypeCache.GetTypesWithAttribute<BlobchegAttribute>())
+            foreach (var database in BlobchegTypeScan.WithAttribute<BlobchegAttribute>())
             {
                 var attribute = (BlobchegAttribute)database
                     .GetCustomAttributes(typeof(BlobchegAttribute), false)

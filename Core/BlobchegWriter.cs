@@ -43,7 +43,6 @@ namespace Blobcheg
     {
         readonly List<BlobchegRecord> _records = new List<BlobchegRecord>();
         readonly HashSet<string> _keys = new HashSet<string>(StringComparer.Ordinal);
-        readonly Dictionary<int, uint> _claims = new Dictionary<int, uint>();
 
         uint[] _offsets;
         ulong[] _revisions;
@@ -104,33 +103,6 @@ namespace Blobcheg
                 Append(records[i]);
 
             return first;
-        }
-
-        /// <summary>
-        /// The address this record already received in the previous rebuild. The source is the carrier
-        /// of the node, so the journal of addresses lives in git next to the node and survives a
-        /// checkout without a .bcheg.
-        ///
-        /// A claim is a request, not an order: a record that grew into someone else's claimed address
-        /// loses its own claim and moves to the tail, while the neighbour stays put. The record that
-        /// moves is exactly the one that was edited — its consumers get rebaked either way.
-        /// </summary>
-        public void Claim(int ticket, uint offset)
-        {
-            if (_flushed)
-                throw new InvalidOperationException(
-                    $"Blobcheg: Claim into domain '{DomainName}' after Flush — the layout is already computed");
-
-            if (ticket < 0 || ticket >= _records.Count)
-                throw new ArgumentOutOfRangeException(nameof(ticket),
-                    $"Blobcheg: domain '{DomainName}' — a claim on ticket {ticket}, while there are {_records.Count} records");
-
-            // A garbage address is no reason to lay the file out crooked: the claim is simply ignored,
-            // the record gets a place in the tail and the carrier gets a new address.
-            if (offset < BlobchegFormat.HeaderSize || offset % BlobchegFormat.RecordAlign != 0)
-                return;
-
-            _claims[ticket] = offset;
         }
 
         /// <summary>
@@ -218,105 +190,20 @@ namespace Blobcheg
             return order;
         }
 
-        /// <summary>
-        /// Claimed addresses take their own places, everything else lands behind them in the tail. The
-        /// hole left by a deleted node stays as zeroes: moving the neighbours means shifting someone
-        /// else's addresses, and already baked subscenes are tied to those through DependsOn.
-        ///
-        /// A record that grew into someone else's claim loses its own and moves away itself — the
-        /// neighbours do not budge. One that shrank stays in place, the dead remainder lies as zeroes.
-        /// Unplaced records first settle into the holes between claims and only then into the tail —
-        /// that is what keeps the base from swelling under active editing of lengths.
-        ///
-        /// When there are no claims at all (a first build, a compaction) the layout is exactly the one
-        /// it always was: groups by type, raw ones in the tail.
-        /// </summary>
+        // One after another in the order above: every machine computes the same addresses.
         byte[] Layout(int[] order, bool withDebug, out uint[] offsets)
         {
             offsets = new uint[_records.Count];
-            var placed = new bool[_records.Count];
 
             var position = BlobchegFormat.HeaderSize;
 
-            // Holes between placed claims, by ascending address. Without them every edit of a length
-            // would leave an abandoned chunk behind, and the base would grow by the sum of all the
-            // intermediate versions of the record.
-            var holes = new List<(int start, int end)>();
-
-            if (_claims.Count > 0)
-            {
-                var rank = new int[_records.Count];
-                for (var i = 0; i < order.Length; i++)
-                    rank[order[i]] = i;
-
-                // By ascending address: an overlap is only visible in that order. Identical addresses
-                // (a cloned carrier) are separated by the previous deterministic order.
-                var claimed = new List<int>(_claims.Keys);
-                claimed.Sort((a, b) => _claims[a] != _claims[b]
-                    ? _claims[a].CompareTo(_claims[b])
-                    : rank[a].CompareTo(rank[b]));
-
-                foreach (var ticket in claimed)
-                {
-                    var claim = (int)_claims[ticket];
-                    if (claim < position)
-                        continue;
-
-                    // The growth boundary is the nearest strictly greater claimed address: up to it the
-                    // record has the right to grow, past it someone else's place begins. If it does not
-                    // fit, the claim is lost by IT, not by the neighbour: the record that moves is
-                    // exactly the one that was edited, and only its consumers get rebaked. Equal
-                    // addresses (a cloned carrier) are no boundary to each other — the `claim <
-                    // position` check above separates them.
-                    if (claim + SpanOf(ticket) > BoundaryOf(claimed, claim))
-                        continue;
-
-                    if (claim > position)
-                        holes.Add((position, claim));
-
-                    offsets[ticket] = (uint)claim;
-                    placed[ticket] = true;
-                    position = claim + SpanOf(ticket);
-                }
-            }
-
-            // An unplaced record takes the first hole it fits into with alignment, and only then the
-            // tail. The order of the holes is by ascending address, the order of the records is the
-            // previous BuildOrder, so the layout stays deterministic.
             for (var i = 0; i < order.Length; i++)
             {
                 var ticket = order[i];
-                if (placed[ticket])
-                    continue;
 
-                var span = SpanOf(ticket);
-                var at = -1;
-
-                for (var h = 0; h < holes.Count; h++)
-                {
-                    var start = BlobchegFormat.AlignUp(holes[h].start);
-                    if (start + span > holes[h].end)
-                        continue;
-
-                    at = start;
-
-                    // The taken part is cut off, the remainder stays a hole.
-                    if (start + span < holes[h].end)
-                        holes[h] = (start + span, holes[h].end);
-                    else
-                        holes.RemoveAt(h);
-
-                    break;
-                }
-
-                if (at < 0)
-                {
-                    position = BlobchegFormat.AlignUp(position);
-                    at = position;
-                    position += span;
-                }
-
-                offsets[ticket] = (uint)at;
+                position = BlobchegFormat.AlignUp(position);
+                offsets[ticket] = (uint)position;
+                position += SpanOf(ticket);
             }
 
             var debugOffset = 0;
@@ -355,42 +242,10 @@ namespace Blobcheg
             return length > 0 ? length : 1;
         }
 
-        /// <summary>
-        /// The nearest strictly greater claimed address — the boundary up to which a record may grow
-        /// without touching someone else's place. Past the last claim lies only the tail, and there the
-        /// boundary is infinite. The list arrived sorted by address, so the search is binary.
-        /// </summary>
-        int BoundaryOf(List<int> claimed, int claim)
-        {
-            var boundary = int.MaxValue;
-
-            var lo = 0;
-            var hi = claimed.Count - 1;
-            while (lo <= hi)
-            {
-                var mid = lo + (hi - lo) / 2;
-                var at = (int)_claims[claimed[mid]];
-                if (at > claim)
-                {
-                    boundary = at;
-                    hi = mid - 1;
-                }
-                else
-                {
-                    lo = mid + 1;
-                }
-            }
-
-            return boundary;
-        }
-
         uint DebugOffset { get; set; }
 
-        /// <summary>
-        /// The entries of the section run by ascending offset: <see cref="BlobchegDebugSection.Find"/>
-        /// searches with a binary search. The layout order is no longer good for that — a claimed
-        /// address puts a record anywhere, not right after the previous one.
-        /// </summary>
+        // The entries of the section run by ascending offset: BlobchegDebugSection.Find is a binary
+        // search over them.
         byte[] BuildDebugSection(int[] layoutOrder, uint[] offsets, uint sectionOffset)
         {
             var order = (int[])layoutOrder.Clone();

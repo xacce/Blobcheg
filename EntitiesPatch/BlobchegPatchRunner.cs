@@ -5,14 +5,7 @@ using Unity.Entities;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The patch itself. Called by the fork for every contiguous run of component elements: for an
-    /// ordinary component once per type in a chunk, for a buffer once per entity.
-    ///
-    /// Burst code, so there are no exceptions here: a message with numbers substituted into it cannot
-    /// be assembled under Burst. A failure is dropped into <see cref="BlobchegPatchErrors"/>, and the
-    /// managed side shows it to a human — at the nearest update of the boot group.
-    /// </summary>
+    // Burst patch per contiguous element run; failures go to BlobchegPatchErrors since Burst cannot throw.
     [BurstCompile]
     internal static unsafe class BlobchegPatchRunner
     {
@@ -50,10 +43,7 @@ namespace Blobcheg
                     {
                         case BlobchegRebase.Patched:
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                            // The check comes BEFORE the write: a failed patch is obliged to leave the
-                            // slot as it was. Writing a foreign address and only then complaining would
-                            // poison the field — and the next pass would translate the poison as a
-                            // lawful generation address.
+                            // Check before writing: a failed patch must leave the slot intact, else the next pass trusts it.
                             if (mode != ModeUnresolve && !RecordMatches(slot, moved))
                             {
                                 BlobchegPatchErrors.Report(
@@ -80,15 +70,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// Checks that a record of the expected type really does start at the resulting address. It
-        /// leans on the debug contour of the file — the very one <c>BlobchegBlob.Read</c> checks the
-        /// type against on the old path; a release player has no contour and no check either.
-        ///
-        /// Without it two troubles pass silently: a slot typed with a twin of the record, and a shifted
-        /// layout after which the generation translation hands out the neighbouring record instead of
-        /// its own.
-        /// </summary>
+        // Debug-contour type check: catches a slot typed with a twin record or a shifted layout.
         static bool RecordMatches(BlobchegFieldSlot* slot, ulong address)
         {
             if (slot->RecordTypeHash == 0)
@@ -97,8 +79,7 @@ namespace Blobcheg
             if (!BlobchegBases.TryGetDebug(slot->DomainKey, out var basePtr, out var debugOffset))
                 return true;
 
-            // No contour — a release file, there is nothing to check against, and that is not a read error.
-            if (debugOffset == 0)
+            if (debugOffset == 0) // Release file: no contour, nothing to check.
                 return true;
 
             var offset = (uint)(address - (ulong)basePtr);
@@ -108,11 +89,6 @@ namespace Blobcheg
         }
     }
 
-    /// <summary>
-    /// The mailbox of patch failures: Burst code drops a code and numbers here, the managed side
-    /// assembles a human message out of them. The first failure wins — the rest are only counted,
-    /// otherwise a scene of ten thousand entities would bury the log under the same line.
-    /// </summary>
     public static class BlobchegPatchErrors
     {
         internal struct Slot
@@ -121,7 +97,7 @@ namespace Blobcheg
             public int TypeIndex;
             public ulong DomainKey;
             public ulong Value;
-            public int Count;
+            public int Count; // First failure wins; later ones are only counted so a big scene cannot flood the log.
         }
 
         static readonly SharedStatic<Slot> s_Slot = SharedStatic<Slot>.GetOrCreate<Slot>();
@@ -145,20 +121,7 @@ namespace Blobcheg
 
         public static void Clear() => s_Slot.Data = default;
 
-        /// <summary>
-        /// Throws on the first failure and clears the box. Called from the managed side, which is why
-        /// the type name, the domain name and the repeat count are all here.
-        ///
-        /// <paramref name="whileBasesRise"/> is for those who ask while the bases are still loading:
-        /// "the domain is not loaded" is not trouble for them but a state. On such a failure the slot
-        /// stays an offset, untouched, and the very first pass after the base loads brings it to an
-        /// address. The other codes throw here as well: a broken offset does not become whole just
-        /// because the base was late.
-        ///
-        /// A second failure does not lie under the first in the box — only the count is kept — so along
-        /// with a forgiven "the domain is not loaded" the count of whatever happened next is lost too.
-        /// No loss: a broken slot is broken on the next pass as well, and there it will name itself.
-        /// </summary>
+        // whileBasesRise forgives only DomainNotRaised: the slot stays an offset and the next pass fixes it.
         public static void ThrowIfAny(bool whileBasesRise = false)
         {
             var slot = s_Slot.Data;
@@ -212,11 +175,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// The type name is looked up in the list of registered ones rather than through the
-        /// TypeManager: only the types the table itself put down get here, and reaching into the
-        /// TypeManager from an error handler is one more way to fall on the road to the message.
-        /// </summary>
+        // Registered types, not TypeManager: the error path must not risk a second failure.
         static string ComponentName(int typeIndex)
         {
             foreach (var type in BlobchegPatchTableBuilder.RegisteredTypes)

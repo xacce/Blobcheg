@@ -181,11 +181,10 @@ namespace Blobcheg.PatchTests
             var offset = file["gun"];
 
             var carrier = ScriptableObject.CreateInstance<BlobchegRefSo>();
+            using var stamps = new BlobchegStampsProbe();
             try
             {
-                carrier.offset = offset;
-                carrier.recordType = typeof(PatchGun).FullName;
-                carrier.domainName = nameof(IPatchHot);
+                stamps.Say(carrier, offset, typeof(PatchGun).FullName);
 
                 var field = new BlobchegRef<PatchGun>(carrier);
 
@@ -214,12 +213,11 @@ namespace Blobcheg.PatchTests
             Raise(file);
 
             var carrier = ScriptableObject.CreateInstance<BlobchegRefSo>();
+            using var stamps = new BlobchegStampsProbe();
             try
             {
                 // The picker put the ARMOR asset into a field typed with the gun.
-                carrier.offset = file["armor"];
-                carrier.recordType = typeof(PatchArmor).FullName;
-                carrier.domainName = nameof(IPatchHot);
+                stamps.Say(carrier, file["armor"], typeof(PatchArmor).FullName);
 
                 var field = new BlobchegRef<PatchGun>(carrier);
 

@@ -3,27 +3,13 @@ using System.Runtime.InteropServices;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The format of a hash table file. The same header as a base and a router, plus a prolog and six
-    /// arrays: two for the table itself, one for "hash by row number" and three for the reverse lanes
-    /// "offset → row", one lane per base of the router.
-    ///
-    /// The table is computed during a rebuild and baked ready: at runtime it is not built but read.
-    /// Hence the open addressing — a pair lies right in the array at slot
-    /// <c>hash &amp; (Capacity - 1)</c>, and a taken slot leads on to the next. There are no chains, no
-    /// insertions and no allocations on load.
-    ///
-    /// The reader does NOT compute the layout: the array offsets lie in the prolog — as in the router
-    /// and for the same reason.
-    /// </summary>
+    // Baked at rebuild and only read at runtime, hence open addressing; array offsets live in the prolog.
     public static class BlobchegHashesFormat
     {
-        /// <summary>The prolog follows immediately after the header.</summary>
         public const int PrologOffset = BlobchegFormat.HeaderSize;
 
         public const int PrologSize = 48;
 
-        /// <summary>The table file name is derived from the router name, not set separately.</summary>
         public const string Suffix = "Hashes";
 
         public static string IdentityOf(string routerName)
@@ -34,12 +20,7 @@ namespace Blobcheg
             return routerName + Suffix;
         }
 
-        /// <summary>
-        /// The capacity of the table: a power of two no less than twice the number of rows. Half
-        /// occupancy means one and a half probes on average with linear probing; there is nothing to
-        /// save here, the file is twelve bytes per row as it is.
-        /// </summary>
-        public static uint CapacityFor(int count)
+        public static uint CapacityFor(int count) // half occupancy keeps linear probing at ~1.5 probes
         {
             if (count < 0)
                 throw new ArgumentOutOfRangeException(nameof(count), "Blobcheg: a negative number of rows");
@@ -60,46 +41,32 @@ namespace Blobcheg
         public static bool IsPowerOfTwo(uint value) => value != 0 && (value & (value - 1)) == 0;
     }
 
-    /// <summary>The prolog of a table file. Exactly <see cref="BlobchegHashesFormat.PrologSize"/> bytes.</summary>
     [StructLayout(LayoutKind.Sequential)]
-    public struct BlobchegHashesProlog
+    public struct BlobchegHashesProlog // exactly BlobchegHashesFormat.PrologSize bytes
     {
-        /// <summary>Rows of the router — exactly as many as in its file, holes included.</summary>
-        public uint Count;
+        public uint Count; // router rows, holes included
 
         public uint DomainCount;
 
-        /// <summary>The hash of the router bit numbering: the table and the router must be of one build.</summary>
-        public ulong LayoutHash;
+        public ulong LayoutHash; // router bit numbering: table and router must come from one build
 
-        /// <summary>A power of two, no less than <c>2 * Count</c>.</summary>
         public uint Capacity;
 
-        /// <summary><c>ulong[Capacity]</c>, zero means an empty slot.</summary>
-        public uint KeysOffset;
+        public uint KeysOffset; // ulong[Capacity], zero = empty slot
 
-        /// <summary><c>uint[Capacity]</c>, the row number parallel to the key.</summary>
-        public uint RowsOffset;
+        public uint RowsOffset; // uint[Capacity], row parallel to the key
 
-        /// <summary><c>ulong[Count]</c>, the hash by row number; zero is a hole from a deleted node.</summary>
-        public uint RowHashOffset;
+        public uint RowHashOffset; // ulong[Count], zero = hole from a deleted node
 
-        /// <summary><c>uint[DomainCount + 1]</c>, the bounds of the reverse lanes.</summary>
-        public uint BackIndexOffset;
+        public uint BackIndexOffset; // uint[DomainCount + 1], reverse lane bounds
 
-        /// <summary><c>uint[Total]</c>, offsets in ascending order inside a lane.</summary>
-        public uint BackOffsetsOffset;
+        public uint BackOffsetsOffset; // uint[Total], ascending inside a lane
 
-        /// <summary><c>uint[Total]</c>, row numbers parallel to the offsets.</summary>
-        public uint BackRowsOffset;
+        public uint BackRowsOffset; // uint[Total], rows parallel to the offsets
 
-        /// <summary>The total length of the reverse lanes. Also the last element of <c>BackIndex</c>.</summary>
-        public uint Total;
+        public uint Total; // also the last element of BackIndex
 
-        /// <summary>
-        /// The check performed on load, not a hot path. Array bounds are checked against the file
-        /// length: otherwise a broken prolog would send the very first lookup into foreign memory.
-        /// </summary>
+        // Bounds checked against file length so a broken prolog cannot send a lookup into foreign memory.
         public void Validate(string what, int fileLength, int domainCount, ulong layoutHash)
         {
             if (LayoutHash != layoutHash)

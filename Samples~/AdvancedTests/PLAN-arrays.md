@@ -1,7 +1,7 @@
 # The plan of the destructive tests: arrays in a record
 
-The scenarios and the expectations were written BEFORE the array code was read — from the contract in
-`docs/blobcheg-tz-arrays.md`. The code was looked at only for the names of the types.
+The scenarios and the expectations were written BEFORE the array code was read — from the arrays TZ
+contract. The code was looked at only for the names of the types.
 
 Everywhere the expectation is one of two: an explicit error or a deterministic result. A silent no-op,
 corruption and garbage are not accepted. The rule of the set holds: reading freed memory is not

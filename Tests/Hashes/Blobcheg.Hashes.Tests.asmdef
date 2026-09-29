@@ -5,8 +5,11 @@
         "Blobcheg.Core",
         "Blobcheg.Runtime",
         "Blobcheg.Authoring",
+        "Blobcheg.Authoring.Editor",
+        "Blobcheg.Tests",
         "Blobcheg.Hashes",
         "Blobcheg.Hashes.Authoring",
+        "Blobcheg.Hashes.Authoring.Editor",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics",
@@ -24,7 +27,8 @@
     ],
     "autoReferenced": false,
     "defineConstraints": [
-        "UNITY_INCLUDE_TESTS"
+        "UNITY_INCLUDE_TESTS",
+        "BLOBCHEG_TESTS"
     ],
     "versionDefines": [],
     "noEngineReferences": false

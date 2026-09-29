@@ -1,19 +1,11 @@
 using System;
 using System.Runtime.CompilerServices;
+using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The resident hash table. It does all the work; the typed facade (the
-    /// <c>[BlobchegHashes]</c> partial) is a thin wrapper on top that knows the bit numbers of its
-    /// bases.
-    ///
-    /// Loading it is a check of the header, the integrity and the prolog plus six pointers. Not a
-    /// single insertion: the table was computed by the rebuild and lies in the file ready to use.
-    ///
-    /// The exception messages are literals: interpolation does not compile under Burst.
-    /// </summary>
+    // Resident hash table precomputed by the rebuild: loading only validates and wires pointers.
     public unsafe struct BlobchegHashesBlob : IDisposable
     {
         BlobchegBuffer _buffer;
@@ -26,14 +18,9 @@ namespace Blobcheg
         uint _count;
         uint _capacity;
         uint _domainCount;
+        ulong _identityKey;
         byte _tag;
 
-        /// <summary>
-        /// Takes ownership of the buffer. The identity of the file is <paramref name="what"/> (the
-        /// router name plus the suffix), while the tag for assembling a <see cref="BlobchegId"/> is
-        /// computed from <paramref name="routerName"/>: these are different names, and both arrive as
-        /// constants from the codegen.
-        /// </summary>
         public BlobchegHashesBlob(BlobchegBuffer buffer, string what, string routerName,
             int domainCount, ulong layoutHash)
         {
@@ -41,7 +28,7 @@ namespace Blobcheg
                 throw new ArgumentException($"Blobcheg: an empty buffer for table '{what}'", nameof(buffer));
 
             _buffer = buffer;
-            _tag = BlobchegNaming.TagOf(routerName);
+            _tag = BlobchegNaming.TagOf(routerName); // Tag from the router name; `what` is the file identity.
 
             ref var header = ref UnsafeUtility.AsRef<BlobchegHeader>(buffer.Ptr);
             var contentHash = BlobchegHash.Of(
@@ -67,30 +54,46 @@ namespace Blobcheg
             _backOffsets = (uint*)(buffer.Ptr + prolog.BackOffsetsOffset);
             _backRows = (uint*)(buffer.Ptr + prolog.BackRowsOffset);
 
-            // The length of the lanes lies in the prolog and is obliged to agree with their own bounds:
-            // if they disagree, the file was not assembled by this writer, and there is nothing further
-            // to check.
+            // Lane bounds must match the prolog total, else the file came from another writer.
             if (_backIndex[_domainCount] != prolog.Total)
                 throw new InvalidOperationException(
                     $"Blobcheg: table '{what}' — the bounds of the reverse lanes do not agree with their length");
+
+            _identityKey = BlobchegNaming.NameHash(what);
+            BlobchegDomainNames.Remember(_identityKey, what);
+            BlobchegBases.Register(_identityKey, buffer.Ptr, buffer.Length); // Lets Resident find the table past any world, as the bases do.
+        }
+
+        public static BlobchegHashesBlob FromRegistry(byte* ptr, int length, byte tag) // Non-owning: never validated, never disposed.
+        {
+            ref var prolog = ref UnsafeUtility.AsRef<BlobchegHashesProlog>(ptr + BlobchegHashesFormat.PrologOffset);
+
+            return new BlobchegHashesBlob
+            {
+                _buffer = new BlobchegBuffer { Ptr = ptr, Length = length, Allocator = Allocator.None },
+                _tag = tag,
+                _count = prolog.Count,
+                _capacity = prolog.Capacity,
+                _domainCount = prolog.DomainCount,
+                _keys = (ulong*)(ptr + prolog.KeysOffset),
+                _rows = (uint*)(ptr + prolog.RowsOffset),
+                _rowHash = (ulong*)(ptr + prolog.RowHashOffset),
+                _backIndex = (uint*)(ptr + prolog.BackIndexOffset),
+                _backOffsets = (uint*)(ptr + prolog.BackOffsetsOffset),
+                _backRows = (uint*)(ptr + prolog.BackRowsOffset),
+            };
         }
 
         public bool IsCreated => _buffer.IsCreated;
 
-        /// <summary>Rows, that is, nodes of the router, including the holes left by deleted ones.</summary>
-        public int Count => (int)_count;
+        public int Count => (int)_count; // Includes holes left by deleted nodes.
 
-        /// <summary>The router tag — the high byte of the ids this table hands out.</summary>
-        public byte Tag => _tag;
+        public byte Tag => _tag; // High byte of the ids this table hands out.
 
-        /// <summary>
-        /// The row number by hash. Zero is never a hash: it marks an empty slot, and asking for it means
-        /// asking for "not assigned".
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetRow(ulong hash, out uint row)
         {
-            if (hash == 0)
+            if (hash == 0) // Zero marks an empty slot, never a real hash.
             {
                 row = 0;
                 return false;
@@ -128,7 +131,6 @@ namespace Blobcheg
             return row;
         }
 
-        /// <summary>The hash of a row by its number. A hole from a deleted node is zero.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ulong HashOfRow(uint row)
         {
@@ -136,13 +138,10 @@ namespace Blobcheg
                 throw new InvalidOperationException(
                     "Blobcheg.Hashes: the table has no row with that number");
 
-            return _rowHash[row];
+            return _rowHash[row]; // Zero for a deleted node's hole.
         }
 
-        /// <summary>
-        /// The hash by the address of a record in base <paramref name="bit"/>. The save path, not a hot
-        /// one: the lane is sorted by offset, the search is binary.
-        /// </summary>
+        // Save path, not hot: binary search over the offset-sorted lane.
         public bool TryHashOfOffset(int bit, uint offset, out ulong hash)
         {
             if (bit < 0 || (uint)bit >= _domainCount)
@@ -175,6 +174,12 @@ namespace Blobcheg
 
         public void Dispose()
         {
+            if (_identityKey != 0)
+            {
+                BlobchegBases.Unregister(_identityKey, _buffer.Ptr);
+                _identityKey = 0;
+            }
+
             _buffer.Dispose();
             _keys = null;
             _rows = null;

@@ -5,13 +5,7 @@ using Unity.IO.LowLevel.Unsafe;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// A base file read in progress. Unmanaged — which is why it lies as a field right inside an
-    /// <c>ISystem</c>. The read is asynchronous by construction: on Android StreamingAssets lies inside
-    /// an archive, and a blocking wait on the main thread there either stalls the frame or hangs the
-    /// game for good. Errors are not returned but thrown: either the base came up whole, or the game
-    /// did not start.
-    /// </summary>
+    // Async by design: Android StreamingAssets sit in an archive and a blocking read stalls or hangs.
     public unsafe struct BlobchegLoad : IDisposable
     {
         internal enum Stage : byte
@@ -31,12 +25,19 @@ namespace Blobcheg
         internal BlobchegBuffer Buffer;
         internal Stage At;
 
-        /// <summary>
-        /// Advances the read state machine and tells whether the buffer is ready. A method and not a
-        /// property on purpose: without the call the machine does not move, and an "IsDone" that never
-        /// turns true would be a trap.
-        /// </summary>
-        public bool Poll()
+
+        public bool Poll() // blocks until loaded
+        {
+	        while (!PollLazy())
+	        {
+		        var handle = At == Stage.Size ? SizeHandle : BodyHandle;
+		        handle.JobHandle.Complete();
+	        }
+
+	        return true;
+        }
+
+		public bool PollLazy() // non-blocking, call every frame
         {
             switch (At)
             {
@@ -76,7 +77,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>A blocking wait — tests and editor tools, not the game thread.</summary>
+        // Blocking: tests and editor tools only, never the game thread.
         public void Complete()
         {
             while (!Poll())
@@ -86,7 +87,6 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>Hands out the buffer and the ownership of it. Before it is ready — an error.</summary>
         public BlobchegBuffer Acquire()
         {
             if (At != Stage.Ready)
@@ -120,9 +120,7 @@ namespace Blobcheg
 
         void StartBody()
         {
-            // Transient: in the editor this is what a domain that arrived with a pull ahead of its own
-            // rebuild looks like. The file will appear and the load will run again — see
-            // BlobchegTransientException.
+            // Transient: in the editor a pulled domain may precede its rebuild; the load reruns later.
             if (Info->FileState != FileState.Exists)
                 throw new BlobchegTransientException($"Blobcheg: there is no base file '{Path}'");
 

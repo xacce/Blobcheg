@@ -63,7 +63,7 @@ namespace Blobcheg.Tests
     }
 
     /// <summary>The files and manifests the rebuild lays down because of the test domains.</summary>
-    static class BlobchegTestArtifacts
+    public static class BlobchegTestArtifacts
     {
         static readonly string[] Names =
         {
@@ -75,8 +75,6 @@ namespace Blobcheg.Tests
         {
             foreach (var name in Names)
             {
-                AssetDatabase.DeleteAsset(BlobchegBuild.ManifestFolder + "/" + name + ".asset");
-
                 var file = Path.Combine(BlobchegBuild.OutputDirectory, BlobchegNaming.FileName(name));
                 if (File.Exists(file))
                     File.Delete(file);
@@ -90,8 +88,14 @@ namespace Blobcheg.Tests
     /// The end-to-end path of a router: nodes in the editor → the rebuild → the router file → the id
     /// carrier → a lookup of the offsets in every base at once.
     /// </summary>
+    [TestFixture(BlobchegTestMode.Editor)]
+    [TestFixture(BlobchegTestMode.AsInPlayer)]
     public sealed class BlobchegRouterPipelineTests
     {
+        readonly BlobchegTestMode _mode;
+
+        public BlobchegRouterPipelineTests(BlobchegTestMode mode) => _mode = mode;
+
         string _folder;
         TestModuleNodeSo _module;
         TestColdOnlyNodeSo _cold;
@@ -99,6 +103,7 @@ namespace Blobcheg.Tests
         [SetUp]
         public void SetUp()
         {
+            BlobchegTestModes.Enter(_mode);
             // A folder of its own per test: asset deletion is deferred, and a reused name swallows an
             // asset created in a folder that has not been deleted yet.
             var name = "BlobchegRouterTemp_" + Guid.NewGuid().ToString("N");
@@ -113,6 +118,7 @@ namespace Blobcheg.Tests
         [TearDown]
         public void TearDown()
         {
+            BlobchegTestModes.Leave();
             AssetDatabase.DeleteAsset(_folder);
             BlobchegTestArtifacts.Wipe();
         }
@@ -137,7 +143,7 @@ namespace Blobcheg.Tests
         static TestGameRouter LoadRouter()
         {
             var path = Path.Combine(BlobchegBuild.OutputDirectory, TestGameRouter.FileName);
-            Assert.That(File.Exists(path), Is.True, "the router file must land in StreamingAssets");
+            Assert.That(File.Exists(path), Is.True, "the router file must land in the output folder");
             return new TestGameRouter(BlobchegBuffer.From(File.ReadAllBytes(path), Allocator.Persistent));
         }
 
@@ -167,6 +173,7 @@ namespace Blobcheg.Tests
         {
             _module.tier = 42;
             EditorUtility.SetDirty(_module);
+            AssetDatabase.SaveAssetIfDirty(_module);
 
             var report = BlobchegBuild.RebuildAll();
             Assert.That(report.Routers, Is.GreaterThanOrEqualTo(1));
@@ -261,6 +268,7 @@ namespace Blobcheg.Tests
 
             _module.tier = 7;
             EditorUtility.SetDirty(_module);
+            AssetDatabase.SaveAssetIfDirty(_module);
             BlobchegBuild.RebuildAll();
 
             Assert.That(IdOf(_module), Is.EqualTo(before));
@@ -280,23 +288,80 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void A_new_node_moves_neither_a_foreign_id_nor_a_foreign_offset()
+        public void A_player_reads_the_id_off_the_carrier_without_the_editor_table()
         {
             BlobchegBuild.RebuildAll();
 
-            var id = IdOf(_module);
-            var offset = BlobchegBuild.RefsOf(_module)
-                .Single(r => r.DomainName == "ITestColdData").offset;
+            var inEditor = IdOf(_module);
+            var was = BlobchegStamps.Source;
+            BlobchegStamps.Source = null;
+            try
+            {
+                Assert.That(IdOf(_module), Is.EqualTo(inEditor), "a player has no stamp table, the carrier alone names the id");
+            }
+            finally
+            {
+                BlobchegStamps.Source = was;
+            }
+        }
 
-            // The GUID of a new node is random, so in a GUID-ordered layout it settles anywhere — before
-            // the existing ones included.
-            Create<TestColdOnlyNodeSo>("Newcomer");
+        [Test]
+        public void The_row_of_an_id_lies_in_the_node_asset()
+        {
+            BlobchegBuild.RebuildAll();
+
+            // Nothing local decides an id: a fresh checkout reads the row from the file git carries.
+            var text = File.ReadAllText(AssetDatabase.GetAssetPath(_module));
+            Assert.That(text, Does.Contain("row: " + IdOf(_module).Index));
+        }
+
+        [Test]
+        public void A_duplicated_node_takes_no_row_from_the_original()
+        {
+            BlobchegBuild.RebuildAll();
+            var original = IdOf(_module);
+
+            // What Ctrl+D leaves behind: another node carrying a copy of the carrier, row and owner included.
+            var copy = Create<TestModuleNodeSo>("ModuleCopy");
+            var carrier = UnityEngine.Object.Instantiate(BlobchegBuild.IdsOf(_module).Single());
+            carrier.name = BlobchegBuild.IdsOf(_module).Single().name;
+            AssetDatabase.AddObjectToAsset(carrier, copy);
             AssetDatabase.SaveAssets();
             BlobchegBuild.RebuildAll();
 
-            Assert.That(IdOf(_module), Is.EqualTo(id), "the neighbour's id is obliged to outlive the appearance of a new node");
-            Assert.That(BlobchegBuild.RefsOf(_module).Single(r => r.DomainName == "ITestColdData").offset,
-                Is.EqualTo(offset), "the neighbour's offset is obliged to outlive the appearance of a new node");
+            Assert.That(IdOf(_module), Is.EqualTo(original), "the original keeps its id against its own copy");
+            Assert.That(IdOf(copy), Is.Not.EqualTo(original));
+            Assert.That(IdOf(copy).Index, Is.GreaterThan(Math.Max(original.Index, IdOf(_cold).Index)));
+        }
+
+        [Test]
+        public void A_new_node_moves_no_foreign_id_and_sits_at_the_tail()
+        {
+            BlobchegBuild.RebuildAll();
+
+            var module = IdOf(_module);
+            var cold = IdOf(_cold);
+
+            // The GUID of a new node is random: in GUID order it could have landed before the others.
+            var newcomer = Create<TestColdOnlyNodeSo>("Newcomer");
+            AssetDatabase.SaveAssets();
+            BlobchegBuild.RebuildAll();
+
+            Assert.That(IdOf(_module), Is.EqualTo(module), "the neighbour's id is obliged to outlive the appearance of a new node");
+            Assert.That(IdOf(_cold), Is.EqualTo(cold));
+            Assert.That(IdOf(newcomer).Index, Is.GreaterThan(Math.Max(module.Index, cold.Index)),
+                "a newcomer takes a row past every held one");
+
+            var router = LoadRouter();
+            try
+            {
+                Assert.That(router.Get(IdOf(newcomer)).HasCold, Is.True);
+                Assert.That(router.Get(module).HasCold, Is.True, "the neighbour still reads by its old id");
+            }
+            finally
+            {
+                router.Dispose();
+            }
         }
 
         [Test]
@@ -349,30 +414,24 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void A_compaction_removes_the_hole_and_hands_out_the_addresses_anew()
+        public void A_rebuild_after_a_deletion_agrees_with_itself()
         {
             BlobchegBuild.RebuildAll();
 
             var first = IdOf(_module).Index < IdOf(_cold).Index;
             var victim = first ? (BlobchegNodeSo)_module : _cold;
             var survivor = first ? (BlobchegNodeSo)_cold : _module;
+            var kept = IdOf(survivor);
 
-            var before = IdOf(survivor);
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
             BlobchegBuild.RebuildAll();
 
-            Assert.That(LoadRouterRowCount(), Is.EqualTo(2), "the hole is in place: an ordinary rebuild does not touch it");
-            Assert.That(IdOf(survivor), Is.EqualTo(before));
-
-            BlobchegBuild.Compact();
-
-            Assert.That(LoadRouterRowCount(), Is.EqualTo(1), "a compaction is obliged to remove the empty row");
-            Assert.That(IdOf(survivor).Index, Is.EqualTo(0u), "and hand the ids out anew, consecutively");
+            Assert.That(IdOf(survivor), Is.EqualTo(kept), "the survivor reads by the id it always had");
 
             var router = LoadRouter();
             try
             {
-                Assert.That(router.Get(IdOf(survivor)).HasCold, Is.True, "the node reads by its new id");
+                Assert.That(router.Get(kept).HasCold, Is.True);
             }
             finally
             {
@@ -380,7 +439,7 @@ namespace Blobcheg.Tests
             }
 
             Assert.That(BlobchegBuild.RebuildFull().Changed, Is.False,
-                "after a compaction the layout is obliged to agree with itself");
+                "and the rebuild agrees with itself");
         }
 
         [Test]
@@ -406,7 +465,6 @@ namespace Blobcheg.Tests
             try
             {
                 alien.name = "Alien";
-                alien.id = 0;
                 var thrown = Assert.Throws<InvalidOperationException>(
                     () => _ = new BlobchegIdRef<TestGameRouter>(alien).Id);
 
@@ -436,23 +494,22 @@ namespace Blobcheg.Tests
         {
             var report = BlobchegBuild.RebuildAll();
 
-            var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(
-                BlobchegBuild.ManifestFolder + "/TestGameRouter.asset");
+            var manifest = BlobchegManifests.Of("TestGameRouter");
 
             Assert.That(manifest, Is.Not.Null);
             Assert.That(manifest.IsRouter, Is.True,
-                $"report: {report}; path: {AssetDatabase.GetAssetPath(manifest)}; id: {manifest.GetInstanceID()}; " +
+                $"report: {report}; file: {BlobchegManifests.FilePath}; " +
                 $"domainName: '{manifest.domainName}'; recordCount: {manifest.recordCount}; " +
-                $"hash: {manifest.ContentHash:X16}; nodes: {manifest.nodes?.Length}");
+                $"hash: {manifest.ContentHash:X16}; nodes: {manifest.NodeCount}");
 
             var file = File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestGameRouter.FileName));
             Assert.That(manifest.ContentHash, Is.EqualTo(BitConverter.ToUInt64(file, 16)));
 
             // The nodes lie in the manifest in id order — that is the "id → node" table for the eye.
-            for (var i = 0; i < manifest.nodes.Length; i++)
+            for (var i = 0; i < manifest.NodeCount; i++)
             {
-                var carrier = BlobchegBuild.IdsOf(manifest.nodes[i]).Single();
-                Assert.That(new BlobchegId(carrier.id).Index, Is.EqualTo((uint)i));
+                var carrier = BlobchegBuild.IdsOf(manifest.NodeAt(i)).Single();
+                Assert.That(carrier.Id.Index, Is.EqualTo((uint)i));
             }
         }
     }

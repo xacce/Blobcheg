@@ -10,9 +10,7 @@
         "Unity.Collections",
         "Unity.Mathematics"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true,
     "overrideReferences": false,

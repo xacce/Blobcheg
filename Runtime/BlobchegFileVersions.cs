@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 
 namespace Blobcheg
@@ -16,6 +17,9 @@ namespace Blobcheg
     public static class BlobchegFileVersions
     {
         static readonly Dictionary<string, int> Versions = new Dictionary<string, int>();
+
+        // The one who watches a file is a reader too: the editor puts its freshness check here.
+        public static Action Watch;
 
         /// <summary>The file was rewritten. Called by a rebuild — once per changed file.</summary>
         public static void Bump(string fileName)
@@ -38,6 +42,8 @@ namespace Blobcheg
         /// </summary>
         public static bool Changed(string fileName, ref int seen)
         {
+            Watch?.Invoke();
+
             var version = Of(fileName);
             if (version == seen)
                 return false;

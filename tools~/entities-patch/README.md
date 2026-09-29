@@ -15,6 +15,10 @@ cheaper a version bump.
 | `Unity.Entities/Serialization/SerializeUtility.cs` | the chunk walk `PatchBlobchegRefsInChunk` and three calls; plus a fix for an upstream hole on an empty world |
 | `Unity.Scenes/LiveConversionPatcher.cs` | the call after a change set is applied |
 
+The patch paths target `Packages/com.unity.entities`. In Real-Time City the fork is the
+`Packages/com.unity.entities.carxtech` submodule (version 1.4.6), which already carries all three files;
+the scripts here are for vendoring into a project without that fork.
+
 ## Vendoring from scratch
 
 ```powershell
@@ -37,7 +41,7 @@ everything else in the package keeps working the old way.
 From the root of the project, once the package is vendored:
 
 ```
-git apply --3way Packages/Blobcheg/tools~/entities-patch/com.unity.entities@1.4.8.patch
+git apply --3way Packages/blobcheg/tools~/entities-patch/com.unity.entities@1.4.8.patch
 git apply --check <the same path>     # check without applying
 ```
 

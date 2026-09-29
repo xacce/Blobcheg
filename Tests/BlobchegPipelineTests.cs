@@ -108,8 +108,14 @@ namespace Blobcheg.Tests
     /// offset. There is no Save button on this path, so the rebuild is called directly — the same way the
     /// hooks call it.
     /// </summary>
+    [TestFixture(BlobchegTestMode.Editor)]
+    [TestFixture(BlobchegTestMode.AsInPlayer)]
     public sealed class BlobchegPipelineTests
     {
+        readonly BlobchegTestMode _mode;
+
+        public BlobchegPipelineTests(BlobchegTestMode mode) => _mode = mode;
+
         // A folder of its own per test: asset deletion is deferred, and a reused name swallows an asset
         // created in a folder that has not been deleted yet. That gets caught not where it broke.
         string _folder;
@@ -120,6 +126,7 @@ namespace Blobcheg.Tests
         [SetUp]
         public void SetUp()
         {
+            BlobchegTestModes.Enter(_mode);
             var name = "BlobchegTestsTemp_" + Guid.NewGuid().ToString("N");
             _folder = "Assets/" + name;
             AssetDatabase.CreateFolder("Assets", name);
@@ -132,6 +139,7 @@ namespace Blobcheg.Tests
         [TearDown]
         public void TearDown()
         {
+            BlobchegTestModes.Leave();
             AssetDatabase.DeleteAsset(_folder);
             BlobchegTestArtifacts.Wipe();
         }
@@ -163,12 +171,13 @@ namespace Blobcheg.Tests
             _pistol.ammoMax = 42f;
             _pistol.rpm = 900;
             EditorUtility.SetDirty(_pistol);
+            AssetDatabase.SaveAssetIfDirty(_pistol);
 
             var report = BlobchegBuild.RebuildAll();
             Assert.That(report.Records, Is.GreaterThanOrEqualTo(2));
 
             var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
-            Assert.That(File.Exists(file), Is.True, "the base file must land in StreamingAssets");
+            Assert.That(File.Exists(file), Is.True, "the base file must land in the output folder");
 
             var pistolRef = RefOf(_pistol);
             Assert.That(pistolRef.RecordType, Is.EqualTo(typeof(TestPistol).FullName));
@@ -177,11 +186,11 @@ namespace Blobcheg.Tests
             var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
             try
             {
-                ref readonly var pistol = ref db.Read<TestPistol>(pistolRef.offset);
+                ref readonly var pistol = ref db.Read<TestPistol>(pistolRef.Offset);
                 Assert.That(pistol.AmmoMax, Is.EqualTo(42f));
                 Assert.That(pistol.Rpm, Is.EqualTo(900));
 
-                ref readonly var armor = ref db.Read<TestArmor>(RefOf(_armor).offset);
+                ref readonly var armor = ref db.Read<TestArmor>(RefOf(_armor).Offset);
                 Assert.That(armor.Hp, Is.EqualTo(100f));
             }
             finally
@@ -205,13 +214,14 @@ namespace Blobcheg.Tests
         public void Editing_a_value_does_not_move_the_offset()
         {
             BlobchegBuild.RebuildAll();
-            var before = RefOf(_pistol).offset;
+            var before = RefOf(_pistol).Offset;
 
             _pistol.ammoMax = 7f;
             EditorUtility.SetDirty(_pistol);
+            AssetDatabase.SaveAssetIfDirty(_pistol);
             BlobchegBuild.RebuildAll();
 
-            Assert.That(RefOf(_pistol).offset, Is.EqualTo(before));
+            Assert.That(RefOf(_pistol).Offset, Is.EqualTo(before));
 
             var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
             var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
@@ -239,6 +249,7 @@ namespace Blobcheg.Tests
 
             _pistol.ammoMax = 3f;
             EditorUtility.SetDirty(_pistol);
+            AssetDatabase.SaveAssetIfDirty(_pistol);
             BlobchegBuild.RebuildAll();
 
             var incremental = DomainFile();
@@ -293,7 +304,7 @@ namespace Blobcheg.Tests
             var thrown = Assert.Throws<InvalidOperationException>(() => _ = field.Offset);
             StringAssert.Contains("TestArmor", thrown.Message);
 
-            Assert.That(new BlobchegRef<TestPistol>(RefOf(_pistol)).Offset, Is.EqualTo(RefOf(_pistol).offset));
+            Assert.That(new BlobchegRef<TestPistol>(RefOf(_pistol)).Offset, Is.EqualTo(RefOf(_pistol).Offset));
         }
 
         [Test]
@@ -342,7 +353,7 @@ namespace Blobcheg.Tests
             var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
             try
             {
-                ref readonly var table = ref db.Read<TestLootTable>(RefOf(loot).offset);
+                ref readonly var table = ref db.Read<TestLootTable>(RefOf(loot).Offset);
                 Assert.That(table.Rolls, Is.EqualTo(2));
                 Assert.That(table.Weights.Length, Is.EqualTo(3));
                 Assert.That(table.Weights[0], Is.EqualTo(0.5f));
@@ -356,26 +367,25 @@ namespace Blobcheg.Tests
         }
 
         [Test]
-        public void Editing_the_length_of_an_array_does_not_move_other_addresses()
+        public void Editing_the_length_of_an_array_leaves_every_record_readable()
         {
             var loot = Create<TestLootNodeSo>("Loot");
             AssetDatabase.SaveAssets();
             BlobchegBuild.RebuildAll();
-            var pistolBefore = RefOf(_pistol).offset;
-            var armorBefore = RefOf(_armor).offset;
 
+            // The layout is dense: a grown record may move its neighbours, and their refs follow them.
             loot.weights = new[] { 0.3f, 0.25f, 0.2f, 0.15f, 0.06f, 0.04f };
             EditorUtility.SetDirty(loot);
+            AssetDatabase.SaveAssetIfDirty(loot);
             BlobchegBuild.RebuildAll();
-
-            Assert.That(RefOf(_pistol).offset, Is.EqualTo(pistolBefore), "a grown array moves only its own record");
-            Assert.That(RefOf(_armor).offset, Is.EqualTo(armorBefore));
 
             var file = Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName);
             var db = new TestCombatDb(BlobchegBuffer.From(File.ReadAllBytes(file), Allocator.Temp));
             try
             {
-                Assert.That(db.Read<TestLootTable>(RefOf(loot).offset).Weights.Length, Is.EqualTo(6));
+                Assert.That(db.Read<TestLootTable>(RefOf(loot).Offset).Weights.Length, Is.EqualTo(6));
+                Assert.That(db.Read<TestPistol>(RefOf(_pistol).Offset).Rpm, Is.EqualTo(_pistol.rpm));
+                Assert.That(db.Read<TestArmor>(RefOf(_armor).Offset).Hp, Is.EqualTo(_armor.hp));
             }
             finally
             {
@@ -436,8 +446,7 @@ namespace Blobcheg.Tests
         {
             BlobchegBuild.RebuildAll();
 
-            var manifest = AssetDatabase.LoadAssetAtPath<BlobchegDomainSo>(
-                BlobchegBuild.ManifestFolder + "/ITestCombatData.asset");
+            var manifest = BlobchegManifests.Of("ITestCombatData");
             Assert.That(manifest, Is.Not.Null);
 
             var file = File.ReadAllBytes(Path.Combine(BlobchegBuild.OutputDirectory, TestCombatDb.FileName));

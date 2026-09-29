@@ -108,7 +108,7 @@ namespace Blobcheg.AdvancedTests
                 "a record of a different type lies in a BlobchegRef<AdvGun> field — that is an error");
             StringAssert.Contains(nameof(AdvGun), thrown.Message);
 
-            Assert.That(new BlobchegRef<AdvLooseBlock>(looseRef).Offset, Is.EqualTo(looseRef.offset),
+            Assert.That(new BlobchegRef<AdvLooseBlock>(looseRef).Offset, Is.EqualTo(looseRef.Offset),
                 "while its own type is obliged to pass");
         }
 

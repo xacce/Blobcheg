@@ -6,25 +6,9 @@ using Unity.Entities;
 
 namespace Blobcheg.PatchTests
 {
-    /// <summary>
-    /// The identity of a record and the identity of a domain. The section asks one thing: can a slot
-    /// quietly hand out the wrong record — of a foreign type, of a foreign domain or of a foreign
-    /// generation of the buffer.
-    /// </summary>
-    public sealed unsafe class IdentityAndDomainTests : PatchFixture
+    public sealed unsafe class IdentityAndDomainTests : PatchFixture // can a slot hand out a foreign type, domain or generation?
     {
-        // ------------------------------------------------------------- a foreign type and a foreign domain
-
-        // The plan (line 19) demanded: "inside the bounds — a rejection by record type (the debug
-        // contour). Never a silent read of someone else's bytes." The plan did not specify the MOMENT of
-        // the rejection, and the implementation chose the early one: the record type now reaches the slot
-        // table (BlobchegFieldSlot.RecordTypeHash), and having got the address the patch asks the contour
-        // straight away whether a record of the declared type starts there. If it does not — WrongRecord
-        // right at the patch.
-        //
-        // That is stricter than the test expected (a rejection on reading Value) and closes the promise
-        // earlier: it simply never comes to Value, a scene with such a slot cannot be imported. The check
-        // that existed only on the old path made it to the new one — exactly what the plan demanded.
+        // A type mismatch is rejected at patch time (WrongRecord via the debug contour), not on Value.
         [Test]
         public void A_record_read_through_a_slot_as_its_twin_is_obliged_to_be_rejected()
         {
@@ -35,7 +19,6 @@ namespace Blobcheg.PatchTests
             var carrier = EM.CreateEntity();
             EM.AddComponentData(carrier, new ArmorRef { Armor = new BlobchegReference<PatchArmor>(gunOffset) });
 
-            // The old path refuses at the same offset — so the check does exist in the package.
             Assert.Throws<InvalidOperationException>(() => Copy(hot.Blob.Read<PatchArmor>(gunOffset)),
                 "a Read as the twin is obliged to be rejected — that is an already closed finding of the package");
 
@@ -54,7 +37,7 @@ namespace Blobcheg.PatchTests
         {
             var hot = Raise(HotFile());
 
-            // The cold base is deliberately longer than the hot one: then its tail offset is past the end of the hot one.
+            // The cold base is longer than the hot one, so its tail offset lies past the hot end.
             var coldFile = Domain(nameof(IPatchCold));
             for (var i = 0; i < 32; i++)
                 coldFile.Add("note" + i.ToString("D2"), new PatchNote { Tier = i, Extra = i * 2 });
@@ -71,8 +54,6 @@ namespace Blobcheg.PatchTests
             Assert.Throws<InvalidOperationException>(() => Patch(),
                 "an offset of a foreign base that does not fit into its own is obliged to be rejected by the bounds");
         }
-
-        // ------------------------------------------------------------- one address, two consumers
 
         [Test]
         public void One_offset_in_two_components_gives_one_address_and_one_offset_back()
@@ -102,8 +83,6 @@ namespace Blobcheg.PatchTests
                 Is.EqualTo(offset), "and that very same offset is obliged to come back to both");
         }
 
-        // ------------------------------------------------------------- buffer generations
-
         [Test]
         public void Registering_a_domain_again_has_no_right_to_leave_pointers_looking_at_the_old_one()
         {
@@ -114,13 +93,11 @@ namespace Blobcheg.PatchTests
             Patch();
             Assert.That(SlotOf(entity), Is.EqualTo(gen1.AddressOf(first["gun"])));
 
-            // A rebuild in the "right" order: the new base is on the register, the old one is still alive.
-            var gen2 = Raise(HotFile(ammo: 2f, rpm: 22));
+            var gen2 = Raise(HotFile(ammo: 2f, rpm: 22)); // new base registered, old one still alive
 
             var slot = EM.GetComponentData<GunRef>(entity).Gun;
 
-            // There must be no middle: either the pointer already looks at the new generation, or the read
-            // refuses honestly. Quietly handing out the bytes of the old buffer is not allowed.
+            // Either the pointer already follows the new generation or the read refuses; never stale bytes.
 if (slot.Data.Value == gen2.AddressOf(first["gun"]))
                 Assert.Pass("the pointer was translated by the registration itself");
 
@@ -145,17 +122,6 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
             Assert.That(Copy(EM.GetComponentData<GunRef>(entity).Gun.Value).Rpm, Is.EqualTo(22));
         }
 
-        // BUG: two rebuilds in a row without a patch between them lose the pointer
-        // What happens: gen1 → gen2 → gen3 with no patch in between. The patch after the third
-        //   registration fails with OutOfRange: the address of the first generation is found neither in
-        //   the current one nor in the previous one.
-        // What should happen: the promise of the feature — a rebuild translates the already handed-out
-        //   pointers onto the new buffer. Two imports of an asset in one editor frame produce exactly two
-        //   registrations in a row.
-        // Root cause: BlobchegBases.Table holds EXACTLY ONE previous generation (PrevPtrs[slot]), and the
-        //   repeated-Register branch overwrites it: PrevPtrs[slot] = Ptrs[slot]. After the third
-        //   registration the address of the first buffer does not exist in the registry, and TryResolve
-        //   goes into the last branch, where a heap address is certainly >= length.
         [Test]
         public void Two_rebuilds_in_a_row_are_obliged_to_bring_the_pointer_to_the_third_generation()
         {
@@ -164,7 +130,7 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
             var entity = Gun(first["gun"]);
             Patch();
 
-            Raise(HotFile(ammo: 2f, rpm: 22));
+            Raise(HotFile(ammo: 2f, rpm: 22)); // two imports in one editor frame: gen1 must survive
             var gen3 = Raise(HotFile(ammo: 3f, rpm: 33));
 
             Assert.DoesNotThrow(() => Patch(),
@@ -174,28 +140,17 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
             Assert.That(Copy(EM.GetComponentData<GunRef>(entity).Gun.Value).Rpm, Is.EqualTo(33));
         }
 
-        // The plan (line 25) allowed two outcomes: "EITHER the reference travels after the record, OR an
-        // explicit error. A neighbour handed out silently is corruption." The implementation chose the
-        // second half.
-        //
-        // Travelling after the record it cannot do and will not be able to: translating a generation is
-        // the arithmetic `new base + previous shift`, and there is nothing to match the records of two
-        // layouts with — the record itself carries neither a key nor a content hash. The check against
-        // the debug contour, however, sees that the ARMOR and not the gun starts at the resulting address
-        // and fails the patch with the WrongRecord code. That is exactly what the plan called the second
-        // admissible outcome; the inadmissible one — silence — is closed.
+        // A moved record cannot be followed (records carry no key), so the contour fails with WrongRecord.
         [Test]
         public void A_generation_that_moved_a_record_has_no_right_to_hand_out_the_neighbouring_one()
         {
-            // gen1: the gun only.
             var first = Domain(nameof(IPatchHot)).Add("gun", new PatchGun { Ammo = 1f, Rpm = 11 }).Seal();
             Raise(first);
 
             var entity = Gun(first["gun"]);
             Patch();
 
-            // gen2: the armor appeared before the gun — by FullName it comes first and moves the gun.
-            var second = Domain(nameof(IPatchHot))
+            var second = Domain(nameof(IPatchHot)) // armor sorts first by FullName and moves the gun
                 .Add("armor", new PatchArmor { Hp = 500f, Plates = 9 })
                 .Add("gun", new PatchGun { Ammo = 2f, Rpm = 22 })
                 .Seal();
@@ -208,28 +163,11 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
 
             Assert.That(error.Message, Does.Contain(nameof(GunRef)),
                 "the component is in the message — by it the scene can at least be found");
-            Assert.That(error.Message, Does.Contain(nameof(IPatchHot)));
+            Assert.That(error.Message, Does.Contain(nameof(IPatchHot))); // unmoved-layout twin passes: this rejects the move
 
-            // That the rejection fired on the record mismatch and not on every rebuild in general is held
-            // by the neighbouring test: A_rebuild_with_a_patch_between_generations_brings_it_to_the_new_buffer
-            // runs the same pair of generations with a layout that did NOT move and passes silently.
         }
 
-        // ------------------------------------------------------------- the domain of a record
-        //
-        // Records "outside any domain" and "in two domains at once" cannot be put into a live component
-        // of this assembly: BlobchegPatchTableBuilder.Build walks ALL the component types of the process
-        // and fails entirely on the first such reference — that is, it would switch the patch off for the
-        // whole project and not for one test. That is why the check goes straight through the domain
-        // resolution.
-        //
-        // API DESIGN: the table build has no mode "check one type and say what is wrong". There is one
-        // Build button for the whole process, and its refusal is a refusal of the patch as a whole, from
-        // [InitializeOnLoadMethod], with one type in the text. There is nothing to diagnose "which other
-        // components are declared wrongly" with, and a test for it cannot be written from the public
-        // surface — below is reflection over the private DomainKeyOf.
-
-        static Exception DomainFailure(Type record)
+        static Exception DomainFailure(Type record) // reflection: a faulty live component would disable the whole patch
         {
             var builder = typeof(BlobchegPatchTableBuilder);
 
@@ -276,9 +214,7 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
         [Test]
         public void A_reference_to_the_base_itself_as_a_record_is_obliged_to_be_rejected()
         {
-            // A base is formally unmanaged and squeezes into a BlobchegReference<T>. It has no domain —
-            // its domain is in the attribute and not in an interface, and those are different things.
-            var error = DomainFailure(typeof(PatchHotDb));
+            var error = DomainFailure(typeof(PatchHotDb)); // its domain is an attribute, not an interface
 
             Assert.That(error, Is.Not.Null,
                 "a base is not a record of its own base; a reference to it is obliged to be rejected and not to invent a domain for itself");
@@ -288,9 +224,7 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
         [Test]
         public void The_bare_innards_of_a_slot_in_a_component_field_are_obliged_to_be_an_error()
         {
-            // The human factor: a developer looked inside BlobchegReference<T>, saw a
-            // BlobchegReferenceData there and declared the "real" type as the field. No domain is derived
-            // from it.
+            // A developer typed the field as the BlobchegReferenceData innards; no domain derives from it.
             var walk = typeof(BlobchegPatchTableBuilder).GetMethod("Walk", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(walk, Is.Not.Null, "Walk was renamed — the field walk test went blind");
 
@@ -308,12 +242,7 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
             Assert.That(error.InnerException.Message, Does.Contain(nameof(BlobchegReferenceData)));
         }
 
-        /// <summary>
-        /// Not a component: the type lives only for the sake of the test above. Declare it
-        /// <c>IComponentData</c> and the table build fails at editor startup, switching the patch off for
-        /// the whole project.
-        /// </summary>
-        struct NakedData
+        struct NakedData // not IComponentData: that would fail the table build at startup
         {
             public BlobchegReferenceData Slot;
         }
@@ -334,10 +263,7 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
         [Test]
         public void The_test_model_did_not_poison_the_patch_table()
         {
-            // If a component with a reference to a record without a domain were found in the assembly,
-            // Build would fail and ALL the other tests of the set would be checking emptiness while going
-            // green.
-            Assert.That(BlobchegPatchTable.IsBuilt, Is.True);
+            Assert.That(BlobchegPatchTable.IsBuilt, Is.True); // else every other test here goes green on emptiness
 
             var registered = BlobchegPatchTableBuilder.RegisteredTypes;
             var names = new List<string>();
@@ -358,8 +284,7 @@ if (slot.Data.Value == gen2.AddressOf(first["gun"]))
         [Test]
         public void The_domain_registry_is_cleaned_between_tests()
         {
-            // Insurance for the rig itself: the registry is a process-wide static, and a base left open by
-            // a neighbouring test would make this set non-deterministic.
+            // The registry is a process-wide static: a base leaked by a neighbour breaks determinism.
             Assert.That(BlobchegBases.TryGet(BlobchegNaming.NameHash(nameof(IPatchHot)), out _, out _), Is.False);
             Assert.That(BlobchegPatchErrors.HasAny, Is.False);
         }

@@ -10,23 +10,7 @@ using Unity.Entities.Serialization;
 
 namespace Blobcheg.PatchTests
 {
-    /// <summary>
-    /// The rig of the destructive set for the reference patch.
-    ///
-    /// The base is assembled by the WRITER and not from assets: half the set lives on exact record
-    /// addresses ("exactly on the last one", "a generation moved the record", "an offset off the
-    /// alignment"), and a rebuild from assets does not produce such layouts and costs seconds. The input
-    /// and the output are the same all the same: <see cref="BlobchegWriter"/> → bytes →
-    /// <see cref="BlobchegBuffer"/> → <see cref="BlobchegBlob"/>, that is, exactly what a consumer's
-    /// boot system does.
-    ///
-    /// The patch is pulled along two public roads, both of them real:
-    /// 1. <see cref="BlobchegLiveSweep.Run"/> — the live path (the change set of an open subscene);
-    /// 2. <see cref="SerializeUtility"/> — writing a world (the reverse pass) and reading it (the forward one).
-    ///
-    /// The rule of the set: not a single test dereferences freed memory or reads at a wild address.
-    /// Where the scenario is about that, the REGISTRY is asked and not the memory.
-    /// </summary>
+    // Bases come from the writer, not assets: tests need exact record layouts; rebuilds cost seconds.
     public abstract unsafe class PatchFixture
     {
         protected World World;
@@ -39,15 +23,12 @@ namespace Blobcheg.PatchTests
         [SetUp]
         public void PatchSetUp()
         {
-            // The table is built by InitializeOnLoad; the call is idempotent and insures a run from the
-            // CLI, where the order of the domain initialisers gives no guarantees.
-            BlobchegPatchInstall.Install();
+            BlobchegPatchInstall.Install(); // idempotent: CLI runs do not guarantee domain initialiser order
 
             Assert.That(BlobchegPatchTable.IsBuilt, Is.True,
                 "the slot table is not built — the patch is not installed, and the whole set would be checking emptiness");
 
-            // The registry is shared by the process. Without cleaning it, a test inherits the bases of its neighbour.
-            BlobchegBases.Clear();
+            BlobchegBases.Clear(); // process-wide registry: else a test inherits its neighbour's bases
             BlobchegPatchErrors.Clear();
 
             _dir = Path.Combine(Path.GetTempPath(), "blobcheg-patch-" + Guid.NewGuid().ToString("N"));
@@ -83,13 +64,10 @@ namespace Blobcheg.PatchTests
             }
             catch (IOException)
             {
-                // Rubbish in the OS temp folder does not fail the test.
+                // Leftovers in the OS temp folder must not fail the test.
             }
         }
 
-        // ------------------------------------------------------------- the base file
-
-        /// <summary>A domain file assembled by the writer. The key of a record is its name in the test.</summary>
         protected sealed class DomainFile
         {
             readonly BlobchegWriter _writer;
@@ -115,10 +93,7 @@ namespace Blobcheg.PatchTests
                 return this;
             }
 
-            /// <summary>
-            /// Seals the file. The debug contour is written by default — that is how the editor lives,
-            /// and only that way is it visible that the old read path catches what the new one does not.
-            /// </summary>
+            // Debug contour on by default, as in the editor: exposes what only the old read path catches.
             public DomainFile Seal(bool debug = true)
             {
                 _writer.Flush(debug);
@@ -130,7 +105,6 @@ namespace Blobcheg.PatchTests
             public byte[] Bytes() => File.ReadAllBytes(_writer.FilePath);
         }
 
-        /// <summary>A loaded base: the blob itself plus the address and the length, so the test can compute for itself.</summary>
         protected sealed class RaisedBase
         {
             public BlobchegBlob Blob;
@@ -139,8 +113,7 @@ namespace Blobcheg.PatchTests
             public int Length;
             public bool Dropped;
 
-            /// <summary>The address of a record by its offset — what the patch is OBLIGED to turn a slot into.</summary>
-            public ulong AddressOf(uint offset) => Ptr + offset;
+            public ulong AddressOf(uint offset) => Ptr + offset; // what the patch must turn a slot into
         }
 
         protected DomainFile Domain(string name) => new DomainFile(_dir, name);
@@ -160,7 +133,6 @@ namespace Blobcheg.PatchTests
             return raised;
         }
 
-        /// <summary>Takes the base off the register and frees the buffer — like a consumer's <c>Dispose</c>.</summary>
         protected static void Drop(RaisedBase raised)
         {
             if (raised.Dropped)
@@ -170,24 +142,18 @@ namespace Blobcheg.PatchTests
             raised.Dropped = true;
         }
 
-        /// <summary>The hot base with a gun and armor. The layout: type by FullName, so the armor comes first.</summary>
+        // Records are laid out by type FullName, so the armor comes first.
         protected DomainFile HotFile(float ammo = 30f, int rpm = 600, float hp = 100f, int plates = 3)
             => Domain(nameof(IPatchHot))
                 .Add("gun", new PatchGun { Ammo = ammo, Rpm = rpm })
                 .Add("armor", new PatchArmor { Hp = hp, Plates = plates })
                 .Seal();
 
-        // ------------------------------------------------------------- the patch
-
-        /// <summary>The live path: the change set landed, the references are raw. Throws on the first failure.</summary>
-        protected void Patch() => BlobchegLiveSweep.Run(EM);
+        protected void Patch() => BlobchegLiveSweep.Run(EM); // live path; throws on the first failure
 
         protected void Patch(World world) => BlobchegLiveSweep.Run(world.EntityManager);
 
-        // ------------------------------------------------------------- serialisation
-
-        /// <summary>Writing a world into memory. The reverse pass runs inside — over a copy of the chunk.</summary>
-        protected byte[] Save() => Save(World);
+        protected byte[] Save() => Save(World); // the reverse pass runs inside, over a chunk copy
 
         protected byte[] Save(World world)
         {
@@ -205,7 +171,6 @@ namespace Blobcheg.PatchTests
             }
         }
 
-        /// <summary>Reading a world. The load patch fires inside, exactly as on a subscene section.</summary>
         protected World Load(byte[] bytes, string name = "blobcheg-patch-loaded")
         {
             var world = new World(name);
@@ -216,7 +181,7 @@ namespace Blobcheg.PatchTests
                 using (var reader = new MemoryBinaryReader(p, bytes.Length))
                 {
                     var transaction = world.EntityManager.BeginExclusiveEntityTransaction();
-                    SerializeUtility.DeserializeWorld(transaction, reader);
+                    SerializeUtility.DeserializeWorld(transaction, reader); // load patch fires here, as on a section
                     world.EntityManager.EndExclusiveEntityTransaction();
                 }
             }
@@ -224,11 +189,7 @@ namespace Blobcheg.PatchTests
             return world;
         }
 
-        /// <summary>
-        /// A world read WITHOUT a single loaded base. The load patch does not touch the slot then, and
-        /// exactly what lay in the file stays in it — the only public way to see which number the
-        /// reverse pass put there.
-        /// </summary>
+        // No base loaded: the load patch leaves slots alone, exposing the number the reverse pass wrote.
         protected World LoadRaw(byte[] bytes)
         {
             foreach (var raised in _bases)
@@ -241,8 +202,7 @@ namespace Blobcheg.PatchTests
             return world;
         }
 
-        /// <summary>Looks for an eight-byte word in a serialised world. A check of the promise "an offset travels to disk".</summary>
-        protected static bool Contains(byte[] bytes, ulong word)
+        protected static bool Contains(byte[] bytes, ulong word) // proves an offset travels to disk
         {
             var wanted = BitConverter.GetBytes(word);
 
@@ -265,8 +225,6 @@ namespace Blobcheg.PatchTests
             return false;
         }
 
-        // ------------------------------------------------------------- entities
-
         protected Entity Gun(uint offset)
         {
             var entity = EM.CreateEntity();
@@ -279,14 +237,10 @@ namespace Blobcheg.PatchTests
         protected static ulong SlotOf(World world, Entity entity)
             => world.EntityManager.GetComponentData<GunRef>(entity).Gun.Data.Value;
 
-        /// <summary>The only entity in the world with this component. Otherwise the test would check the wrong thing.</summary>
         protected static Entity Single<T>(World world) where T : unmanaged, IComponentData
             => SingleOf(world, ComponentType.ReadOnly<T>(), typeof(T).Name);
 
-        /// <summary>
-        /// The same for a buffer element: <c>IBufferElementData</c> does not inherit
-        /// <c>IComponentData</c>, and the common constraint does not take it.
-        /// </summary>
+        // IBufferElementData does not inherit IComponentData, so the Single<T> constraint rejects it.
         protected static Entity SingleBuffer<T>(World world) where T : unmanaged, IBufferElementData
             => SingleOf(world, ComponentType.ReadOnly<T>(), typeof(T).Name);
 
@@ -302,7 +256,6 @@ namespace Blobcheg.PatchTests
             return entity;
         }
 
-        /// <summary>A copy of a <c>ref readonly</c> return: otherwise there is nothing to "use" the read record with.</summary>
-        protected static T Copy<T>(in T value) where T : unmanaged => value;
+        protected static T Copy<T>(in T value) where T : unmanaged => value; // gives a ref readonly read a use
     }
 }

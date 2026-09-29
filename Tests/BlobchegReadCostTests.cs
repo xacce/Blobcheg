@@ -9,37 +9,22 @@ using UnityEngine;
 
 namespace Blobcheg.Tests
 {
-    /// <summary>
-    /// Timing of a read in the editor. This is not a behaviour check: the numbers here are not compared
-    /// against any threshold, the tests fail only if the read returned something other than what was
-    /// written — that is, if an empty loop was measured.
-    ///
-    /// Why: ever since the debug contour was switched on by default, every <c>Read</c> in the editor
-    /// does a binary search over the debug section, while before that it was a reinterpretation at an
-    /// offset. The price of that was never measured. The measurement is taken BEFORE an
-    /// <c>AtomicSafetyHandle</c> lands in <c>CheckRead</c>: otherwise, once it appears, there will be no
-    /// telling whose price is whose.
-    ///
-    /// The numbers are printed into the log; repeat after any edit of <c>CheckRead</c> with the same run.
-    /// </summary>
+    // Timing, not behaviour: no thresholds; asserts only prove the measured loop was not empty.
     public sealed class BlobchegReadCostTests
     {
         const string DomainName = "CostDomain";
 
-        /// <summary>The record being measured: eight bytes, like an ordinary consumer record.</summary>
         struct CostGun
         {
             public float AmmoMax;
             public int Rpm;
         }
 
-        /// <summary>The value in every record is the same — the sum shows that the loop was not thrown away.</summary>
-        const int Rpm = 4242;
+        const int Rpm = 4242; // the sum proves the loop was not thrown away
 
         string _dir;
 
-        // Fields and not locals: the measured loop must not read a closure field on every turn.
-        BlobchegBuffer _buffer;
+        BlobchegBuffer _buffer; // fields, not locals: no closure field read per turn
         BlobchegBlob _blob;
         uint[] _offsets;
 
@@ -57,12 +42,6 @@ namespace Blobcheg.Tests
                 Directory.Delete(_dir, true);
         }
 
-        // ------------------------------------------------------------- the rig
-
-        /// <summary>
-        /// The file cycle: a domain of <paramref name="records"/> records of one type. No assets are
-        /// needed — what must be measured is the price of a read and not the price of a rebuild.
-        /// </summary>
         unsafe byte[] Build(int records, bool withDebug, out uint[] offsets)
         {
             var writer = BlobchegWriter.Open(_dir, DomainName);
@@ -103,13 +82,7 @@ namespace Blobcheg.Tests
             _offsets = null;
         }
 
-        // ------------------------------------------------------------- the loops
-
-        /// <summary>
-        /// The floor of the rig: the same walk over the offset array with no read at all. Everything
-        /// else is to be read as "this plus that much".
-        /// </summary>
-        long PassLoop(int iterations)
+        long PassLoop(int iterations) // rig floor: the same walk with no read
         {
             var offsets = _offsets;
             var count = offsets.Length;
@@ -126,8 +99,7 @@ namespace Blobcheg.Tests
             return sum;
         }
 
-        /// <summary>The release path: a pure reinterpretation at an offset, no checks at all.</summary>
-        unsafe long PassRaw(int iterations)
+        unsafe long PassRaw(int iterations) // release path: raw reinterpretation
         {
             var ptr = _buffer.Ptr;
             var offsets = _offsets;
@@ -145,8 +117,7 @@ namespace Blobcheg.Tests
             return sum;
         }
 
-        /// <summary>The editor path: <c>Read</c> with everything that stands behind ENABLE_UNITY_COLLECTIONS_CHECKS.</summary>
-        long PassRead(int iterations)
+        long PassRead(int iterations) // editor path: Read with the collections checks
         {
             var offsets = _offsets;
             var count = offsets.Length;
@@ -163,12 +134,9 @@ namespace Blobcheg.Tests
             return sum;
         }
 
-        // ------------------------------------------------------------- the stopwatch
-
-        /// <summary>The best of three after a warm-up: the minimum is robust against outside machine noise.</summary>
         static double NsPerRead(Func<int, long> pass, int iterations, long expectedSum)
         {
-            pass(Math.Max(1024, iterations / 10));
+            pass(Math.Max(1024, iterations / 10)); // warm-up; the best of three resists machine noise
 
             var best = double.MaxValue;
             for (var attempt = 0; attempt < 3; attempt++)
@@ -186,8 +154,6 @@ namespace Blobcheg.Tests
 
             return best;
         }
-
-        // ------------------------------------------------------------- the measurements
 
         [Test]
         public void The_price_of_a_read_in_the_editor_broken_down_by_layer()
@@ -261,13 +227,7 @@ namespace Blobcheg.Tests
             UnityEngine.Debug.Log(report);
         }
 
-        /// <summary>
-        /// Both read checks call generic intrinsics: the bounds call <c>SizeOf&lt;T&gt;</c>, the type
-        /// check calls <c>GetHashCode32&lt;T&gt;</c>. In a bursted job those are folded constants, in the
-        /// editor on Mono they are calls on every read. Without this measurement the constant part of
-        /// the contour's price would be charged to the binary search, which barely exists when the base
-        /// holds a single record.
-        /// </summary>
+        // Splits the Mono cost of generic intrinsics (constants under Burst) from the binary search.
         [Test]
         public void The_price_of_the_generic_intrinsics_in_the_editor()
         {

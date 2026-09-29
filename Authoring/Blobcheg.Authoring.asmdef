@@ -4,13 +4,12 @@
     "references": [
         "Blobcheg.Core",
         "Blobcheg.Runtime",
+        "Blobcheg.Hashes",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true,
     "overrideReferences": false,

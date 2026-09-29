@@ -3,26 +3,17 @@ using UnityEngine;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The carrier of an address from the editor into the build and the only way to keep an offset: a
-    /// sub-asset per (node × domain) pair, stable by identity. There is one asset type for the whole
-    /// system — the asset itself cannot be typed, a type out of the codegen has no MonoScript, and the
-    /// consumer is not obliged to hand-breed a class per record. What is typed is the field, see
-    /// <see cref="BlobchegRef{T}"/>.
-    /// </summary>
+    // The anchor of identity for a (node x domain) pair: consumers point at it by GUID and fileID.
     public sealed class BlobchegRefSo : ScriptableObject
     {
-        /// <summary>The absolute offset of the record in the base file. Re-stamped by every rebuild.</summary>
-        public uint offset;
-
         [SerializeField] internal string domainName;
-        [SerializeField] internal string recordType;
-        [SerializeField] internal long revision;
 
         public string DomainName => domainName;
 
-        /// <summary>The full name of the record type. Empty means raw bytes.</summary>
-        public string RecordType => recordType;
+        public uint Offset => BlobchegStamps.OffsetOf(this);
+
+        // The full name of the record type. Empty means raw bytes, null means never assembled.
+        public string RecordType => BlobchegStamps.RecordTypeOf(this);
     }
 
     /// <summary>
@@ -72,13 +63,16 @@ namespace Blobcheg
                         $"Blobcheg: an empty BlobchegRef<{typeof(T).Name}> — no record asset is assigned"
                         + BlobchegRefHint.Empty);
 
+                // Asked first: with no address there is no type to check against either.
+                var offset = asset.Offset;
+
                 var expected = typeof(T).FullName;
-                if (!string.Equals(asset.recordType, expected, StringComparison.Ordinal))
+                if (!string.Equals(asset.RecordType, expected, StringComparison.Ordinal))
                     throw new InvalidOperationException(
                         $"Blobcheg: BlobchegRef<{typeof(T).Name}> holds asset '{asset.name}' carrying record " +
-                        $"'{asset.recordType}' — '{expected}' was expected");
+                        $"'{asset.RecordType}' — '{expected}' was expected");
 
-                return asset.offset;
+                return offset;
             }
         }
 
@@ -114,7 +108,7 @@ namespace Blobcheg
                         "Blobcheg: an empty BlobchegRawRef — no record asset is assigned"
                         + BlobchegRefHint.Empty);
 
-                return asset.offset;
+                return asset.Offset;
             }
         }
     }

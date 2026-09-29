@@ -63,13 +63,20 @@ namespace Blobcheg.Tests
     /// A deterministic router: the row number is declared by the node, the rebuild only collects and
     /// checks it. The id carrier is derived and not the source of truth.
     /// </summary>
+    [TestFixture(BlobchegTestMode.Editor)]
+    [TestFixture(BlobchegTestMode.AsInPlayer)]
     public sealed class BlobchegFixedIndexTests
     {
+        readonly BlobchegTestMode _mode;
+
+        public BlobchegFixedIndexTests(BlobchegTestMode mode) => _mode = mode;
+
         string _folder;
 
         [SetUp]
         public void SetUp()
         {
+            BlobchegTestModes.Enter(_mode);
             // A folder of its own per test: asset deletion is deferred, and a reused name swallows an
             // asset created in a folder that has not been deleted yet.
             var name = "BlobchegFixedTemp_" + Guid.NewGuid().ToString("N");
@@ -80,6 +87,7 @@ namespace Blobcheg.Tests
         [TearDown]
         public void TearDown()
         {
+            BlobchegTestModes.Leave();
             AssetDatabase.DeleteAsset(_folder);
             BlobchegTestArtifacts.Wipe();
         }
@@ -107,12 +115,12 @@ namespace Blobcheg.Tests
         static TestFixedRouter LoadRouter()
         {
             var path = Path.Combine(BlobchegBuild.OutputDirectory, TestFixedRouter.FileName);
-            Assert.That(File.Exists(path), Is.True, "the router file must land in StreamingAssets");
+            Assert.That(File.Exists(path), Is.True, "the router file must land in the output folder");
             return new TestFixedRouter(BlobchegBuffer.From(File.ReadAllBytes(path), Allocator.Persistent));
         }
 
         static uint OffsetOf(BlobchegNodeSo node)
-            => BlobchegBuild.RefsOf(node).Single(r => r.DomainName == "ITestGridData").offset;
+            => BlobchegBuild.RefsOf(node).Single(r => r.DomainName == "ITestGridData").Offset;
 
         static TestGridDb LoadGrid()
             => new TestGridDb(BlobchegBuffer.From(
@@ -205,33 +213,30 @@ namespace Blobcheg.Tests
             BlobchegBuild.RebuildFull();
 
             Assert.That(IdOf(node), Is.EqualTo(before),
-                "the carrier is derived: the journal was wiped while the number is declared by the node");
+                "the carrier is derived: it was wiped while the number is declared by the node");
         }
 
         [Test]
-        public void The_carrier_is_not_asked_and_the_move_is_counted_and_logged()
+        public void A_move_of_a_declared_row_is_counted_and_logged()
         {
             var node = Node("Moved", 4);
             AssetDatabase.SaveAssets();
             BlobchegBuild.RebuildAll();
 
-            // The carrier was swapped by hand: that is what a router that handed out numbers before the
-            // flag was switched on looks like.
-            var carrier = BlobchegBuild.IdsOf(node).Single(c => c.RouterName == TestFixedRouter.RouterName);
-            carrier.id = BlobchegId.In(TestFixedRouter.RouterName, 100).Value;
-            EditorUtility.SetDirty(carrier);
+            node.index = 100;
+            EditorUtility.SetDirty(node);
             AssetDatabase.SaveAssets();
 
-            LogAssert.Expect(LogType.Log, new Regex("Moved.*100.*4"));
+            LogAssert.Expect(LogType.Log, new Regex("Moved.*4.*100"));
 
             var report = BlobchegBuild.RebuildFull();
 
-            Assert.That(IdOf(node).Index, Is.EqualTo(4u), "the declaration is stronger than the journal");
+            Assert.That(IdOf(node).Index, Is.EqualTo(100u), "the node names its own row");
             Assert.That(report.MovedIds, Is.EqualTo(1), "the move is obliged to be counted, not to happen silently");
         }
 
         [Test]
-        public void A_compaction_does_not_move_declared_rows_but_re_packs_the_offsets()
+        public void A_deleted_neighbour_does_not_move_a_declared_row_but_re_packs_the_offsets()
         {
             var head = Node("Head", 0);
             var tail = Node("Tail", 9);
@@ -240,24 +245,19 @@ namespace Blobcheg.Tests
 
             Assert.That(IdOf(tail).Index, Is.EqualTo(9u));
 
-            // Only a record lying ahead of its neighbour leaves a hole in the base, and the order of the
-            // records is decided by BuildOrder — so which one to delete is decided by a measurement and
-            // not by the creation order in the test.
             var earlier = OffsetOf(head) < OffsetOf(tail);
             var victim = earlier ? (BlobchegNodeSo)head : tail;
             var survivor = earlier ? (BlobchegNodeSo)tail : head;
             var keep = IdOf(survivor);
+            var offsetBefore = OffsetOf(survivor);
+
+            Assert.That(offsetBefore, Is.GreaterThan(BlobchegFormat.HeaderSize),
+                "the survivor lies behind its neighbour — otherwise the test catches nothing");
 
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(victim));
             BlobchegBuild.RebuildAll();
 
-            var offsetBefore = OffsetOf(survivor);
-            Assert.That(offsetBefore, Is.GreaterThan(0u), "a hole from the deleted record is left ahead");
-
-            BlobchegBuild.Compact();
-
-            Assert.That(IdOf(survivor), Is.EqualTo(keep),
-                "a compaction does not ask the carriers of this router — and has nothing to move");
+            Assert.That(IdOf(survivor), Is.EqualTo(keep), "the row is declared by the node and depends on no neighbour");
 
             var router = LoadRouter();
             try
@@ -271,7 +271,7 @@ namespace Blobcheg.Tests
             }
 
             Assert.That(OffsetOf(survivor), Is.LessThan(offsetBefore),
-                "while the compaction re-packed the offsets, as it always does");
+                "while the address is a place in a dense file and moves with the neighbour");
         }
 
         [Test]

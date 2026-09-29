@@ -7,36 +7,20 @@ using Unity.Entities;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The managed side of the slot table: walking the types, resolving the domain of a record,
-    /// allocating the native containers. It is kept apart from <see cref="BlobchegPatchTable"/> not out
-    /// of taste but out of necessity — that table is read by Burst code, and a managed static in its
-    /// class breaks the compilation entirely.
-    /// </summary>
+    // Kept apart from BlobchegPatchTable: Burst reads that table, and a managed static there breaks it.
     public static unsafe class BlobchegPatchTableBuilder
     {
         static readonly List<ComponentType> s_Registered = new List<ComponentType>();
         static readonly List<string> s_Diagnostics = new List<string>();
 
-        /// <summary>The component types that hold at least one slot. The live path sweeps them.</summary>
         public static IReadOnlyList<ComponentType> RegisteredTypes => s_Registered;
 
-        /// <summary>
-        /// What could not be worked out while building. A separate list and not an exception: the build
-        /// walks every type in the process at once, and one wrongly declared component has no right to
-        /// switch the patch off for the whole project. A failed type simply does not get registered, and
-        /// its trouble is named out loud.
-        /// </summary>
-        public static IReadOnlyList<string> Diagnostics => s_Diagnostics;
+        public static IReadOnlyList<string> Diagnostics => s_Diagnostics; // one bad type must not disable the patch
 
-        /// <summary>
-        /// Builds the table by walking the types. Once per process: the layout of structs does not change
-        /// at runtime, and no new component types appear after the TypeManager is initialised.
-        /// </summary>
         public static void Build()
         {
             if (BlobchegPatchTable.IsBuilt)
-                return;
+                return; // once per process: layouts and the type set are fixed after TypeManager init
 
             var domains = CollectDomains();
 
@@ -72,10 +56,7 @@ namespace Blobcheg
                 if (found.Count == 0)
                     continue;
 
-                // A shared component lies in the world as one value per index rather than in a chunk next
-                // to the entity: neither the chunk walk in the fork nor the reverse pass before a write
-                // reaches it. Quietly leaving an offset in it is the worst possible outcome, hence out
-                // loud.
+                // Shared components live outside chunks, so no patch pass reaches them: report, never skip.
                 if (typeof(ISharedComponentData).IsAssignableFrom(type))
                 {
                     s_Diagnostics.Add(
@@ -102,11 +83,7 @@ namespace Blobcheg
             };
         }
 
-        /// <summary>
-        /// Takes the table down. Needed on a domain reload in the editor: the managed side dies by itself
-        /// there, the persistent memory does not.
-        /// </summary>
-        public static void Destroy()
+        public static void Destroy() // editor domain reload: persistent memory outlives the managed side
         {
             var data = BlobchegPatchTable.Storage;
             if (data.Map == IntPtr.Zero)
@@ -127,12 +104,6 @@ namespace Blobcheg
             s_Registered.Clear();
         }
 
-        /// <summary>
-        /// The marker interface of a domain → the key of its base. Domains are declared by the
-        /// <see cref="BlobchegAttribute"/> attribute, and there is nowhere else for a domain to come
-        /// from: the file name, the identity in the header and the registry key are all computed from
-        /// the same marker name.
-        /// </summary>
         static Dictionary<Type, ulong> CollectDomains()
         {
             var domains = new Dictionary<Type, ulong>();
@@ -151,10 +122,7 @@ namespace Blobcheg
                     var key = BlobchegNaming.NameHash(attr.Domain.Name);
                     domains[attr.Domain] = key;
 
-                    // The name is needed before the base loads: the most frequent message of the patch is
-                    // "the domain is not loaded", and in it the domain is obliged to be named rather than
-                    // shown as an FNV-64 key.
-                    BlobchegDomainNames.Remember(key, attr.Domain.Name);
+                    BlobchegDomainNames.Remember(key, attr.Domain.Name); // "domain not loaded" must name it
                 }
             }
 
@@ -170,21 +138,15 @@ namespace Blobcheg
                     if (!type.IsValueType || type.IsPrimitive || type.IsEnum || type.ContainsGenericParameters)
                         continue;
 
-                    // Shared components get here too — not to be registered, but so that a slot in them is
-                    // noticed and said out loud. Silence would be worse.
                     if (typeof(IComponentData).IsAssignableFrom(type) ||
                         typeof(IBufferElementData).IsAssignableFrom(type) ||
-                        typeof(ISharedComponentData).IsAssignableFrom(type))
+                        typeof(ISharedComponentData).IsAssignableFrom(type)) // shared: only to report their slots
                         yield return type;
                 }
             }
         }
 
-        /// <summary>
-        /// Only the assemblies that see <c>Blobcheg.Runtime</c>. A full walk of the application domain at
-        /// startup costs noticeably, and a slot of our type will not appear in an assembly that knows
-        /// nothing about the package.
-        /// </summary>
+        // Only assemblies referencing Blobcheg.Runtime: a full app-domain walk at startup is costly.
         static IEnumerable<Assembly> RelevantAssemblies()
         {
             var self = typeof(BlobchegReferenceData).Assembly;
@@ -233,11 +195,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// A field walk modelled on <c>EntityRemapUtility.CalculateOffsetsRecurse</c>: descending into
-        /// nested value structs, matching by field type rather than by name. It stops at the slot itself
-        /// — there is nothing to climb into inside a <see cref="BlobchegReference{T}"/>.
-        /// </summary>
+        // Modelled on EntityRemapUtility.CalculateOffsetsRecurse: matches by field type, not by name.
         static void Walk(Type type, int baseOffset, List<BlobchegFieldSlot> found, HashSet<Type> seen,
             Dictionary<Type, ulong> domains, int depth)
         {
@@ -277,9 +235,7 @@ namespace Blobcheg
                         "A raw record has no type, therefore no domain, and there is nothing to patch it " +
                         "with. Leave such records on the \"offset plus Read\" path");
 
-                // Value structs cannot form cycles, but the same struct may turn up in neighbouring
-                // fields — what seen limits is descending into it twice along the same path.
-                if (!seen.Add(fieldType))
+                if (!seen.Add(fieldType)) // guards one path only; the same struct may repeat in siblings
                     continue;
 
                 Walk(fieldType, offset, found, seen, domains, depth + 1);
@@ -287,11 +243,7 @@ namespace Blobcheg
             }
         }
 
-        /// <summary>
-        /// The identity of a record type — computed the same way the base writer puts it into the debug
-        /// contour (<c>BurstRuntime.GetHashCode32&lt;T&gt;</c>). A generic method through reflection,
-        /// because at table-building time the record type is a <c>Type</c> and not a parameter.
-        /// </summary>
+        // Same hash the base writer stores (BurstRuntime.GetHashCode32<T>), via reflection on a Type.
         static uint RecordTypeHashOf(Type record)
         {
             var method = GetHashCode32Definition().MakeGenericMethod(record);

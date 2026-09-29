@@ -84,7 +84,7 @@ namespace Blobcheg.Authoring
                 "There are no nodes of this router in the project — or the rebuild never reached the id carriers.",
                 candidates,
                 current,
-                asset => "row " + new BlobchegId(((BlobchegIdSo)asset).id).Index,
+                asset => RowOf((BlobchegIdSo)asset),
                 picked =>
                 {
                     var found = serialized.FindProperty(path);
@@ -150,5 +150,10 @@ namespace Blobcheg.Authoring
 
             return null;
         }
+
+        static string RowOf(BlobchegIdSo carrier)
+            => BlobchegStamps.TryIdOf(carrier, out var id)
+                ? "row " + new BlobchegId(id).Index
+                : "no row yet";
     }
 }

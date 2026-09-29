@@ -29,7 +29,7 @@ it copies the set into the given project, runs `unity test --filter Blobcheg.Adv
 up after itself.
 
 ```powershell
-./tools~/run-advanced-tests.ps1 -Project C:/Projects/Evuck/EvuckServer
+./tools~/run-advanced-tests.ps1 -Project <path to the Unity project>
 ```
 
 ## What is covered
@@ -75,8 +75,9 @@ the prolog held anything except "whose file is this".
 ### The accepted limit
 
 `A_copy_of_a_base_is_a_view_and_not_an_owner` is the only test that pins down a limitation rather than a
-victory. A base is a value struct with an owning pointer, and it is made that way on purpose: it is put
-into an `IComponentData` and copied by every `GetSingleton`. A version with ownership (a safety handle)
+victory. A base is a value struct with an owning pointer, and it is made that way on purpose: it is copied by
+every hand-off into a job and every assignment, and `Resident` hands out a fresh view on every call (a
+base is not an `IComponentData` — `BCHG011`). A version with ownership (a safety handle)
 demands a cell that outlives the freeing of the memory itself — that is, either a leak or a registry
 unreachable from Burst. The contract is plain: `Dispose` is called by whoever brought the base up, and
 exactly once; the other instances are views.

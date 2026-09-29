@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 // and by nobody else — which is why they are internal and not public: the consumer does not need them
 // and must not spoil them.
 [assembly: InternalsVisibleTo("Blobcheg.Authoring")]
+[assembly: InternalsVisibleTo("Blobcheg.Authoring.Editor")]
 [assembly: InternalsVisibleTo("Blobcheg.Tests")]
 
 // The destructive set of the patch: it needs BlobchegBases.Clear (isolation of the registry between

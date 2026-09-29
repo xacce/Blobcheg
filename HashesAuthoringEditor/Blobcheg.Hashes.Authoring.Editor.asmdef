@@ -1,0 +1,26 @@
+{
+    "name": "Blobcheg.Hashes.Authoring.Editor",
+    "rootNamespace": "Blobcheg.Authoring",
+    "references": [
+        "Blobcheg.Core",
+        "Blobcheg.Runtime",
+        "Blobcheg.Authoring",
+        "Blobcheg.Authoring.Editor",
+        "Blobcheg.Hashes",
+        "Blobcheg.Hashes.Authoring",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

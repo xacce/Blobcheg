@@ -4,34 +4,14 @@ using System.Linq;
 
 namespace Blobcheg.Authoring
 {
-    /// <summary>
-    /// Handing out <see cref="BlobchegId"/>s for one rebuild. Computed BEFORE the write: the routers of
-    /// a node are derived from its <c>OutTypes</c>, and that is a declaration — so no second pass over
-    /// <c>Write</c> is needed, the first one already has the id in hand.
-    ///
-    /// An id handed out once stays with the node forever: it lies on its <see cref="BlobchegIdSo"/>
-    /// carrier and is read back from there by the next rebuild. A new node gets an id in the tail, a
-    /// deleted one leaves a hole — an empty row in the router file. Recomputing the positions from
-    /// scratch is not allowed: an id travels into other people's saves and into baked subscenes, and a
-    /// shift there quietly leads to a different node.
-    ///
-    /// The high byte of an id is the router tag (<see cref="BlobchegNaming.TagOf"/>): by it a foreign id
-    /// is rejected at lookup, and a zero-initialised field does not pretend to be the first node.
-    ///
-    /// The GUID order is left only for the newcomers — so that two rebuilds in a row hand out the same
-    /// thing.
-    ///
-    /// A router with <c>FixedIndex</c> lives differently: the row number is declared by the node
-    /// (<see cref="IBlobchegIndexed"/>), the carriers are not asked, and "losing" a number together with
-    /// its carrier is impossible — there is nowhere to lose it.
-    /// </summary>
+    // A row is held by the node itself; the table only seats the newcomers.
     sealed class BlobchegIdTable
     {
         readonly Dictionary<Type, BlobchegNodeSo[]> _rows = new Dictionary<Type, BlobchegNodeSo[]>();
         readonly Dictionary<Type, Dictionary<BlobchegNodeSo, uint>> _ids =
             new Dictionary<Type, Dictionary<BlobchegNodeSo, uint>>();
 
-        public static BlobchegIdTable Assign(IReadOnlyList<BlobchegNodeSo> nodes, BlobchegCarriers carriers = null)
+        public static BlobchegIdTable Assign(IReadOnlyList<BlobchegNodeSo> nodes, Func<BlobchegNodeSo, string, int> held)
         {
             var table = new BlobchegIdTable();
 
@@ -52,7 +32,7 @@ namespace Blobcheg.Authoring
                 if (BlobchegRouters.IsFixed(router))
                     Declared(members, routerName, tag, ids, taken);
                 else
-                    HandedOut(members, carriers, routerName, tag, ids, taken);
+                    Inherited(members, routerName, tag, held, ids, taken);
 
                 var rows = new BlobchegNodeSo[RowCount(taken)];
                 foreach (var pair in taken)
@@ -65,63 +45,41 @@ namespace Blobcheg.Authoring
             return table;
         }
 
-        /// <summary>
-        /// An ordinary router: the number is inherited from the carrier, a newcomer settles into the tail
-        /// in GUID order. This is the journal — and also what gets lost together with a carrier that
-        /// never made it into git.
-        /// </summary>
-        static void HandedOut(List<BlobchegNodeSo> members, BlobchegCarriers carriers, string routerName,
-            byte tag, Dictionary<BlobchegNodeSo, uint> ids, Dictionary<uint, BlobchegNodeSo> taken)
+        // Of two claims on one row (a duplicated asset, a merge) the lower GUID keeps it, the other is new.
+        static void Inherited(List<BlobchegNodeSo> members, string routerName, byte tag,
+            Func<BlobchegNodeSo, string, int> held, Dictionary<BlobchegNodeSo, uint> ids,
+            Dictionary<uint, BlobchegNodeSo> taken)
         {
+            var newcomers = new List<BlobchegNodeSo>();
+
             foreach (var node in members)
             {
-                var carrier = carriers?.Id(node, routerName);
-                if (carrier == null)
+                var row = held(node, routerName);
+                if (row < 0 || row > BlobchegId.MaxIndex || taken.ContainsKey((uint)row))
+                {
+                    newcomers.Add(node);
                     continue;
+                }
 
-                // A foreign tag means the carrier came from another router (or from the times when the
-                // router was named differently). Such an id is not inherited: the node gets a new one,
-                // in the tail.
-                var was = new BlobchegId(carrier.id);
-                if (!was.IsValid || was.Tag != tag)
-                    continue;
-
-                // Two on one id — that happens after a node is copied together with its carrier. The
-                // place stays with whoever comes first by GUID, the second one moves into the tail as a
-                // newcomer.
-                if (taken.ContainsKey(was.Index))
-                    continue;
-
-                taken.Add(was.Index, node);
-                ids.Add(node, was.Value);
+                taken.Add((uint)row, node);
+                ids.Add(node, BlobchegId.Make(tag, (uint)row).Value);
             }
 
             var next = RowCount(taken);
 
-            foreach (var node in members)
+            foreach (var node in newcomers)
             {
-                if (ids.ContainsKey(node))
-                    continue;
-
                 if (next > BlobchegId.MaxIndex)
                     throw new InvalidOperationException(
-                        $"Blobcheg: router '{routerName}' ran out of rows — the ceiling is " +
-                        $"{BlobchegId.MaxIndex}. A compaction will reclaim the holes left by deleted nodes");
+                        $"Blobcheg: router '{routerName}' ran out of rows — the ceiling is {BlobchegId.MaxIndex}");
 
-                ids.Add(node, BlobchegId.Make(tag, next).Value);
                 taken.Add(next, node);
+                ids.Add(node, BlobchegId.Make(tag, next).Value);
                 next++;
             }
         }
 
-        /// <summary>
-        /// A deterministic router: the row number is declared by the node. The carriers are not asked
-        /// here at all — neither on an ordinary rebuild nor on a compaction — and that is the whole
-        /// guarantee: wipe every carrier, rebuild, and the same ids come back.
-        ///
-        /// The traversal order is by GUID, as in an ordinary router, but it does not affect the result:
-        /// the place of every node is named by the node itself.
-        /// </summary>
+        // A deterministic router: the row number is named by the node itself.
         static void Declared(List<BlobchegNodeSo> members, string routerName, byte tag,
             Dictionary<BlobchegNodeSo, uint> ids, Dictionary<uint, BlobchegNodeSo> taken)
         {

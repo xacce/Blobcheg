@@ -5,23 +5,8 @@ using Unity.Entities;
 
 namespace Blobcheg.PatchTests
 {
-    /// <summary>
-    /// The order of calls and the life cycle of a base. This is where the promises "the patch is
-    /// idempotent" and "the domain is not loaded means an explicit error" get broken, and the reverse
-    /// direction is checked along the way: a reverse pass over a world that was never patched is obliged
-    /// to be a no-op and not a subtraction of an address from an offset.
-    /// </summary>
-    public sealed unsafe class OrderAndLifecycleTests : PatchFixture
+    public sealed unsafe class OrderAndLifecycleTests : PatchFixture // call order and base life cycle
     {
-        // BUG: the message about an unloaded domain names the key and not the domain
-        // What happens: the error text contains "domain 8A1C…F3 is not loaded" — sixteen hexadecimal
-        //   digits instead of the name of the marker interface. A human has nothing to do with that
-        //   number: it occurs nowhere in the code.
-        // What should happen: the message is obliged to carry the domain name — "IPatchGhost".
-        // Root cause: BlobchegPatchErrors.Slot stores only a ulong DomainKey, and there is no reverse
-        //   "key → name" map either in the box or in BlobchegPatchTable. Meanwhile
-        //   BlobchegPatchTableBuilder.CollectDomains builds exactly such a map while assembling the
-        //   table and throws it away right afterwards — the names exist, they were simply not kept.
         [Test]
         public void A_patch_without_a_loaded_base_names_the_domain_in_the_message()
         {
@@ -33,20 +18,14 @@ namespace Blobcheg.PatchTests
                 Ghost = new BlobchegReference<PatchGhostRecord>(BlobchegFormat.HeaderSize),
             });
 
-            // The live pass runs where authoring happens, and the order in which bases load does not obey
-            // it: the editor world loads subscenes whenever Unity decides, while bases are loaded by
-            // reading a file. "The domain is not loaded yet" is a state for it and not trouble — but the
-            // slot is obliged to stay exactly the offset it arrived as, so that the pass after the base
-            // loads brings it to an address.
+            // Editor bases load at any time: an unloaded domain leaves the slot an offset for a later pass.
             Assert.DoesNotThrow(() => Patch(),
                 "the live path waits for the base instead of failing the scene while it loads");
             Assert.That(EM.GetComponentData<GhostRef>(entity).Ghost.Data.Value,
                 Is.EqualTo((ulong)BlobchegFormat.HeaderSize),
                 "a forgiven failure is obliged to leave the slot untouched");
 
-            // And the strict question — the one the player asks, where the order is ours — is still
-            // trouble and is still obliged to name the culprits.
-            Load(Save());
+            Load(Save()); // the player's strict path: a missing base is still an error
 
             var error = Assert.Throws<InvalidOperationException>(() => BlobchegPatchErrors.ThrowIfAny(),
                 "in the player an entity that arrived before the base stays an error");
@@ -106,9 +85,7 @@ namespace Blobcheg.PatchTests
             var offset = file["gun"];
             Gun(offset);
 
-            // There was no patch at all: the entity was created by hand and we write the world straight
-            // away. Blindly subtracting the base address here would give offset minus address — that is,
-            // a number close to ulong.MaxValue.
+            // No patch at all: blindly subtracting the base would give offset minus address, near ulong.MaxValue.
             var bytes = Save();
 
             using (var loaded = LoadRaw(bytes))
@@ -128,13 +105,11 @@ namespace Blobcheg.PatchTests
             Patch();
             var first = Save();
 
-            // A world from a file, the slots hold raw offsets. We load the base again and write it once
-            // more — that is the second reverse pass over the same data.
             var once = LoadRaw(first);
             Assert.That(SlotOf(once, Single<GunRef>(once)), Is.EqualTo(offset));
 
             Raise(HotFile());
-            var second = Save(once);
+            var second = Save(once); // second reverse pass over the same raw offsets
 
             var twice = LoadRaw(second);
             Assert.That(SlotOf(twice, Single<GunRef>(twice)), Is.EqualTo(offset),
@@ -152,22 +127,15 @@ namespace Blobcheg.PatchTests
             var address = SlotOf(entity);
             Assert.That(BlobchegBases.IsKnownAddress(address), Is.True);
 
-            Drop(hot);
+            Drop(hot); // memory freed: ask the registry, never dereference
 
-            // The memory is freed — dereferencing is not allowed, so we ask the registry and not the memory.
             Assert.That(BlobchegBases.IsKnownAddress(address), Is.False,
                 "a range taken off the register is obliged to stop counting as a live record");
             Assert.That(EM.GetComponentData<GunRef>(entity).Gun.IsResolved, Is.False,
                 "IsResolved is obliged to say \"no\" honestly — otherwise the next Value reads freed memory");
         }
 
-        /// <summary>
-        /// An accepted limit, not a victory. A base is a value struct with an owning pointer, and it has
-        /// no cell that outlives the freeing of the memory itself. That is why the registry cannot tell
-        /// "the buffer was freed and taking it off the register was forgotten": it stores an address and
-        /// a length, not an allocation generation. The test exists so that the limit looks like a
-        /// decision and not an oversight.
-        /// </summary>
+        // Accepted limit: the registry keeps address and length, no generation, so it cannot see a free.
         [Test]
         public void The_registry_cannot_tell_a_freed_but_unregistered_buffer_an_accepted_limit()
         {
@@ -178,8 +146,7 @@ namespace Blobcheg.PatchTests
             BlobchegBases.Register(key, buffer.Ptr, buffer.Length);
             Assert.That(BlobchegBases.IsKnownAddress(address), Is.True);
 
-            // Exactly the mistake that gets made: the buffer was freed directly and Unregister was never called.
-            buffer.Dispose();
+            buffer.Dispose(); // the mistake: freed directly, Unregister never called
 
             Assert.That(BlobchegBases.IsKnownAddress(address), Is.True,
                 "the registry still answers \"yes\" — and cannot answer otherwise: an address has no generation. " +
@@ -188,18 +155,6 @@ namespace Blobcheg.PatchTests
             BlobchegBases.Unregister(key, buffer.Ptr);
         }
 
-        // BUG: a rebuild in the order "free the old one first, then load the new one" loses every handed-out pointer
-        // What happens: if the old base is taken off the register BEFORE the new one stands up, the slot
-        //   of the domain disappears from the registry entirely; the next registration creates the slot
-        //   anew with PrevPtrs = 0. Every already handed-out pointer becomes OutOfRange, and the patch
-        //   fails instead of translating.
-        // What should happen: the promise of the feature — a rebuild translates the already handed-out
-        //   pointers onto the new buffer, with no caveats about the order.
-        // Root cause: the previous generation lives in BlobchegBases.Table.PrevPtrs and is filled ONLY in
-        //   the Register branch, where the slot already exists. By that moment Unregister has already
-        //   removed the slot by swapping it with the last one (t.Keys[slot] = t.Keys[last]), and the
-        //   address of the old buffer is forgotten forever. The order "load the new one, then free the
-        //   old one" is checked nowhere — it is only described in the comment on Unregister.
         [Test]
         public void A_rebuild_in_the_order_unregister_then_load_is_obliged_to_translate_the_pointers()
         {
@@ -210,8 +165,7 @@ namespace Blobcheg.PatchTests
             Patch();
             Assert.That(SlotOf(entity), Is.EqualTo(gen1.AddressOf(first["gun"])));
 
-            // A rebuild of the domain: the old one was freed, the new one was loaded.
-            Drop(gen1);
+            Drop(gen1); // unregister before load: the previous generation must survive
             Raise(HotFile(ammo: 2f, rpm: 22));
 
             Assert.DoesNotThrow(() => Patch(),
@@ -227,8 +181,7 @@ namespace Blobcheg.PatchTests
             var hot = Raise(HotFile());
             var cold = Raise(Domain(nameof(IPatchCold)).Add("note", new PatchNote { Tier = 1 }).Seal());
 
-            // A typical typo: the domain was unregistered while passing the pointer of a neighbouring base.
-            BlobchegBases.Unregister(hot.Key, (byte*)cold.Ptr);
+            BlobchegBases.Unregister(hot.Key, (byte*)cold.Ptr); // typo: a neighbouring base's pointer
 
             Assert.That(BlobchegBases.TryGet(hot.Key, out var ptr, out _), Is.True,
                 "unregistering with a foreign pointer has no right to wipe out a live base");

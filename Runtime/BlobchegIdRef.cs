@@ -3,22 +3,20 @@ using UnityEngine;
 
 namespace Blobcheg
 {
-    /// <summary>
-    /// The carrier of a <see cref="BlobchegId"/> from the editor into the build: a sub-asset per
-    /// (node × router) pair. A separate asset is needed for the same reason as <see cref="BlobchegRefSo"/>:
-    /// the node lives in an editor-only assembly, and runtime authoring cannot reference it.
-    /// </summary>
+    // The anchor of identity for a (node x router) pair. The id itself lives next to the bases.
     public sealed class BlobchegIdSo : ScriptableObject
     {
-        /// <summary>
-        /// The value of a <see cref="BlobchegId"/>: the router tag and the row position. Re-stamped by
-        /// every rebuild. Zero means "not assigned", also the value of a freshly created carrier.
-        /// </summary>
-        public uint id = BlobchegId.NoneValue;
-
         [SerializeField] internal string routerName;
 
+        // The row travels in git with the node: an addition or a deletion elsewhere does not move it.
+        [SerializeField] internal int row = -1;
+
+        // Whose row it is: a duplicated asset carries a foreign owner and sits down as a newcomer.
+        [SerializeField] internal string owner;
+
         public string RouterName => routerName;
+
+        public BlobchegId Id => new BlobchegId(BlobchegStamps.IdOf(this));
     }
 
     /// <summary>
@@ -56,7 +54,7 @@ namespace Blobcheg
                         $"Blobcheg: BlobchegIdRef<{typeof(TRouter).Name}> holds asset '{asset.name}' of router " +
                         $"'{asset.routerName}' — '{expected}' was expected");
 
-                var id = new BlobchegId(asset.id);
+                var id = asset.Id;
                 if (!id.IsValid)
                     throw new InvalidOperationException(
                         $"Blobcheg: asset '{asset.name}' has no id — the rebuild never reached it");

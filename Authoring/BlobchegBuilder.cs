@@ -6,27 +6,30 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace Blobcheg.Authoring
 {
-    /// <summary>An open builder as the collector sees it: close an abandoned one and free the memory.</summary>
     interface IBlobchegOpenBuilder
     {
         bool Closed { get; }
 
         string RecordTypeName { get; }
 
-        /// <summary>Frees the chunks without assembling the record — the path of a Write that failed or forgot End.</summary>
-        void Abandon();
+        void Abandon(); // frees the chunks without assembling: a failed Write or a forgotten End
     }
 
-    /// <summary>
-    /// The assembler of a record with arrays. The size of the record is known only after all the
-    /// <see cref="Allocate{T}"/> calls, so a struct literal will not do: the builder holds the head and
-    /// one chunk of unmanaged memory per array, and <see cref="End"/> lays the chunks out as a tail
-    /// behind the head, fills the self-relative offsets and hands the bytes to the collector by the
-    /// same route as Add.
-    ///
-    /// The chunks do not move before End, so a <see cref="BlobchegBuilderArray{T}"/> of a neighbouring
-    /// array may be held across the Allocate of the next one.
-    /// </summary>
+    public static class BlobchegBuilder // one record's bytes outside a rebuild: no collector, file or domain
+    {
+        public static BlobchegBuilder<TRoot> Open<TRoot>(string name, Action<byte[]> sink)
+            where TRoot : unmanaged
+        {
+            if (sink == null)
+                throw new ArgumentNullException(nameof(sink),
+                    "Blobcheg: a builder without a sink — the assembled record would have nowhere to go");
+
+            BlobchegRecordTypes.Require(typeof(TRoot));
+            return new BlobchegBuilder<TRoot>(name, sink);
+        }
+    }
+
+    // Record size is known only after every Allocate; the chunks do not move before End.
     public sealed unsafe class BlobchegBuilder<TRoot> : IBlobchegOpenBuilder where TRoot : unmanaged
     {
         struct Chunk
@@ -65,10 +68,7 @@ namespace Blobcheg.Authoring
                 Align = BlobchegFormat.RecordAlign,
             };
 
-            // Zeroes and not allocator garbage: an unfilled field is obliged to read as zero and as an
-            // empty array, and the padding is obliged to be deterministic — the revision stands on the
-            // bytes of the record.
-            UnsafeUtility.MemClear(head.Ptr, head.Bytes);
+            UnsafeUtility.MemClear(head.Ptr, head.Bytes); // zeroes: unfilled fields read empty, padding stays deterministic
             _chunks.Add(head);
         }
 
@@ -76,7 +76,6 @@ namespace Blobcheg.Authoring
 
         public string RecordTypeName => typeof(TRoot).FullName;
 
-        /// <summary>The head of the record; the fields are filled as usual. After End — an error.</summary>
         public ref TRoot Root
         {
             get
@@ -86,11 +85,6 @@ namespace Blobcheg.Authoring
             }
         }
 
-        /// <summary>
-        /// Reserves room for an array and binds it to a field. The field is obliged to lie in this same
-        /// record — in the head or in an element of an already allocated array (that is how nesting is
-        /// built).
-        /// </summary>
         public BlobchegBuilderArray<T> Allocate<T>(ref BlobchegArray<T> field, int length) where T : unmanaged
         {
             RequireOpen(nameof(Allocate));
@@ -117,9 +111,7 @@ namespace Blobcheg.Authoring
                     $"Blobcheg: node '{_nodeName}' allocates an array in field " +
                     $"'{FieldNameAt(owner, fieldOffset)}' a second time — a second Allocate would orphan the first");
 
-            // An empty array is legal: the field stays zero, there is no chunk, and the read happens
-            // without dereferencing.
-            if (length == 0)
+            if (length == 0) // legal: the field stays zero, no chunk, the read never dereferences
             {
                 *(int*)fieldAddress = 0;
                 *((int*)fieldAddress + 1) = 0;
@@ -147,11 +139,7 @@ namespace Blobcheg.Authoring
             return new BlobchegBuilderArray<T>((T*)chunk.Ptr, length, _nodeName, this);
         }
 
-        /// <summary>
-        /// Computes the layout: the chunks land behind the head in Allocate order, each aligned to the
-        /// AlignOf of its element from the start of the record. It fills the offsets, assembles the
-        /// bytes, hands them to the collector and frees the memory.
-        /// </summary>
+        // Chunks land behind the head in Allocate order, each aligned from the record start.
         public void End()
         {
             RequireOpen(nameof(End));
@@ -214,13 +202,10 @@ namespace Blobcheg.Authoring
             return -1;
         }
 
-        /// <summary>The field name by its offset in a chunk — for the error text. If not found, the offset itself.</summary>
         string FieldNameAt(int chunkIndex, int fieldOffset)
         {
-            // The head's type is TRoot; for an array chunk the element type is recovered from the patch
-            // that created that chunk.
             var type = typeof(TRoot);
-            if (chunkIndex > 0)
+            if (chunkIndex > 0) // array chunk: the element type comes from the patch that created it
             {
                 foreach (var patch in _patches)
                 {
@@ -240,9 +225,7 @@ namespace Blobcheg.Authoring
 
         Type ElementTypeOf(Patch patch)
         {
-            // The element type of a chunk is not stored in the patches: it is recovered from the owning
-            // field.
-            var ownerType = patch.OwnerChunk == 0 ? typeof(TRoot) : null;
+            var ownerType = patch.OwnerChunk == 0 ? typeof(TRoot) : null; // not stored: recovered from the owning field
             if (ownerType == null)
                 return null;
 
@@ -273,11 +256,7 @@ namespace Blobcheg.Authoring
         }
     }
 
-    /// <summary>
-    /// A window for writing into an allocated array: a pointer and a length. A ref struct — it has no
-    /// reason to live longer than Write, and the builder's chunks do not move before End, so the window
-    /// may be held across a neighbouring Allocate.
-    /// </summary>
+    // A write window into an allocated array; stays valid across a neighbouring Allocate.
     public unsafe ref struct BlobchegBuilderArray<T> where T : unmanaged
     {
         readonly T* _ptr;
@@ -299,9 +278,7 @@ namespace Blobcheg.Authoring
         {
             get
             {
-                // A window that outlived End points into freed memory — writing there is not allowed
-                // under any circumstances, and neither is staying silent about it.
-                if (_owner.Closed)
+                if (_owner.Closed) // outlived End: points into freed memory
                     throw new InvalidOperationException(
                         $"Blobcheg: node '{_nodeName}' writes into an array window after End — the record is " +
                         "already assembled and the chunk memory is freed. Fill the array before End");

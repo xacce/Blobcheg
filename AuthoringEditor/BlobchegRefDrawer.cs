@@ -92,7 +92,7 @@ namespace Blobcheg.Authoring
                 "created yet — or the rebuild never reached the ref assets.",
                 candidates,
                 current,
-                asset => "offset " + ((BlobchegRefSo)asset).offset,
+                asset => AddressOf((BlobchegRefSo)asset),
                 picked =>
             {
                 var found = serialized.FindProperty(path);
@@ -158,5 +158,10 @@ namespace Blobcheg.Authoring
 
             return null;
         }
+
+        static string AddressOf(BlobchegRefSo reference)
+            => BlobchegStamps.TryOffsetOf(reference, out var offset)
+                ? "offset " + offset
+                : "no address yet";
     }
 }
